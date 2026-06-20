@@ -7,6 +7,7 @@
 <link rel="icon" href="data:,">
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{
   --blu-900:#0b2545;
@@ -749,7 +750,7 @@ async function renderHome(){
 
   const [{ data: scadenze }, { data: automezzi }, { data: apparati }] = await Promise.all([
     sb.from("v_scadenze").select("*"),
-    sb.from("automezzi").select("id", { count: "exact", head: false }),
+    sb.from("automezzi").select("*"),
     sb.from("tlc_apparati").select("id", { count: "exact", head: false })
   ]);
 
@@ -762,6 +763,9 @@ async function renderHome(){
   const inAvvicinamento = elenco.filter(s => s.stato === "avvicinamento");
 
   content.innerHTML = `
+    <div class="toolbar" style="justify-content:flex-end;margin-bottom:14px;">
+      <button class="btn-add" id="btn-report-revisioni">📄 Report revisioni del mese</button>
+    </div>
     <div class="alert-grid">
       <div class="stat-card">
         <div class="num">${automezzi ? automezzi.length : "—"}</div>
@@ -788,6 +792,8 @@ async function renderHome(){
     ${renderAlertList(inAvvicinamento, "avvicinamento")}
   `;
 
+  document.getElementById("btn-report-revisioni").addEventListener("click", () => generaReportRevisioniMese(automezzi));
+
   content.querySelectorAll(".alert-row[data-modulo]").forEach(el => {
     el.addEventListener("click", () => {
       const modulo = el.dataset.modulo;
@@ -804,6 +810,59 @@ async function renderHome(){
       }
     });
   });
+}
+
+function generaReportRevisioniMese(automezzi){
+  const oggi = new Date();
+  const anno = oggi.getFullYear();
+  const mese = oggi.getMonth();
+  const mesiIt = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+
+  const elenco = (automezzi || [])
+    .filter(m => {
+      if (!m.scadenza_revisione) return false;
+      const d = new Date(m.scadenza_revisione + "T00:00:00");
+      return d.getFullYear() === anno && d.getMonth() === mese;
+    })
+    .sort((a,b) => new Date(a.scadenza_revisione) - new Date(b.scadenza_revisione));
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(14);
+  doc.text("Polo Logistico 1 RGPT/CAP Vercelli", 14, 16);
+  doc.setFontSize(11);
+  doc.text(`Report revisioni — ${mesiIt[mese]} ${anno}`, 14, 24);
+  doc.setFontSize(9);
+  doc.text(`Generato il ${formatDataIt(oggi.toISOString().slice(0,10))}`, 14, 30);
+
+  let y = 42;
+  doc.setFontSize(9);
+  doc.setFont(undefined, "bold");
+  doc.text("Targa", 14, y);
+  doc.text("Marca/Modello", 45, y);
+  doc.text("Categoria", 100, y);
+  doc.text("Posizione", 135, y);
+  doc.text("Scadenza", 170, y);
+  doc.setFont(undefined, "normal");
+  y += 4;
+  doc.line(14, y, 196, y);
+  y += 6;
+
+  if (elenco.length === 0){
+    doc.text("Nessuna revisione in scadenza questo mese.", 14, y);
+  } else {
+    elenco.forEach(m => {
+      if (y > 280){ doc.addPage(); y = 20; }
+      doc.text(m.targa, 14, y);
+      doc.text(`${m.marca||""} ${m.modello||""}`.trim().slice(0,28), 45, y);
+      doc.text(m.categoria || "—", 100, y);
+      doc.text(m.posizione || "—", 135, y);
+      doc.text(formatDataIt(m.scadenza_revisione), 170, y);
+      y += 7;
+    });
+  }
+
+  doc.save(`report_revisioni_${mesiIt[mese].toLowerCase()}_${anno}.pdf`);
 }
 
 function renderAlertList(items, classe){
