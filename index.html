@@ -228,6 +228,189 @@ input,select,textarea{font-family:inherit;}
   text-align:center;padding:40px;color:var(--grigio-600);font-size:13px;
 }
 
+/* ---------- TOOLBAR FILTRI ---------- */
+.toolbar{
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  margin-bottom:18px;
+}
+.toolbar input[type="search"]{
+  flex:1;min-width:160px;padding:9px 12px;
+  border:1px solid var(--grigio-400);border-radius:8px;font-size:13.5px;
+}
+.toolbar select{
+  padding:9px 10px;border:1px solid var(--grigio-400);border-radius:8px;
+  font-size:13px;background:#fff;color:var(--grigio-800);
+}
+.toolbar .btn-add{
+  background:var(--blu-500);color:#fff;border:none;border-radius:8px;
+  padding:9px 16px;font-size:13.5px;font-weight:600;white-space:nowrap;
+}
+.toolbar .btn-add:hover{background:var(--blu-700);}
+.results-count{font-size:12px;color:var(--grigio-600);margin-bottom:12px;}
+
+/* ---------- GRIGLIA CARD MEZZI ---------- */
+.card-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  gap:16px;
+}
+.veicolo-card{
+  background:#fff;border-radius:var(--radius);overflow:hidden;
+  box-shadow:var(--shadow);cursor:pointer;
+  transition:transform .12s, box-shadow .12s;
+}
+.veicolo-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(11,37,69,0.12);}
+.veicolo-card .foto-wrap{
+  width:100%;aspect-ratio:4/3;background:var(--grigio-200);
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;position:relative;
+}
+.veicolo-card .foto-wrap img{width:100%;height:100%;object-fit:cover;}
+.veicolo-card .foto-wrap .ph{font-size:34px;color:var(--grigio-400);}
+.veicolo-card .badge-cat{
+  position:absolute;top:8px;left:8px;
+  background:rgba(11,37,69,0.85);color:#fff;
+  font-size:10px;font-weight:700;text-transform:uppercase;
+  padding:3px 8px;border-radius:6px;letter-spacing:.3px;
+}
+.veicolo-card .badge-stato{
+  position:absolute;top:8px;right:8px;
+  width:10px;height:10px;border-radius:50%;
+  border:2px solid #fff;
+}
+.veicolo-card .badge-stato.scaduto{background:var(--rosso);}
+.veicolo-card .badge-stato.avvicinamento{background:var(--giallo);}
+.veicolo-card .badge-stato.ok{background:var(--verde);}
+.veicolo-card .info{padding:12px 14px;}
+.veicolo-card .targa{
+  font-size:14.5px;font-weight:700;color:var(--blu-900);
+  font-family:monospace;letter-spacing:.5px;
+}
+.veicolo-card .modello{font-size:12.5px;color:var(--grigio-800);margin-top:2px;}
+.veicolo-card .meta{font-size:11.5px;color:var(--grigio-600);margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;}
+.veicolo-card .meta span{background:var(--grigio-100);padding:2px 7px;border-radius:5px;}
+
+/* ---------- MODAL ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(11,37,69,0.5);
+  display:flex;align-items:center;justify-content:center;
+  z-index:500;padding:20px;
+}
+.modal-box{
+  background:#fff;border-radius:var(--radius);
+  width:100%;max-width:760px;max-height:90vh;
+  display:flex;flex-direction:column;
+  box-shadow:0 24px 60px rgba(0,0,0,0.3);
+}
+.modal-head{
+  padding:18px 22px;border-bottom:1px solid var(--grigio-200);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.modal-head h3{margin:0;font-size:16px;color:var(--blu-900);font-family:monospace;}
+.modal-close{
+  background:none;border:none;font-size:20px;color:var(--grigio-600);
+  width:30px;height:30px;border-radius:6px;
+}
+.modal-close:hover{background:var(--grigio-100);}
+.modal-tabs{
+  display:flex;gap:4px;padding:0 22px;border-bottom:1px solid var(--grigio-200);
+  overflow-x:auto;
+}
+.modal-tab{
+  padding:11px 14px;font-size:13px;font-weight:600;color:var(--grigio-600);
+  border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;
+}
+.modal-tab.active{color:var(--blu-500);border-bottom-color:var(--blu-500);}
+.modal-body{padding:20px 22px;overflow-y:auto;flex:1;}
+
+/* ---------- FOTO 4 LATI ---------- */
+.foto-grid4{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:18px;
+}
+.foto-slot{
+  position:relative;aspect-ratio:4/3;border-radius:8px;
+  background:var(--grigio-200);overflow:hidden;
+  border:1.5px dashed var(--grigio-400);
+}
+.foto-slot img{width:100%;height:100%;object-fit:cover;}
+.foto-slot .lbl{
+  position:absolute;bottom:0;left:0;right:0;
+  background:rgba(11,37,69,0.75);color:#fff;font-size:11px;font-weight:600;
+  padding:4px 8px;text-align:center;
+}
+.foto-slot .ph{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100%;color:var(--grigio-600);font-size:11px;gap:4px;
+}
+.foto-slot .ph .ic{font-size:22px;}
+.foto-slot input[type="file"]{
+  position:absolute;inset:0;opacity:0;cursor:pointer;
+}
+.foto-slot.uploading::after{
+  content:"Caricamento…";position:absolute;inset:0;
+  background:rgba(255,255,255,0.85);display:flex;align-items:center;justify-content:center;
+  font-size:11px;color:var(--blu-700);
+}
+
+/* ---------- FORM GENERICO ---------- */
+.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.form-grid .full{grid-column:1 / -1;}
+.form-field label{
+  display:block;font-size:11.5px;font-weight:600;color:var(--grigio-800);margin-bottom:4px;
+}
+.form-field input, .form-field select, .form-field textarea{
+  width:100%;padding:8px 10px;border:1px solid var(--grigio-400);
+  border-radius:7px;font-size:13px;
+}
+.form-field textarea{resize:vertical;min-height:60px;}
+.form-field input:focus, .form-field select:focus, .form-field textarea:focus{
+  outline:none;border-color:var(--blu-500);
+}
+.form-checkbox{display:flex;align-items:center;gap:8px;margin-top:6px;}
+.form-checkbox input{width:auto;}
+.form-actions{
+  display:flex;justify-content:flex-end;gap:8px;margin-top:18px;
+  padding-top:14px;border-top:1px solid var(--grigio-200);
+}
+.btn-save{
+  background:var(--blu-500);color:#fff;border:none;border-radius:8px;
+  padding:9px 18px;font-size:13.5px;font-weight:600;
+}
+.btn-save:hover{background:var(--blu-700);}
+.btn-cancel{
+  background:none;border:1px solid var(--grigio-400);border-radius:8px;
+  padding:9px 18px;font-size:13.5px;font-weight:600;color:var(--grigio-800);
+}
+.btn-danger{
+  background:var(--rosso-bg);color:var(--rosso);border:none;border-radius:8px;
+  padding:9px 14px;font-size:12.5px;font-weight:600;
+}
+.btn-danger:hover{background:#f8d7d3;}
+
+/* ---------- STORICO (manutenzioni / movimenti) ---------- */
+.storico-toolbar{display:flex;justify-content:flex-end;margin-bottom:10px;}
+.btn-add-mini{
+  background:var(--blu-500);color:#fff;border:none;border-radius:7px;
+  padding:7px 13px;font-size:12.5px;font-weight:600;
+}
+.btn-add-mini:hover{background:var(--blu-700);}
+.storico-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.storico-table th{
+  text-align:left;font-size:11px;text-transform:uppercase;color:var(--grigio-600);
+  border-bottom:1px solid var(--grigio-200);padding:6px 8px;font-weight:700;
+}
+.storico-table td{padding:8px 8px;border-bottom:1px solid var(--grigio-100);}
+.storico-table tr:last-child td{border-bottom:none;}
+.storico-empty{
+  text-align:center;padding:22px;color:var(--grigio-600);font-size:12.5px;
+}
+.mini-form{
+  background:var(--grigio-100);border-radius:8px;padding:14px;margin-bottom:14px;
+}
+.row-del{
+  background:none;border:none;color:var(--rosso);font-size:11px;font-weight:600;cursor:pointer;
+}
+.row-del:hover{text-decoration:underline;}
+
 /* ---------- RESPONSIVE ---------- */
 @media (max-width:880px){
   #sidebar{transform:translateX(-100%);}
@@ -236,6 +419,10 @@ input,select,textarea{font-family:inherit;}
   #sidebar-toggle{display:flex;align-items:center;justify-content:center;}
   #page-content{padding:20px 16px 50px;}
   #topbar{padding:14px 18px 14px 60px;}
+  .form-grid{grid-template-columns:1fr;}
+  .foto-grid4{grid-template-columns:1fr 1fr;}
+  .modal-box{max-height:94vh;}
+  .storico-table{display:block;overflow-x:auto;white-space:nowrap;}
 }
 </style>
 </head>
@@ -602,7 +789,18 @@ async function renderHome(){
 
   content.querySelectorAll(".alert-row[data-modulo]").forEach(el => {
     el.addEventListener("click", () => {
-      location.hash = "#/" + el.dataset.modulo;
+      const modulo = el.dataset.modulo;
+      const rif = parseInt(el.dataset.rif);
+      if (modulo === "automezzi"){
+        location.hash = "#/automezzi";
+        // attendi che la pagina carichi la lista, poi apri il modal del mezzo
+        setTimeout(() => {
+          const m = _automezziCache.find(x => x.id === rif);
+          if (m) apriModalMezzo(m.id);
+        }, 400);
+      } else {
+        location.hash = "#/" + modulo;
+      }
     });
   });
 }
@@ -622,8 +820,21 @@ function renderAlertList(items, classe){
 }
 
 /* ============================================================
-   PAGINA: AUTOMEZZI (placeholder — prossimo step)
+   MODULO AUTOMEZZI
    ============================================================ */
+const STORAGE_BUCKET_MEZZI = "mezzi-foto";
+let _automezziCache = [];
+let _automezziFiltro = { search:"", categoria:"", posizione:"", proprietario:"" };
+
+function pathFotoMezzo(targa, lato){
+  // lato: fronte | retro | sx | dx
+  return `${targa}/${lato}.jpg`;
+}
+function urlFotoMezzo(targa, lato){
+  const { data } = sb.storage.from(STORAGE_BUCKET_MEZZI).getPublicUrl(pathFotoMezzo(targa, lato));
+  return data.publicUrl;
+}
+
 async function renderAutomezzi(){
   const content = document.getElementById("page-content");
   const { data, error } = await sb.from("automezzi").select("*").order("targa");
@@ -632,15 +843,484 @@ async function renderAutomezzi(){
     content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`;
     return;
   }
+  _automezziCache = data;
 
   content.innerHTML = `
-    <div class="placeholder-page">
-      <h3>🚐 Automezzi</h3>
-      <p>${data.length} mezzi caricati correttamente dal database.</p>
-      <p style="font-size:12px;">Modulo completo (scheda mezzo, manutenzioni, movimentazioni) in arrivo nel prossimo step.</p>
+    <div class="toolbar">
+      <input type="search" id="am-search" placeholder="Cerca per targa…" value="${escapeHtml(_automezziFiltro.search)}">
+      <select id="am-filtro-categoria">
+        <option value="">Tutte le categorie</option>
+        ${["AUTOCARRO","PULMINO","PICKUP","AUTOVETTURA","CARRELLO","ATTREZZATURA","MMT"].map(c =>
+          `<option value="${c}" ${_automezziFiltro.categoria===c?"selected":""}>${c}</option>`).join("")}
+      </select>
+      <select id="am-filtro-posizione">
+        <option value="">Tutte le posizioni</option>
+        ${["POLO VERCELLI","SEZIONE","VOLONTARIO"].map(p =>
+          `<option value="${p}" ${_automezziFiltro.posizione===p?"selected":""}>${p}</option>`).join("")}
+      </select>
+      <select id="am-filtro-proprietario">
+        <option value="">Tutti i proprietari</option>
+        ${["ANA","CAP","REGIONE PIEMONTE"].map(p =>
+          `<option value="${p}" ${_automezziFiltro.proprietario===p?"selected":""}>${p}</option>`).join("")}
+      </select>
+      <button class="btn-add" id="am-btn-nuovo">+ Nuovo mezzo</button>
+    </div>
+    <div class="results-count" id="am-results-count"></div>
+    <div class="card-grid" id="am-grid"></div>
+  `;
+
+  document.getElementById("am-search").addEventListener("input", e => { _automezziFiltro.search = e.target.value; renderAutomezziGrid(); });
+  document.getElementById("am-filtro-categoria").addEventListener("change", e => { _automezziFiltro.categoria = e.target.value; renderAutomezziGrid(); });
+  document.getElementById("am-filtro-posizione").addEventListener("change", e => { _automezziFiltro.posizione = e.target.value; renderAutomezziGrid(); });
+  document.getElementById("am-filtro-proprietario").addEventListener("change", e => { _automezziFiltro.proprietario = e.target.value; renderAutomezziGrid(); });
+  document.getElementById("am-btn-nuovo").addEventListener("click", () => apriModalMezzo(null));
+
+  renderAutomezziGrid();
+}
+
+function renderAutomezziGrid(){
+  const f = _automezziFiltro;
+  const filtrati = _automezziCache.filter(m => {
+    if (f.search && !m.targa.toLowerCase().includes(f.search.toLowerCase())) return false;
+    if (f.categoria && m.categoria !== f.categoria) return false;
+    if (f.posizione && m.posizione !== f.posizione) return false;
+    if (f.proprietario && m.proprietario !== f.proprietario) return false;
+    return true;
+  });
+
+  document.getElementById("am-results-count").textContent = `${filtrati.length} di ${_automezziCache.length} mezzi`;
+
+  const grid = document.getElementById("am-grid");
+  if (filtrati.length === 0){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="ic">🔍</div>Nessun mezzo corrisponde ai filtri.</div>`;
+    return;
+  }
+
+  grid.innerHTML = filtrati.map(m => {
+    const stato = m.scadenza_revisione ? statoScadenza(m.scadenza_revisione, 30) : "ok";
+    const fotoUrl = m.foto_fronte ? urlFotoMezzo(m.targa, "fronte") : null;
+    return `
+      <div class="veicolo-card" data-id="${m.id}">
+        <div class="foto-wrap">
+          ${fotoUrl ? `<img src="${fotoUrl}" alt="${escapeHtml(m.targa)}" onerror="this.parentElement.innerHTML='<span class=ph>🚐</span>'">` : `<span class="ph">🚐</span>`}
+          ${m.categoria ? `<span class="badge-cat">${m.categoria}</span>` : ""}
+          <span class="badge-stato ${stato}" title="Revisione: ${stato}"></span>
+        </div>
+        <div class="info">
+          <div class="targa">${escapeHtml(m.targa)}</div>
+          <div class="modello">${escapeHtml(m.marca || "")} ${escapeHtml(m.modello || "")}</div>
+          <div class="meta">
+            ${m.posizione ? `<span>${m.posizione}</span>` : ""}
+            ${m.proprietario ? `<span>${m.proprietario}</span>` : ""}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll(".veicolo-card").forEach(el => {
+    el.addEventListener("click", () => apriModalMezzo(parseInt(el.dataset.id)));
+  });
+}
+
+/* ---------- MODAL MEZZO ---------- */
+let _modalMezzoCorrente = null;
+let _modalMezzoTab = "dati";
+
+function apriModalMezzo(id){
+  _modalMezzoCorrente = id ? _automezziCache.find(m => m.id === id) : null;
+  _modalMezzoTab = "dati";
+  renderModalMezzo();
+}
+
+function chiudiModal(){
+  const ov = document.getElementById("modal-overlay");
+  if (ov) ov.remove();
+}
+
+function renderModalMezzo(){
+  chiudiModal();
+  const m = _modalMezzoCorrente;
+  const isNuovo = !m;
+
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${isNuovo ? "Nuovo mezzo" : escapeHtml(m.targa)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      ${isNuovo ? "" : `
+        <div class="modal-tabs">
+          <div class="modal-tab ${_modalMezzoTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
+          <div class="modal-tab ${_modalMezzoTab==="foto"?"active":""}" data-tab="foto">Foto</div>
+          <div class="modal-tab ${_modalMezzoTab==="manutenzioni"?"active":""}" data-tab="manutenzioni">Manutenzioni</div>
+          <div class="modal-tab ${_modalMezzoTab==="movimenti"?"active":""}" data-tab="movimenti">Movimentazioni</div>
+        </div>
+      `}
+      <div class="modal-body" id="modal-body"></div>
     </div>
   `;
+  document.body.appendChild(overlay);
+
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+
+  overlay.querySelectorAll(".modal-tab").forEach(tab => {
+    tab.addEventListener("click", () => { _modalMezzoTab = tab.dataset.tab; renderModalMezzo(); });
+  });
+
+  if (isNuovo || _modalMezzoTab === "dati") renderTabDatiMezzo();
+  else if (_modalMezzoTab === "foto") renderTabFotoMezzo();
+  else if (_modalMezzoTab === "manutenzioni") renderTabManutenzioni();
+  else if (_modalMezzoTab === "movimenti") renderTabMovimentiMezzo();
 }
+
+function renderTabDatiMezzo(){
+  const m = _modalMezzoCorrente || {};
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <form id="form-mezzo">
+      <div class="form-grid">
+        <div class="form-field"><label>Targa *</label><input name="targa" required value="${escapeHtml(m.targa||"")}"></div>
+        <div class="form-field"><label>Marca</label><input name="marca" value="${escapeHtml(m.marca||"")}"></div>
+        <div class="form-field"><label>Modello</label><input name="modello" value="${escapeHtml(m.modello||"")}"></div>
+        <div class="form-field"><label>Posti</label><input name="posti" type="number" value="${m.posti??""}"></div>
+        <div class="form-field">
+          <label>Categoria</label>
+          <select name="categoria">
+            <option value="">—</option>
+            ${["AUTOCARRO","PULMINO","PICKUP","AUTOVETTURA","CARRELLO","ATTREZZATURA","MMT"].map(c =>
+              `<option value="${c}" ${m.categoria===c?"selected":""}>${c}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Proprietario</label>
+          <select name="proprietario">
+            <option value="">—</option>
+            ${["ANA","CAP","REGIONE PIEMONTE"].map(p =>
+              `<option value="${p}" ${m.proprietario===p?"selected":""}>${p}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Posizione</label>
+          <select name="posizione">
+            <option value="">—</option>
+            ${["POLO VERCELLI","SEZIONE","VOLONTARIO"].map(p =>
+              `<option value="${p}" ${m.posizione===p?"selected":""}>${p}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field"><label>Scadenza revisione</label><input name="scadenza_revisione" type="date" value="${m.scadenza_revisione||""}"></div>
+        <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(m.descrizione||"")}"></div>
+        <div class="form-field"><label>Carte carburante</label><input name="carte_carburante" value="${escapeHtml(m.carte_carburante||"")}"></div>
+        <div class="form-field" style="display:flex;align-items:flex-end;">
+          <div class="form-checkbox"><input type="checkbox" name="assicurato_2026" ${m.assicurato_2026?"checked":""}><label style="margin:0;">Assicurato 2026</label></div>
+        </div>
+        <div class="form-field full"><label>Note</label><textarea name="note">${escapeHtml(m.note||"")}</textarea></div>
+      </div>
+      <div class="form-actions">
+        ${m.id ? `<button type="button" class="btn-danger" id="btn-elimina-mezzo">Elimina mezzo</button>` : ""}
+        <button type="button" class="btn-cancel" id="btn-cancel-mezzo">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("btn-cancel-mezzo").addEventListener("click", chiudiModal);
+  if (m.id) document.getElementById("btn-elimina-mezzo").addEventListener("click", () => eliminaMezzo(m.id));
+
+  document.getElementById("form-mezzo").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      targa: fd.get("targa").trim().toUpperCase(),
+      marca: fd.get("marca") || null,
+      modello: fd.get("modello") || null,
+      posti: fd.get("posti") ? parseInt(fd.get("posti")) : null,
+      categoria: fd.get("categoria") || null,
+      proprietario: fd.get("proprietario") || null,
+      posizione: fd.get("posizione") || null,
+      scadenza_revisione: fd.get("scadenza_revisione") || null,
+      descrizione: fd.get("descrizione") || null,
+      carte_carburante: fd.get("carte_carburante") || null,
+      assicurato_2026: fd.get("assicurato_2026") === "on",
+      note: fd.get("note") || null
+    };
+
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let result;
+    if (m.id){
+      result = await sb.from("automezzi").update(payload).eq("id", m.id).select().single();
+    } else {
+      result = await sb.from("automezzi").insert(payload).select().single();
+    }
+
+    if (result.error){
+      alert("Errore salvataggio: " + result.error.message);
+      btn.disabled = false; btn.textContent = "Salva";
+      return;
+    }
+
+    chiudiModal();
+    renderAutomezzi();
+    refreshAlertBadge();
+  });
+}
+
+async function eliminaMezzo(id){
+  if (!confirm("Eliminare definitivamente questo mezzo? L'operazione non è reversibile.")) return;
+  const { error } = await sb.from("automezzi").delete().eq("id", id);
+  if (error){ alert("Errore: " + error.message); return; }
+  chiudiModal();
+  renderAutomezzi();
+  refreshAlertBadge();
+}
+
+function renderTabFotoMezzo(){
+  const m = _modalMezzoCorrente;
+  const body = document.getElementById("modal-body");
+  const lati = [
+    { key:"fronte", label:"Fronte (copertina)" },
+    { key:"retro", label:"Retro" },
+    { key:"sx", label:"Fianco sinistro" },
+    { key:"dx", label:"Fianco destro" }
+  ];
+
+  body.innerHTML = `
+    <div class="foto-grid4">
+      ${lati.map(l => {
+        const has = m["foto_" + l.key];
+        const url = has ? urlFotoMezzo(m.targa, l.key) + "?t=" + Date.now() : null;
+        return `
+          <div class="foto-slot" id="slot-${l.key}">
+            ${url ? `<img src="${url}">` : `<div class="ph"><span class="ic">📷</span>${l.label}</div>`}
+            <div class="lbl">${l.label}</div>
+            <input type="file" accept="image/*" data-lato="${l.key}">
+          </div>
+        `;
+      }).join("")}
+    </div>
+    <p style="font-size:12px;color:var(--grigio-600);">Tocca un riquadro per caricare o sostituire la foto. Le immagini si salvano automaticamente.</p>
+  `;
+
+  body.querySelectorAll('input[type="file"]').forEach(input => {
+    input.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const lato = e.target.dataset.lato;
+      const slot = document.getElementById("slot-" + lato);
+      slot.classList.add("uploading");
+
+      const path = pathFotoMezzo(m.targa, lato);
+      const { error } = await sb.storage.from(STORAGE_BUCKET_MEZZI).upload(path, file, { upsert: true, contentType: file.type });
+
+      slot.classList.remove("uploading");
+
+      if (error){
+        alert("Errore upload: " + error.message);
+        return;
+      }
+
+      // aggiorna flag in DB
+      const campo = "foto_" + lato;
+      await sb.from("automezzi").update({ [campo]: true }).eq("id", m.id);
+      m[campo] = true;
+      const idx = _automezziCache.findIndex(x => x.id === m.id);
+      if (idx >= 0) _automezziCache[idx][campo] = true;
+
+      renderTabFotoMezzo();
+      if (lato === "fronte") renderAutomezziGrid();
+    });
+  });
+}
+
+function renderTabManutenzioni(){
+  const m = _modalMezzoCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-manutenzione">+ Nuovo intervento</button></div>
+    <div id="manutenzioni-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-nuova-manutenzione").addEventListener("click", () => mostraFormManutenzione());
+  caricaManutenzioni();
+}
+
+async function caricaManutenzioni(){
+  const m = _modalMezzoCorrente;
+  const { data, error } = await sb.from("manutenzioni_automezzi").select("*").eq("automezzo_id", m.id).order("data_intervento", { ascending:false });
+  const wrap = document.getElementById("manutenzioni-list");
+  if (!wrap) return;
+
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun intervento registrato.</div>`; return; }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Data</th><th>Tipo</th><th>Km</th><th>Costo</th><th>Officina</th><th>Prox. scad.</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td>${formatDataIt(r.data_intervento)}</td>
+            <td>${escapeHtml(r.tipo||"—")}</td>
+            <td>${r.km??"—"}</td>
+            <td>${r.costo? "€ "+Number(r.costo).toFixed(2) : "—"}</td>
+            <td>${escapeHtml(r.officina||"—")}</td>
+            <td>${r.prossima_scadenza? formatDataIt(r.prossima_scadenza) : "—"}</td>
+            <td><button class="row-del" data-id="${r.id}">Elimina</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questo intervento?")) return;
+    await sb.from("manutenzioni_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    caricaManutenzioni();
+    refreshAlertBadge();
+  }));
+}
+
+function mostraFormManutenzione(){
+  const m = _modalMezzoCorrente;
+  const wrap = document.getElementById("manutenzioni-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-manutenzione">
+      <div class="form-grid">
+        <div class="form-field"><label>Data intervento</label><input type="date" name="data_intervento" value="${new Date().toISOString().slice(0,10)}" required></div>
+        <div class="form-field"><label>Tipo</label><input name="tipo" placeholder="Tagliando, gomme, freni…"></div>
+        <div class="form-field"><label>Km</label><input type="number" name="km"></div>
+        <div class="form-field"><label>Costo (€)</label><input type="number" step="0.01" name="costo"></div>
+        <div class="form-field"><label>Officina</label><input name="officina"></div>
+        <div class="form-field"><label>Prossima scadenza</label><input type="date" name="prossima_scadenza"></div>
+        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-manutenzione">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-manutenzione").addEventListener("click", () => form.remove());
+  document.getElementById("form-manutenzione").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      automezzo_id: m.id,
+      data_intervento: fd.get("data_intervento"),
+      tipo: fd.get("tipo") || null,
+      km: fd.get("km") ? parseInt(fd.get("km")) : null,
+      costo: fd.get("costo") ? parseFloat(fd.get("costo")) : null,
+      officina: fd.get("officina") || null,
+      prossima_scadenza: fd.get("prossima_scadenza") || null,
+      note: fd.get("note") || null,
+      created_by: state.user.id
+    };
+    const { error } = await sb.from("manutenzioni_automezzi").insert(payload);
+    if (error){ alert("Errore: " + error.message); return; }
+    form.remove();
+    caricaManutenzioni();
+    refreshAlertBadge();
+  });
+}
+
+function renderTabMovimentiMezzo(){
+  const m = _modalMezzoCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-movimento">+ Nuova movimentazione</button></div>
+    <div id="movimenti-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-nuovo-movimento").addEventListener("click", () => mostraFormMovimento());
+  caricaMovimenti();
+}
+
+async function caricaMovimenti(){
+  const m = _modalMezzoCorrente;
+  const { data, error } = await sb.from("movimenti_automezzi").select("*").eq("automezzo_id", m.id).order("data_uscita", { ascending:false });
+  const wrap = document.getElementById("movimenti-list");
+  if (!wrap) return;
+
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessuna movimentazione registrata.</div>`; return; }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Uscita</th><th>Rientro</th><th>Autista</th><th>Destinazione</th><th>Motivo</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td>${formatDataIt(r.data_uscita)}</td>
+            <td>${r.data_rientro? formatDataIt(r.data_rientro) : "—"}</td>
+            <td>${escapeHtml(r.autista||"—")}</td>
+            <td>${escapeHtml(r.destinazione||"—")}</td>
+            <td>${escapeHtml(r.motivo||"—")}</td>
+            <td><button class="row-del" data-id="${r.id}">Elimina</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questa movimentazione?")) return;
+    await sb.from("movimenti_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    caricaMovimenti();
+  }));
+}
+
+function mostraFormMovimento(){
+  const m = _modalMezzoCorrente;
+  const wrap = document.getElementById("movimenti-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-movimento">
+      <div class="form-grid">
+        <div class="form-field"><label>Data uscita</label><input type="date" name="data_uscita" value="${new Date().toISOString().slice(0,10)}" required></div>
+        <div class="form-field"><label>Data rientro</label><input type="date" name="data_rientro"></div>
+        <div class="form-field"><label>Autista</label><input name="autista"></div>
+        <div class="form-field"><label>Destinazione</label><input name="destinazione"></div>
+        <div class="form-field"><label>Km partenza</label><input type="number" name="km_partenza"></div>
+        <div class="form-field"><label>Km arrivo</label><input type="number" name="km_arrivo"></div>
+        <div class="form-field full"><label>Motivo</label><input name="motivo"></div>
+        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-movimento">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-movimento").addEventListener("click", () => form.remove());
+  document.getElementById("form-movimento").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      automezzo_id: m.id,
+      data_uscita: fd.get("data_uscita"),
+      data_rientro: fd.get("data_rientro") || null,
+      autista: fd.get("autista") || null,
+      destinazione: fd.get("destinazione") || null,
+      km_partenza: fd.get("km_partenza") ? parseInt(fd.get("km_partenza")) : null,
+      km_arrivo: fd.get("km_arrivo") ? parseInt(fd.get("km_arrivo")) : null,
+      motivo: fd.get("motivo") || null,
+      note: fd.get("note") || null,
+      created_by: state.user.id
+    };
+    const { error } = await sb.from("movimenti_automezzi").insert(payload);
+    if (error){ alert("Errore: " + error.message); return; }
+    form.remove();
+    caricaMovimenti();
+  });
+}
+
 
 /* ============================================================
    PAGINA: TLC (placeholder — prossimo step)
