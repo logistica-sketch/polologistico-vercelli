@@ -957,6 +957,7 @@ function renderModalMezzo(){
         <div class="modal-tabs">
           <div class="modal-tab ${_modalMezzoTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
           <div class="modal-tab ${_modalMezzoTab==="foto"?"active":""}" data-tab="foto">Foto</div>
+          <div class="modal-tab ${_modalMezzoTab==="documenti"?"active":""}" data-tab="documenti">Documenti</div>
           <div class="modal-tab ${_modalMezzoTab==="manutenzioni"?"active":""}" data-tab="manutenzioni">Manutenzioni</div>
           <div class="modal-tab ${_modalMezzoTab==="movimenti"?"active":""}" data-tab="movimenti">Movimentazioni</div>
         </div>
@@ -975,6 +976,7 @@ function renderModalMezzo(){
 
   if (isNuovo || _modalMezzoTab === "dati") renderTabDatiMezzo();
   else if (_modalMezzoTab === "foto") renderTabFotoMezzo();
+  else if (_modalMezzoTab === "documenti") renderTabDocumenti();
   else if (_modalMezzoTab === "manutenzioni") renderTabManutenzioni();
   else if (_modalMezzoTab === "movimenti") renderTabMovimentiMezzo();
 }
@@ -1151,6 +1153,114 @@ function renderTabFotoMezzo(){
       renderTabFotoMezzo();
       if (lato === "fronte") renderAutomezziGrid();
     });
+  });
+}
+
+const STORAGE_BUCKET_DOC_MEZZI = "mezzi-documenti";
+const TIPI_DOCUMENTO = [
+  { value:"libretto", label:"Libretto di circolazione" },
+  { value:"assicurazione", label:"Assicurazione" },
+  { value:"fattura_manutenzione", label:"Fattura manutenzione" },
+  { value:"altro", label:"Altro" }
+];
+
+function renderTabDocumenti(){
+  const m = _modalMezzoCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-documento">+ Carica documento</button></div>
+    <div id="documenti-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-nuovo-documento").addEventListener("click", () => mostraFormDocumento());
+  caricaDocumenti();
+}
+
+async function caricaDocumenti(){
+  const m = _modalMezzoCorrente;
+  const { data, error } = await sb.from("documenti_automezzi").select("*").eq("automezzo_id", m.id).order("created_at", { ascending:false });
+  const wrap = document.getElementById("documenti-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun documento caricato.</div>`; return; }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Tipo</th><th>File</th><th>Data doc.</th><th></th><th></th></tr></thead>
+      <tbody>
+        ${data.map(d => {
+          const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).getPublicUrl(d.storage_path);
+          const lbl = TIPI_DOCUMENTO.find(t => t.value === d.tipo)?.label || d.tipo;
+          return `
+            <tr>
+              <td>${lbl}</td>
+              <td>${escapeHtml(d.nome_file)}</td>
+              <td>${d.data_documento ? formatDataIt(d.data_documento) : "—"}</td>
+              <td><a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a></td>
+              <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questo documento?")) return;
+    await sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).remove([b.dataset.path]);
+    await sb.from("documenti_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    caricaDocumenti();
+  }));
+}
+
+function mostraFormDocumento(){
+  const m = _modalMezzoCorrente;
+  const wrap = document.getElementById("documenti-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-documento">
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Tipo</label>
+          <select name="tipo" required>
+            ${TIPI_DOCUMENTO.map(t => `<option value="${t.value}">${t.label}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field"><label>Data documento</label><input type="date" name="data_documento"></div>
+        <div class="form-field full"><label>File (PDF o immagine)</label><input type="file" name="file" accept=".pdf,image/*" required></div>
+        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-documento">Annulla</button>
+        <button type="submit" class="btn-save">Carica</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-documento").addEventListener("click", () => form.remove());
+  document.getElementById("form-documento").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const file = fd.get("file");
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Caricamento…";
+
+    const path = `${m.targa}/${Date.now()}_${file.name}`;
+    const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).upload(path, file);
+    if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Carica"; return; }
+
+    const { error } = await sb.from("documenti_automezzi").insert({
+      automezzo_id: m.id,
+      tipo: fd.get("tipo"),
+      nome_file: file.name,
+      storage_path: path,
+      data_documento: fd.get("data_documento") || null,
+      note: fd.get("note") || null,
+      created_by: state.user.id
+    });
+    if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Carica"; return; }
+
+    form.remove();
+    caricaDocumenti();
   });
 }
 
