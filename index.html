@@ -6,6 +6,7 @@
 <title>Polo Logistico 1 RGPT/CAP Vercelli</title>
 <link rel="icon" href="data:,">
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <style>
 :root{
   --blu-900:#0b2545;
@@ -1099,7 +1100,7 @@ function renderTabFotoMezzo(){
           <div class="foto-slot" id="slot-${l.key}">
             ${url ? `<img src="${url}">` : `<div class="ph"><span class="ic">📷</span>${l.label}</div>`}
             <div class="lbl">${l.label}</div>
-            <input type="file" accept="image/*" data-lato="${l.key}">
+            <input type="file" accept="image/*,.heic,.heif" data-lato="${l.key}">
           </div>
         `;
       }).join("")}
@@ -1109,14 +1110,29 @@ function renderTabFotoMezzo(){
 
   body.querySelectorAll('input[type="file"]').forEach(input => {
     input.addEventListener("change", async (e) => {
-      const file = e.target.files[0];
+      let file = e.target.files[0];
       if (!file) return;
       const lato = e.target.dataset.lato;
       const slot = document.getElementById("slot-" + lato);
       slot.classList.add("uploading");
 
+      // Rileva HEIC/HEIF (foto iPhone) e converte in JPEG prima dell'upload,
+      // perché Supabase Storage non accetta quel formato.
+      const isHeic = /\.heic$/i.test(file.name) || /\.heif$/i.test(file.name) ||
+                     file.type === "image/heic" || file.type === "image/heif";
+      if (isHeic){
+        try{
+          const blob = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.85 });
+          file = new File([blob], file.name.replace(/\.(heic|heif)$/i, ".jpg"), { type: "image/jpeg" });
+        }catch(convErr){
+          slot.classList.remove("uploading");
+          alert("Errore nella conversione della foto HEIC. Riprova o usa un'altra foto.");
+          return;
+        }
+      }
+
       const path = pathFotoMezzo(m.targa, lato);
-      const { error } = await sb.storage.from(STORAGE_BUCKET_MEZZI).upload(path, file, { upsert: true, contentType: file.type });
+      const { error } = await sb.storage.from(STORAGE_BUCKET_MEZZI).upload(path, file, { upsert: true, contentType: "image/jpeg" });
 
       slot.classList.remove("uploading");
 
