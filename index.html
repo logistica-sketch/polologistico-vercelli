@@ -764,7 +764,7 @@ async function renderHome(){
 
   content.innerHTML = `
     <div class="toolbar" style="justify-content:flex-end;margin-bottom:14px;">
-      <button class="btn-add" id="btn-report-revisioni">📄 Report revisioni del mese</button>
+      <button class="btn-add" id="btn-report-revisioni">📄 Report revisioni scadute/in scadenza</button>
     </div>
     <div class="alert-grid">
       <div class="stat-card">
@@ -814,16 +814,10 @@ async function renderHome(){
 
 function generaReportRevisioniMese(automezzi){
   const oggi = new Date();
-  const anno = oggi.getFullYear();
-  const mese = oggi.getMonth();
   const mesiIt = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
 
   const elenco = (automezzi || [])
-    .filter(m => {
-      if (!m.scadenza_revisione) return false;
-      const d = new Date(m.scadenza_revisione + "T00:00:00");
-      return d.getFullYear() === anno && d.getMonth() === mese;
-    })
+    .filter(m => m.scadenza_revisione && statoScadenza(m.scadenza_revisione, 30) !== "ok")
     .sort((a,b) => new Date(a.scadenza_revisione) - new Date(b.scadenza_revisione));
 
   const { jsPDF } = window.jspdf;
@@ -831,7 +825,7 @@ function generaReportRevisioniMese(automezzi){
   doc.setFontSize(14);
   doc.text("Polo Logistico 1 RGPT/CAP Vercelli", 14, 16);
   doc.setFontSize(11);
-  doc.text(`Report revisioni — ${mesiIt[mese]} ${anno}`, 14, 24);
+  doc.text(`Report revisioni scadute e in scadenza`, 14, 24);
   doc.setFontSize(9);
   doc.text(`Generato il ${formatDataIt(oggi.toISOString().slice(0,10))}`, 14, 30);
 
@@ -849,20 +843,23 @@ function generaReportRevisioniMese(automezzi){
   y += 6;
 
   if (elenco.length === 0){
-    doc.text("Nessuna revisione in scadenza questo mese.", 14, y);
+    doc.text("Nessuna revisione scaduta o in scadenza.", 14, y);
   } else {
     elenco.forEach(m => {
       if (y > 280){ doc.addPage(); y = 20; }
+      const scaduto = statoScadenza(m.scadenza_revisione, 30) === "scaduto";
+      if (scaduto) doc.setTextColor(192,57,43); else doc.setTextColor(0,0,0);
       doc.text(m.targa, 14, y);
       doc.text(`${m.marca||""} ${m.modello||""}`.trim().slice(0,28), 45, y);
       doc.text(m.categoria || "—", 100, y);
       doc.text(m.posizione || "—", 135, y);
       doc.text(formatDataIt(m.scadenza_revisione), 170, y);
+      doc.setTextColor(0,0,0);
       y += 7;
     });
   }
 
-  doc.save(`report_revisioni_${mesiIt[mese].toLowerCase()}_${anno}.pdf`);
+  doc.save(`report_revisioni_${oggi.toISOString().slice(0,10)}.pdf`);
 }
 
 function renderAlertList(items, classe){
