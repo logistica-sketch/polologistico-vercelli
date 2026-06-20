@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Polo Logistico 1 RGPT/CAP Vercelli</title>
+<link rel="icon" href="data:,">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --blu-900:#0b2545;
+  --blu-700:#13315c;
+  --blu-500:#1d4e89;
+  --blu-300:#3a6ea5;
+  --grigio-100:#f4f6f9;
+  --grigio-200:#e6e9ee;
+  --grigio-400:#c2c8d2;
+  --grigio-600:#8a93a3;
+  --grigio-800:#3d4452;
+  --rosso:#c0392b;
+  --rosso-bg:#fdecea;
+  --giallo:#b8860b;
+  --giallo-bg:#fdf3da;
+  --verde:#2e7d32;
+  --verde-bg:#eaf6ea;
+  --bianco:#ffffff;
+  --radius:10px;
+  --shadow:0 1px 3px rgba(11,37,69,0.08), 0 1px 2px rgba(11,37,69,0.06);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;}
+body{
+  font-family:var(--font);
+  background:var(--grigio-100);
+  color:var(--grigio-800);
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit;text-decoration:none;}
+button{font-family:inherit;cursor:pointer;}
+input,select,textarea{font-family:inherit;}
+
+/* ---------- LOGIN ---------- */
+#login-screen{
+  position:fixed;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--blu-900),var(--blu-500));
+  z-index:1000;
+}
+.login-box{
+  background:var(--bianco);
+  border-radius:var(--radius);
+  padding:36px 32px;
+  width:100%;
+  max-width:360px;
+  box-shadow:0 20px 60px rgba(0,0,0,0.25);
+}
+.login-box h1{
+  font-size:18px;margin:0 0 4px;color:var(--blu-900);
+}
+.login-box p.sub{
+  margin:0 0 24px;color:var(--grigio-600);font-size:13px;
+}
+.field{margin-bottom:14px;}
+.field label{
+  display:block;font-size:12px;font-weight:600;
+  color:var(--grigio-800);margin-bottom:5px;
+}
+.field input{
+  width:100%;padding:10px 12px;
+  border:1px solid var(--grigio-400);
+  border-radius:8px;font-size:14px;
+}
+.field input:focus{outline:none;border-color:var(--blu-500);}
+.btn{
+  width:100%;padding:11px;border:none;border-radius:8px;
+  background:var(--blu-500);color:#fff;font-size:14px;font-weight:600;
+  margin-top:6px;transition:background .15s;
+}
+.btn:hover{background:var(--blu-700);}
+.btn:disabled{opacity:.6;cursor:default;}
+.btn-secondary{
+  background:transparent;color:var(--blu-500);border:1px solid var(--grigio-400);
+}
+.btn-secondary:hover{background:var(--grigio-100);}
+.login-error{
+  background:var(--rosso-bg);color:var(--rosso);
+  padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:14px;
+}
+.login-msg-ok{
+  background:var(--verde-bg);color:var(--verde);
+  padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:14px;
+}
+.login-switch{
+  text-align:center;margin-top:16px;font-size:13px;color:var(--grigio-600);
+}
+.login-switch span{color:var(--blu-500);font-weight:600;cursor:pointer;}
+
+/* ---------- LAYOUT ---------- */
+#app-shell{display:none;min-height:100vh;}
+#app-shell.visible{display:flex;}
+
+#sidebar{
+  width:230px;flex-shrink:0;
+  background:var(--blu-900);
+  color:#cdd9ea;
+  display:flex;flex-direction:column;
+  position:fixed;top:0;left:0;bottom:0;
+  z-index:100;
+  transition:transform .2s ease;
+}
+.sidebar-header{
+  padding:20px 18px 14px;
+  border-bottom:1px solid rgba(255,255,255,0.08);
+}
+.sidebar-header .org{font-size:11px;letter-spacing:.5px;color:#8aa3c7;text-transform:uppercase;}
+.sidebar-header .title{font-size:15px;font-weight:700;color:#fff;margin-top:3px;line-height:1.3;}
+
+.nav-list{flex:1;padding:14px 10px;overflow-y:auto;}
+.nav-item{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;border-radius:8px;
+  font-size:13.5px;font-weight:500;
+  color:#cdd9ea;margin-bottom:2px;
+  cursor:pointer;
+}
+.nav-item:hover{background:rgba(255,255,255,0.06);color:#fff;}
+.nav-item.active{background:var(--blu-500);color:#fff;}
+.nav-item .ic{width:18px;text-align:center;font-size:14px;}
+.nav-badge{
+  margin-left:auto;background:var(--rosso);color:#fff;
+  font-size:10px;font-weight:700;border-radius:999px;
+  padding:1px 6px;min-width:16px;text-align:center;
+}
+
+.sidebar-footer{
+  padding:14px 16px;border-top:1px solid rgba(255,255,255,0.08);
+}
+.sidebar-user{font-size:12.5px;color:#fff;font-weight:600;}
+.sidebar-role{font-size:11px;color:#8aa3c7;margin-top:2px;}
+.sidebar-logout{
+  margin-top:10px;font-size:12px;color:#e09b96;cursor:pointer;font-weight:600;
+}
+.sidebar-logout:hover{color:#fff;}
+
+#sidebar-toggle{
+  display:none;
+  position:fixed;top:14px;left:14px;z-index:200;
+  background:var(--blu-900);color:#fff;border:none;
+  width:38px;height:38px;border-radius:8px;font-size:16px;
+  box-shadow:var(--shadow);
+}
+
+#main-area{
+  margin-left:230px;
+  flex:1;
+  min-width:0;
+  display:flex;flex-direction:column;
+}
+#topbar{
+  background:var(--bianco);
+  border-bottom:1px solid var(--grigio-200);
+  padding:14px 28px;
+  display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:50;
+}
+#topbar h2{margin:0;font-size:17px;color:var(--blu-900);}
+#topbar .topbar-sub{font-size:12px;color:var(--grigio-600);margin-top:2px;}
+
+#page-content{padding:24px 28px 60px;flex:1;}
+
+/* ---------- COMPONENTI COMUNI ---------- */
+.alert-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:14px;margin-bottom:26px;
+}
+.stat-card{
+  background:#fff;border-radius:var(--radius);padding:16px 18px;
+  box-shadow:var(--shadow);
+}
+.stat-card .num{font-size:26px;font-weight:700;color:var(--blu-900);}
+.stat-card .lbl{font-size:12px;color:var(--grigio-600);margin-top:2px;}
+
+.section-title{
+  font-size:14px;font-weight:700;color:var(--blu-900);
+  margin:28px 0 12px;text-transform:uppercase;letter-spacing:.3px;
+}
+.section-title:first-child{margin-top:0;}
+
+.alert-list{display:flex;flex-direction:column;gap:8px;}
+.alert-row{
+  display:flex;align-items:center;gap:12px;
+  background:#fff;border-radius:8px;padding:12px 14px;
+  box-shadow:var(--shadow);cursor:pointer;
+  border-left:4px solid var(--grigio-400);
+  transition:transform .1s;
+}
+.alert-row:hover{transform:translateX(2px);}
+.alert-row.scaduto{border-left-color:var(--rosso);}
+.alert-row.avvicinamento{border-left-color:var(--giallo);}
+.alert-row .dot{
+  width:8px;height:8px;border-radius:50%;flex-shrink:0;
+}
+.alert-row.scaduto .dot{background:var(--rosso);}
+.alert-row.avvicinamento .dot{background:var(--giallo);}
+.alert-row .desc{flex:1;font-size:13.5px;font-weight:500;}
+.alert-row .data{font-size:12px;color:var(--grigio-600);white-space:nowrap;}
+.alert-row .tag{
+  font-size:10.5px;font-weight:700;text-transform:uppercase;
+  padding:2px 8px;border-radius:999px;white-space:nowrap;
+}
+.alert-row.scaduto .tag{background:var(--rosso-bg);color:var(--rosso);}
+.alert-row.avvicinamento .tag{background:var(--giallo-bg);color:var(--giallo);}
+
+.empty-state{
+  text-align:center;padding:36px 20px;color:var(--grigio-600);font-size:13.5px;
+  background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);
+}
+.empty-state .ic{font-size:28px;margin-bottom:8px;}
+
+.placeholder-page{
+  background:#fff;border-radius:var(--radius);padding:40px;text-align:center;
+  box-shadow:var(--shadow);color:var(--grigio-600);
+}
+.placeholder-page h3{color:var(--blu-900);margin-top:0;}
+
+.loading-spin{
+  text-align:center;padding:40px;color:var(--grigio-600);font-size:13px;
+}
+
+/* ---------- RESPONSIVE ---------- */
+@media (max-width:880px){
+  #sidebar{transform:translateX(-100%);}
+  #sidebar.open{transform:translateX(0);}
+  #main-area{margin-left:0;}
+  #sidebar-toggle{display:flex;align-items:center;justify-content:center;}
+  #page-content{padding:20px 16px 50px;}
+  #topbar{padding:14px 18px 14px 60px;}
+}
+</style>
+</head>
+<body>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="login-screen">
+  <div class="login-box">
+    <h1>Polo Logistico 1 RGPT/CAP</h1>
+    <p class="sub">Vercelli — accesso gestionale</p>
+
+    <div id="login-error" class="login-error" style="display:none;"></div>
+    <div id="login-msg-ok" class="login-msg-ok" style="display:none;"></div>
+
+    <form id="form-login">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="login-email" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="login-password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn" id="btn-login">Accedi</button>
+    </form>
+
+    <div class="login-switch">
+      <span id="link-reset">Password dimenticata?</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<button id="sidebar-toggle">☰</button>
+
+<div id="app-shell">
+  <nav id="sidebar">
+    <div class="sidebar-header">
+      <div class="org">CAP ANA Piemonte</div>
+      <div class="title">Polo Logistico 1<br>RGPT/CAP Vercelli</div>
+    </div>
+    <div class="nav-list" id="nav-list">
+      <!-- generato da JS -->
+    </div>
+    <div class="sidebar-footer">
+      <div class="sidebar-user" id="sidebar-user-name">—</div>
+      <div class="sidebar-role" id="sidebar-user-role">—</div>
+      <div class="sidebar-logout" id="btn-logout">Esci</div>
+    </div>
+  </nav>
+
+  <div id="main-area">
+    <div id="topbar">
+      <div>
+        <h2 id="topbar-title">Home</h2>
+        <div class="topbar-sub" id="topbar-sub"></div>
+      </div>
+    </div>
+    <div id="page-content">
+      <div class="loading-spin">Caricamento…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIG
+   ============================================================ */
+const SUPABASE_URL = "https://hzovguvwnadoptwrdyub.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6b3ZndXZ3bmFkb3B0d3JkeXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NjM3OTAsImV4cCI6MjA5NzUzOTc5MH0.wUyxlGUU6rVM2AC4YLtkTb2D4XPQuAzpTnfWYEMoDdE";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ============================================================
+   STATO GLOBALE
+   ============================================================ */
+const state = {
+  user: null,        // auth.users record
+  profile: null,      // app_users record (nome, ruolo)
+  route: "home"
+};
+
+/* ============================================================
+   DEFINIZIONE MENU
+   chiave: route, label, icona, ruoli che possono vederla
+   (null = tutti i ruoli autenticati)
+   ============================================================ */
+const MENU = [
+  { route: "home",         label: "Home",         icon: "🏠", roles: null },
+  { route: "automezzi",    label: "Automezzi",     icon: "🚐", roles: null },
+  { route: "tlc",          label: "TLC / Radio",   icon: "📻", roles: null },
+  { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", roles: ["admin"] },
+];
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+function formatDataIt(dateStr){
+  if(!dateStr) return "—";
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("it-IT", { day:"2-digit", month:"2-digit", year:"numeric" });
+}
+
+function giorniDaOggi(dateStr){
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  const target = new Date(dateStr + "T00:00:00");
+  return Math.round((target - oggi) / 86400000);
+}
+
+function statoScadenza(dateStr, giorniPreavviso){
+  const g = giorniDaOggi(dateStr);
+  if (g < 0) return "scaduto";
+  if (g <= giorniPreavviso) return "avvicinamento";
+  return "ok";
+}
+
+function escapeHtml(s){
+  if(s===null||s===undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+/* ============================================================
+   AUTH
+   ============================================================ */
+async function initAuth(){
+  const { data } = await sb.auth.getSession();
+  if (data.session){
+    await onAuthenticated(data.session.user);
+  } else {
+    showLogin();
+  }
+
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_OUT"){
+      showLogin();
+    }
+  });
+}
+
+async function onAuthenticated(user){
+  state.user = user;
+
+  // carica profilo applicativo
+  const { data: profile, error } = await sb
+    .from("app_users")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error || !profile){
+    // primo accesso: nessun profilo app_users ancora collegato.
+    // Creiamo un profilo di default come 'viewer' così l'admin può poi promuoverlo da Impostazioni.
+    const { data: created } = await sb
+      .from("app_users")
+      .insert({ id: user.id, nome: user.email.split("@")[0], email: user.email, ruolo: "viewer" })
+      .select()
+      .single();
+    state.profile = created || { nome: user.email, ruolo: "viewer" };
+  } else {
+    state.profile = profile;
+  }
+
+  showApp();
+}
+
+function showLogin(){
+  document.getElementById("login-screen").style.display = "flex";
+  document.getElementById("app-shell").classList.remove("visible");
+}
+
+function showApp(){
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app-shell").classList.add("visible");
+  document.getElementById("sidebar-user-name").textContent = state.profile.nome || state.user.email;
+  document.getElementById("sidebar-user-role").textContent = labelRuolo(state.profile.ruolo);
+  renderSidebar();
+  router();
+}
+
+function labelRuolo(r){
+  const map = { admin:"Amministratore", resp_automezzi:"Responsabile Automezzi", resp_tlc:"Responsabile TLC", viewer:"Visualizzatore" };
+  return map[r] || r;
+}
+
+function userCanSee(roles){
+  if (!roles) return true;
+  return roles.includes(state.profile.ruolo);
+}
+
+document.getElementById("form-login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
+  const btn = document.getElementById("btn-login");
+  const errBox = document.getElementById("login-error");
+  const okBox = document.getElementById("login-msg-ok");
+  errBox.style.display = "none";
+  okBox.style.display = "none";
+  btn.disabled = true;
+  btn.textContent = "Accesso in corso…";
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+  btn.disabled = false;
+  btn.textContent = "Accedi";
+
+  if (error){
+    errBox.textContent = "Credenziali non valide o utente non abilitato.";
+    errBox.style.display = "block";
+    return;
+  }
+  await onAuthenticated(data.user);
+});
+
+document.getElementById("link-reset").addEventListener("click", async () => {
+  const email = document.getElementById("login-email").value.trim();
+  const errBox = document.getElementById("login-error");
+  const okBox = document.getElementById("login-msg-ok");
+  errBox.style.display = "none";
+  okBox.style.display = "none";
+
+  if (!email){
+    errBox.textContent = "Inserisci la tua email nel campo sopra, poi clicca di nuovo.";
+    errBox.style.display = "block";
+    return;
+  }
+  const { error } = await sb.auth.resetPasswordForEmail(email);
+  if (error){
+    errBox.textContent = "Errore nell'invio email di reset.";
+    errBox.style.display = "block";
+  } else {
+    okBox.textContent = "Email di reset inviata, controlla la posta.";
+    okBox.style.display = "block";
+  }
+});
+
+document.getElementById("btn-logout").addEventListener("click", async () => {
+  await sb.auth.signOut();
+  location.hash = "#/home";
+});
+
+/* ============================================================
+   SIDEBAR / NAV
+   ============================================================ */
+function renderSidebar(){
+  const list = document.getElementById("nav-list");
+  list.innerHTML = MENU.filter(m => userCanSee(m.roles)).map(m => `
+    <div class="nav-item ${state.route === m.route ? "active" : ""}" data-route="${m.route}">
+      <span class="ic">${m.icon}</span>
+      <span>${m.label}</span>
+      <span class="nav-badge" id="badge-${m.route}" style="display:none;"></span>
+    </div>
+  `).join("");
+
+  list.querySelectorAll(".nav-item").forEach(el => {
+    el.addEventListener("click", () => { location.hash = "#/" + el.dataset.route; });
+  });
+
+  // toggle mobile dopo click su una voce
+  list.querySelectorAll(".nav-item").forEach(el => {
+    el.addEventListener("click", () => document.getElementById("sidebar").classList.remove("open"));
+  });
+
+  refreshAlertBadge();
+}
+
+document.getElementById("sidebar-toggle").addEventListener("click", () => {
+  document.getElementById("sidebar").classList.toggle("open");
+});
+
+async function refreshAlertBadge(){
+  try{
+    const { data, error } = await sb.from("v_scadenze").select("*");
+    if (error || !data) return;
+    const urgenti = data.filter(r => r.data_scadenza && statoScadenza(r.data_scadenza, r.giorni_preavviso) !== "ok");
+    const badge = document.getElementById("badge-home");
+    if (badge){
+      if (urgenti.length > 0){
+        badge.textContent = urgenti.length;
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+    }
+  }catch(e){ /* silenzioso */ }
+}
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+const PAGE_TITLES = {
+  home: ["Home", "Situazione generale e alert"],
+  automezzi: ["Automezzi", "Flotta, revisioni e movimentazioni"],
+  tlc: ["TLC / Radio", "Apparati e movimentazioni"],
+  impostazioni: ["Impostazioni", "Utenti, ruoli e configurazioni"]
+};
+
+function router(){
+  const hash = location.hash.replace("#/", "") || "home";
+  const route = MENU.some(m => m.route === hash) ? hash : "home";
+  state.route = route;
+
+  const [title, sub] = PAGE_TITLES[route] || ["", ""];
+  document.getElementById("topbar-title").textContent = title;
+  document.getElementById("topbar-sub").textContent = sub;
+
+  renderSidebar();
+
+  const content = document.getElementById("page-content");
+  content.innerHTML = `<div class="loading-spin">Caricamento…</div>`;
+
+  if (route === "home") renderHome();
+  else if (route === "automezzi") renderAutomezzi();
+  else if (route === "tlc") renderTlc();
+  else if (route === "impostazioni") renderImpostazioni();
+}
+window.addEventListener("hashchange", router);
+
+/* ============================================================
+   PAGINA: HOME — dashboard alert
+   ============================================================ */
+async function renderHome(){
+  const content = document.getElementById("page-content");
+
+  const [{ data: scadenze }, { data: automezzi }, { data: apparati }] = await Promise.all([
+    sb.from("v_scadenze").select("*"),
+    sb.from("automezzi").select("id", { count: "exact", head: false }),
+    sb.from("tlc_apparati").select("id", { count: "exact", head: false })
+  ]);
+
+  const elenco = (scadenze || [])
+    .filter(s => s.data_scadenza)
+    .map(s => ({ ...s, stato: statoScadenza(s.data_scadenza, s.giorni_preavviso), giorni: giorniDaOggi(s.data_scadenza) }))
+    .sort((a,b) => new Date(a.data_scadenza) - new Date(b.data_scadenza));
+
+  const scaduti = elenco.filter(s => s.stato === "scaduto");
+  const inAvvicinamento = elenco.filter(s => s.stato === "avvicinamento");
+
+  content.innerHTML = `
+    <div class="alert-grid">
+      <div class="stat-card">
+        <div class="num">${automezzi ? automezzi.length : "—"}</div>
+        <div class="lbl">Automezzi in flotta</div>
+      </div>
+      <div class="stat-card">
+        <div class="num">${apparati ? apparati.length : "—"}</div>
+        <div class="lbl">Apparati TLC</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" style="color:var(--rosso)">${scaduti.length}</div>
+        <div class="lbl">Scadenze scadute</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" style="color:var(--giallo)">${inAvvicinamento.length}</div>
+        <div class="lbl">In avvicinamento</div>
+      </div>
+    </div>
+
+    <div class="section-title">🔴 Scaduto</div>
+    ${renderAlertList(scaduti, "scaduto")}
+
+    <div class="section-title">🟡 In avvicinamento</div>
+    ${renderAlertList(inAvvicinamento, "avvicinamento")}
+  `;
+
+  content.querySelectorAll(".alert-row[data-modulo]").forEach(el => {
+    el.addEventListener("click", () => {
+      location.hash = "#/" + el.dataset.modulo;
+    });
+  });
+}
+
+function renderAlertList(items, classe){
+  if (items.length === 0){
+    return `<div class="empty-state"><div class="ic">✅</div>Nessuna voce in questo stato.</div>`;
+  }
+  return `<div class="alert-list">` + items.map(it => `
+    <div class="alert-row ${classe}" data-modulo="${it.modulo}" data-rif="${it.riferimento_id}">
+      <span class="dot"></span>
+      <span class="desc">${escapeHtml(it.descrizione)}</span>
+      <span class="tag">${it.tipo}</span>
+      <span class="data">${formatDataIt(it.data_scadenza)} ${it.giorni < 0 ? `(${Math.abs(it.giorni)}gg fa)` : `(in ${it.giorni}gg)`}</span>
+    </div>
+  `).join("") + `</div>`;
+}
+
+/* ============================================================
+   PAGINA: AUTOMEZZI (placeholder — prossimo step)
+   ============================================================ */
+async function renderAutomezzi(){
+  const content = document.getElementById("page-content");
+  const { data, error } = await sb.from("automezzi").select("*").order("targa");
+
+  if (error){
+    content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`;
+    return;
+  }
+
+  content.innerHTML = `
+    <div class="placeholder-page">
+      <h3>🚐 Automezzi</h3>
+      <p>${data.length} mezzi caricati correttamente dal database.</p>
+      <p style="font-size:12px;">Modulo completo (scheda mezzo, manutenzioni, movimentazioni) in arrivo nel prossimo step.</p>
+    </div>
+  `;
+}
+
+/* ============================================================
+   PAGINA: TLC (placeholder — prossimo step)
+   ============================================================ */
+async function renderTlc(){
+  const content = document.getElementById("page-content");
+  const { data, error } = await sb.from("tlc_apparati").select("*").order("selettiva");
+
+  if (error){
+    content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`;
+    return;
+  }
+
+  content.innerHTML = `
+    <div class="placeholder-page">
+      <h3>📻 TLC / Radio</h3>
+      <p>${data.length} apparati caricati correttamente dal database.</p>
+      <p style="font-size:12px;">Modulo completo (scheda apparato, movimentazioni) in arrivo nel prossimo step.</p>
+    </div>
+  `;
+}
+
+/* ============================================================
+   PAGINA: IMPOSTAZIONI (placeholder — prossimo step)
+   ============================================================ */
+async function renderImpostazioni(){
+  const content = document.getElementById("page-content");
+  content.innerHTML = `
+    <div class="placeholder-page">
+      <h3>⚙️ Impostazioni</h3>
+      <p>Gestione utenti, ruoli e soglie di alert in arrivo nel prossimo step.</p>
+    </div>
+  `;
+}
+
+/* ============================================================
+   AVVIO
+   ============================================================ */
+initAuth();
+</script>
+</body>
+</html>
