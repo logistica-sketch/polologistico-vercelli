@@ -556,6 +556,7 @@ const MENU = [
   { route: "home",         label: "Home",         icon: "🏠", permesso: "home" },
   { route: "automezzi",    label: "Automezzi",     icon: "🚐", permesso: "automezzi" },
   { route: "tlc",          label: "TLC / Radio",   icon: "📻", permesso: "tlc" },
+  { route: "formazione",   label: "Formazione",    icon: "🎓", permesso: "formazione" },
   { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "impostazioni" },
 ];
 
@@ -759,6 +760,7 @@ const PAGE_TITLES = {
   home: ["Home", "Situazione generale e alert"],
   automezzi: ["Automezzi", "Flotta, revisioni e movimentazioni"],
   tlc: ["TLC / Radio", "Apparati e movimentazioni"],
+  formazione: ["Formazione", "Corsi e volontari"],
   impostazioni: ["Impostazioni", "Utenti, ruoli e configurazioni"]
 };
 
@@ -784,6 +786,7 @@ function router(){
   if (route === "home") renderHome();
   else if (route === "automezzi") renderAutomezzi();
   else if (route === "tlc") renderTlc();
+  else if (route === "formazione") renderFormazione();
   else if (route === "impostazioni") renderImpostazioni();
 }
 window.addEventListener("hashchange", router);
@@ -2283,8 +2286,586 @@ const PAGINE_PERMESSO = [
   { key:"home", label:"Home" },
   { key:"automezzi", label:"Automezzi" },
   { key:"tlc", label:"TLC / Radio" },
+  { key:"formazione", label:"Formazione" },
   { key:"impostazioni", label:"Impostazioni" }
 ];
+
+/* ============================================================
+   MODULO FORMAZIONE
+   ============================================================ */
+const SEZIONI_ANA_FORMAZIONE = SEZIONI_ANA; // riuso la stessa lista già definita per TLC
+let _edizioniCache = [];
+let _catalogoCache = [];
+let _formazioneFiltro = { search:"", stato:"", tipologia:"" };
+
+async function renderFormazione(){
+  const content = document.getElementById("page-content");
+  const [{ data: edizioni, error }, { data: catalogo }] = await Promise.all([
+    sb.from("edizioni_corso").select("*, catalogo_corsi(codice, descrizione)").order("data_corso", { ascending:false }),
+    sb.from("catalogo_corsi").select("*").order("codice")
+  ]);
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  _edizioniCache = edizioni;
+  _catalogoCache = catalogo;
+
+  content.innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="form-search" placeholder="Cerca per nome edizione…" value="${escapeHtml(_formazioneFiltro.search)}">
+      <select id="form-filtro-stato">
+        <option value="">Tutti gli stati</option>
+        ${["programmato","in_corso","terminato","annullato"].map(s =>
+          `<option value="${s}" ${_formazioneFiltro.stato===s?"selected":""}>${labelStatoCorso(s)}</option>`).join("")}
+      </select>
+      <select id="form-filtro-tipologia">
+        <option value="">Tutte le tipologie</option>
+        ${_catalogoCache.map(c => `<option value="${c.codice}" ${_formazioneFiltro.tipologia===c.codice?"selected":""}>${c.codice}</option>`).join("")}
+      </select>
+      <button class="btn-add" id="form-btn-nuova">+ Nuova edizione corso</button>
+    </div>
+    <div class="results-count" id="form-results-count"></div>
+    <div id="form-list"></div>
+  `;
+
+  document.getElementById("form-search").addEventListener("input", e => { _formazioneFiltro.search = e.target.value; renderFormazioneList(); });
+  document.getElementById("form-filtro-stato").addEventListener("change", e => { _formazioneFiltro.stato = e.target.value; renderFormazioneList(); });
+  document.getElementById("form-filtro-tipologia").addEventListener("change", e => { _formazioneFiltro.tipologia = e.target.value; renderFormazioneList(); });
+  document.getElementById("form-btn-nuova").addEventListener("click", () => apriModalEdizione(null));
+
+  renderFormazioneList();
+}
+
+function labelStatoCorso(s){
+  const map = { programmato:"Programmato", in_corso:"In corso", terminato:"Terminato", annullato:"Annullato" };
+  return map[s] || s;
+}
+
+function renderFormazioneList(){
+  const f = _formazioneFiltro;
+  const filtrate = _edizioniCache.filter(e => {
+    if (f.search && !e.label.toLowerCase().includes(f.search.toLowerCase())) return false;
+    if (f.stato && e.stato !== f.stato) return false;
+    if (f.tipologia && e.catalogo_corsi?.codice !== f.tipologia) return false;
+    return true;
+  });
+
+  document.getElementById("form-results-count").textContent = `${filtrate.length} di ${_edizioniCache.length} edizioni corso`;
+
+  const wrap = document.getElementById("form-list");
+  if (filtrate.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">🎓</div>Nessuna edizione corrisponde ai filtri.</div>`;
+    return;
+  }
+
+  const statoClasseAlert = { programmato:"avvicinamento", in_corso:"avvicinamento", terminato:"ok", annullato:"scaduto" };
+
+  wrap.innerHTML = `<div class="alert-list">` + filtrate.map(e => {
+    const classeCss = statoClasseAlert[e.stato] === "scaduto" ? "scaduto" : (statoClasseAlert[e.stato] === "avvicinamento" ? "avvicinamento" : "");
+    return `
+    <div class="alert-row ${classeCss}" data-id="${e.id}" style="cursor:pointer;${classeCss==='' ? 'border-left-color:var(--verde);' : ''}">
+      <span class="dot" style="${classeCss==='' ? 'background:var(--verde);' : ''}"></span>
+      <span class="desc">${escapeHtml(e.label)} — ${escapeHtml(e.catalogo_corsi?.codice||"")} ${e.sede?`(${escapeHtml(e.sede)})`:""}</span>
+      <span class="tag" style="background:var(--grigio-100);color:var(--grigio-800);">${labelStatoCorso(e.stato)}</span>
+      <span class="data">${e.data_corso ? formatDataIt(e.data_corso) : "—"}</span>
+    </div>
+  `;
+  }).join("") + `</div>`;
+
+  wrap.querySelectorAll(".alert-row[data-id]").forEach(el => {
+    el.addEventListener("click", () => apriModalEdizione(parseInt(el.dataset.id)));
+  });
+}
+
+/* ---------- MODAL EDIZIONE CORSO ---------- */
+let _modalEdizioneCorrente = null;
+let _modalEdizioneTab = "dati";
+
+function apriModalEdizione(id){
+  _modalEdizioneCorrente = id ? _edizioniCache.find(e => e.id === id) : null;
+  _modalEdizioneTab = "dati";
+  renderModalEdizione();
+}
+
+function renderModalEdizione(){
+  chiudiModal();
+  const e = _modalEdizioneCorrente;
+  const isNuovo = !e;
+
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${isNuovo ? "Nuova edizione corso" : escapeHtml(e.label)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      ${isNuovo ? "" : `
+        <div class="modal-tabs">
+          <div class="modal-tab ${_modalEdizioneTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
+          <div class="modal-tab ${_modalEdizioneTab==="volontari"?"active":""}" data-tab="volontari">Volontari iscritti</div>
+        </div>
+      `}
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
+  overlay.querySelectorAll(".modal-tab").forEach(tab => {
+    tab.addEventListener("click", () => { _modalEdizioneTab = tab.dataset.tab; renderModalEdizione(); });
+  });
+
+  if (isNuovo || _modalEdizioneTab === "dati") renderTabDatiEdizione();
+  else if (_modalEdizioneTab === "volontari") renderTabVolontariEdizione();
+}
+
+function renderTabDatiEdizione(){
+  const e = _modalEdizioneCorrente || {};
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <form id="form-edizione">
+      <div class="form-grid">
+        <div class="form-field full"><label>Nome edizione *</label><input name="label" required value="${escapeHtml(e.label||"")}"></div>
+        <div class="form-field">
+          <label>Tipologia (catalogo)</label>
+          <select name="catalogo_corso_id">
+            <option value="">—</option>
+            ${_catalogoCache.map(c => `<option value="${c.id}" ${e.catalogo_corso_id===c.id?"selected":""}>${escapeHtml(c.codice)} — ${escapeHtml(c.descrizione||"")}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Stato</label>
+          <select name="stato">
+            ${["programmato","in_corso","terminato","annullato"].map(s => `<option value="${s}" ${e.stato===s?"selected":""}>${labelStatoCorso(s)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field"><label>Sede</label><input name="sede" value="${escapeHtml(e.sede||"")}"></div>
+        <div class="form-field"><label>Data corso</label><input type="date" name="data_corso" value="${e.data_corso||""}"></div>
+        <div class="form-field"><label>Numero iscritti</label><input type="number" name="numero_iscritti" value="${e.numero_iscritti??""}"></div>
+        <div class="form-field full"><label>Link documentazione (Google Drive)</label><input name="link_documentazione" value="${escapeHtml(e.link_documentazione||"")}"></div>
+        <div class="form-field full"><label>Note</label><textarea name="note">${escapeHtml(e.note||"")}</textarea></div>
+      </div>
+      <div class="form-actions">
+        ${e.id ? `<button type="button" class="btn-danger" id="btn-elimina-edizione">Elimina edizione</button>` : ""}
+        <button type="button" class="btn-cancel" id="btn-cancel-edizione">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("btn-cancel-edizione").addEventListener("click", chiudiModal);
+  if (e.id) document.getElementById("btn-elimina-edizione").addEventListener("click", () => eliminaEdizione(e.id));
+
+  document.getElementById("form-edizione").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const payload = {
+      label: fd.get("label").trim(),
+      catalogo_corso_id: fd.get("catalogo_corso_id") ? parseInt(fd.get("catalogo_corso_id")) : null,
+      stato: fd.get("stato"),
+      sede: fd.get("sede") || null,
+      data_corso: fd.get("data_corso") || null,
+      numero_iscritti: fd.get("numero_iscritti") ? parseInt(fd.get("numero_iscritti")) : null,
+      link_documentazione: fd.get("link_documentazione") || null,
+      note: fd.get("note") || null
+    };
+    const btn = ev.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let result;
+    if (e.id){
+      result = await sb.from("edizioni_corso").update(payload).eq("id", e.id).select().single();
+    } else {
+      result = await sb.from("edizioni_corso").insert(payload).select().single();
+    }
+    if (result.error){ alert("Errore: " + result.error.message); btn.disabled=false; btn.textContent="Salva"; return; }
+
+    chiudiModal();
+    renderFormazione();
+  });
+}
+
+async function eliminaEdizione(id){
+  if (!confirm("Eliminare questa edizione? Le iscrizioni collegate verranno eliminate.")) return;
+  const { error } = await sb.from("edizioni_corso").delete().eq("id", id);
+  if (error){ alert("Errore: " + error.message); return; }
+  chiudiModal();
+  renderFormazione();
+}
+
+function renderTabVolontariEdizione(){
+  const e = _modalEdizioneCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-aggiungi-volontario-edizione">+ Aggiungi volontario</button></div>
+    <div id="volontari-edizione-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-aggiungi-volontario-edizione").addEventListener("click", () => mostraFormAggiungiVolontario());
+  caricaVolontariEdizione();
+}
+
+async function caricaVolontariEdizione(){
+  const e = _modalEdizioneCorrente;
+  const { data, error } = await sb
+    .from("iscrizioni_corsi")
+    .select("*, volontari_formazione(id, cognome, nome, sezione_ana)")
+    .eq("edizione_corso_id", e.id)
+    .order("id");
+  const wrap = document.getElementById("volontari-edizione-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun volontario iscritto a questa edizione.</div>`; return; }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Stato</th><th>Attestato</th><th></th><th></th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">${escapeHtml(r.volontari_formazione.cognome)} ${escapeHtml(r.volontari_formazione.nome)}</a></td>
+            <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
+            <td>${labelStatoIscrizione(r.stato)}</td>
+            <td>${r.attestato_rilasciato ? "✅" : "—"}</td>
+            <td><button class="row-del" data-toggle-attestato="${r.id}" data-val="${!r.attestato_rilasciato}">${r.attestato_rilasciato?"Revoca attestato":"Segna attestato"}</button></td>
+            <td><button class="row-del" data-rimuovi="${r.id}">Rimuovi</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
+  wrap.querySelectorAll("[data-apri-volontario]").forEach(a => a.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    apriModalVolontario(parseInt(a.dataset.apriVolontario));
+  }));
+  wrap.querySelectorAll("[data-toggle-attestato]").forEach(b => b.addEventListener("click", async () => {
+    const val = b.dataset.val === "true";
+    await sb.from("iscrizioni_corsi").update({ attestato_rilasciato: val }).eq("id", parseInt(b.dataset.toggleAttestato));
+    caricaVolontariEdizione();
+  }));
+  wrap.querySelectorAll("[data-rimuovi]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Rimuovere questo volontario dall'edizione?")) return;
+    await sb.from("iscrizioni_corsi").delete().eq("id", parseInt(b.dataset.rimuovi));
+    caricaVolontariEdizione();
+  }));
+}
+
+function labelStatoIscrizione(s){
+  const map = { iscritto:"Iscritto", completato:"Completato", non_completato:"Non completato", ritirato:"Ritirato" };
+  return map[s] || s;
+}
+
+async function mostraFormAggiungiVolontario(){
+  const e = _modalEdizioneCorrente;
+  const wrap = document.getElementById("volontari-edizione-list");
+
+  const { data: tuttiVolontari } = await sb.from("volontari_formazione").select("id, cognome, nome").order("cognome");
+  const { data: giaIscritti } = await sb.from("iscrizioni_corsi").select("volontario_id").eq("edizione_corso_id", e.id);
+  const idIscritti = new Set((giaIscritti||[]).map(r => r.volontario_id));
+  const disponibili = tuttiVolontari.filter(v => !idIscritti.has(v.id));
+
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-aggiungi-volontario">
+      <div class="form-grid">
+        <div class="form-field full">
+          <label>Volontario</label>
+          <select name="volontario_id" required>
+            <option value="">— Seleziona —</option>
+            ${disponibili.map(v => `<option value="${v.id}">${escapeHtml(v.cognome)} ${escapeHtml(v.nome)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Stato</label>
+          <select name="stato">
+            ${["iscritto","completato","non_completato","ritirato"].map(s => `<option value="${s}">${labelStatoIscrizione(s)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field" style="display:flex;align-items:flex-end;">
+          <div class="form-checkbox"><input type="checkbox" name="attestato_rilasciato"><label style="margin:0;">Attestato rilasciato</label></div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-aggiungi-volontario">Annulla</button>
+        <button type="submit" class="btn-save">Aggiungi</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-aggiungi-volontario").addEventListener("click", () => form.remove());
+  document.getElementById("form-aggiungi-volontario").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const payload = {
+      volontario_id: parseInt(fd.get("volontario_id")),
+      edizione_corso_id: e.id,
+      stato: fd.get("stato"),
+      attestato_rilasciato: fd.get("attestato_rilasciato") === "on"
+    };
+    const { error } = await sb.from("iscrizioni_corsi").insert(payload);
+    if (error){ alert("Errore: " + error.message); return; }
+    form.remove();
+    caricaVolontariEdizione();
+  });
+}
+
+/* ---------- MODAL VOLONTARIO (anagrafica + storico + documenti) ---------- */
+const STORAGE_BUCKET_DOC_VOLONTARI = "volontari-documenti";
+let _modalVolontarioCorrente = null;
+let _modalVolontarioTab = "dati";
+
+async function apriModalVolontario(id){
+  const { data, error } = await sb.from("volontari_formazione").select("*").eq("id", id).single();
+  if (error){ alert("Errore: " + error.message); return; }
+  _modalVolontarioCorrente = data;
+  _modalVolontarioTab = "dati";
+  renderModalVolontario();
+}
+
+function renderModalVolontario(){
+  const v = _modalVolontarioCorrente;
+  // chiudo prima il modal edizione sottostante e ne apro uno nuovo sopra
+  const vecchio = document.getElementById("modal-overlay");
+  if (vecchio) vecchio.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${escapeHtml(v.cognome)} ${escapeHtml(v.nome)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-tabs">
+        <div class="modal-tab ${_modalVolontarioTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
+        <div class="modal-tab ${_modalVolontarioTab==="storico"?"active":""}" data-tab="storico">Storico corsi</div>
+        <div class="modal-tab ${_modalVolontarioTab==="documenti"?"active":""}" data-tab="documenti">Documenti</div>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById("modal-close-btn").addEventListener("click", () => {
+    chiudiModal();
+    renderModalEdizione(); // torna al modal edizione sottostante
+  });
+  overlay.querySelectorAll(".modal-tab").forEach(tab => {
+    tab.addEventListener("click", () => { _modalVolontarioTab = tab.dataset.tab; renderModalVolontario(); });
+  });
+
+  if (_modalVolontarioTab === "dati") renderTabDatiVolontario();
+  else if (_modalVolontarioTab === "storico") renderTabStoricoVolontario();
+  else if (_modalVolontarioTab === "documenti") renderTabDocumentiVolontario();
+}
+
+function renderTabDatiVolontario(){
+  const v = _modalVolontarioCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <form id="form-volontario">
+      <div class="form-grid">
+        <div class="form-field"><label>Cognome *</label><input name="cognome" required value="${escapeHtml(v.cognome||"")}"></div>
+        <div class="form-field"><label>Nome *</label><input name="nome" required value="${escapeHtml(v.nome||"")}"></div>
+        <div class="form-field"><label>Codice fiscale</label><input name="codice_fiscale" value="${escapeHtml(v.codice_fiscale||"")}"></div>
+        <div class="form-field"><label>Telefono</label><input name="telefono" value="${escapeHtml(v.telefono||"")}"></div>
+        <div class="form-field full"><label>Email</label><input type="email" name="email" value="${escapeHtml(v.email||"")}"></div>
+        <div class="form-field"><label>Luogo nascita</label><input name="luogo_nascita" value="${escapeHtml(v.luogo_nascita||"")}"></div>
+        <div class="form-field"><label>Provincia</label><input name="provincia_nascita" maxlength="2" value="${escapeHtml(v.provincia_nascita||"")}"></div>
+        <div class="form-field"><label>Data nascita</label><input type="date" name="data_nascita" value="${v.data_nascita||""}"></div>
+        <div class="form-field">
+          <label>Sezione ANA</label>
+          <select name="sezione_ana">
+            <option value="">—</option>
+            ${SEZIONI_ANA_FORMAZIONE.map(s => `<option value="${s}" ${v.sezione_ana===s?"selected":""}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field" style="display:flex;align-items:flex-end;">
+          <div class="form-checkbox"><input type="checkbox" name="attivo" ${v.attivo?"checked":""}><label style="margin:0;">Volontario attivo</label></div>
+        </div>
+        <div class="form-field full"><label>Note</label><textarea name="note">${escapeHtml(v.note||"")}</textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-danger" id="btn-elimina-volontario">Elimina volontario</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("btn-elimina-volontario").addEventListener("click", async () => {
+    if (!confirm("Eliminare questo volontario? Storico corsi e documenti collegati verranno eliminati.")) return;
+    const { error } = await sb.from("volontari_formazione").delete().eq("id", v.id);
+    if (error){ alert("Errore: " + error.message); return; }
+    chiudiModal();
+    renderModalEdizione();
+  });
+
+  document.getElementById("form-volontario").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const payload = {
+      cognome: fd.get("cognome").trim(),
+      nome: fd.get("nome").trim(),
+      codice_fiscale: fd.get("codice_fiscale") || null,
+      telefono: fd.get("telefono") || null,
+      email: fd.get("email") || null,
+      luogo_nascita: fd.get("luogo_nascita") || null,
+      provincia_nascita: fd.get("provincia_nascita") || null,
+      data_nascita: fd.get("data_nascita") || null,
+      sezione_ana: fd.get("sezione_ana") || null,
+      attivo: fd.get("attivo") === "on",
+      note: fd.get("note") || null
+    };
+    const btn = ev.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+    const { error } = await sb.from("volontari_formazione").update(payload).eq("id", v.id).select().single();
+    if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Salva"; return; }
+    Object.assign(v, payload);
+    btn.disabled = false; btn.textContent = "Salva";
+    caricaVolontariEdizione(); // aggiorna nome/sezione visibile nella lista sottostante
+  });
+}
+
+function renderTabStoricoVolontario(){
+  const v = _modalVolontarioCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `<div id="storico-corsi-volontario-list"><div class="loading-spin">Caricamento…</div></div>`;
+  caricaStoricoCorsiVolontario();
+}
+
+async function caricaStoricoCorsiVolontario(){
+  const v = _modalVolontarioCorrente;
+  const { data, error } = await sb
+    .from("iscrizioni_corsi")
+    .select("*, edizioni_corso(label, data_corso, sede, catalogo_corsi(codice))")
+    .eq("volontario_id", v.id)
+    .order("id", { ascending:false });
+  const wrap = document.getElementById("storico-corsi-volontario-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun corso registrato per questo volontario.</div>`; return; }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Edizione</th><th>Tipologia</th><th>Data</th><th>Stato</th><th>Attestato</th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td>${escapeHtml(r.edizioni_corso?.label||"—")}</td>
+            <td>${escapeHtml(r.edizioni_corso?.catalogo_corsi?.codice||"—")}</td>
+            <td>${r.edizioni_corso?.data_corso ? formatDataIt(r.edizioni_corso.data_corso) : "—"}</td>
+            <td>${labelStatoIscrizione(r.stato)}</td>
+            <td>${r.attestato_rilasciato ? "✅" : "—"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderTabDocumentiVolontario(){
+  const v = _modalVolontarioCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-documento-volontario">+ Carica documento</button></div>
+    <div id="documenti-volontario-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-nuovo-documento-volontario").addEventListener("click", () => mostraFormDocumentoVolontario());
+  caricaDocumentiVolontario();
+}
+
+async function caricaDocumentiVolontario(){
+  const v = _modalVolontarioCorrente;
+  const { data, error } = await sb.from("documenti_volontario").select("*").eq("volontario_id", v.id).order("created_at", { ascending:false });
+  const wrap = document.getElementById("documenti-volontario-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun documento caricato.</div>`; return; }
+
+  const tipiLabel = { attestato:"Attestato", certificato_medico:"Certificato medico", altro:"Altro" };
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Tipo</th><th>File</th><th></th><th></th></tr></thead>
+      <tbody>
+        ${data.map(d => {
+          const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(d.storage_path);
+          return `
+            <tr>
+              <td>${tipiLabel[d.tipo]||d.tipo}</td>
+              <td>${escapeHtml(d.nome_file)}</td>
+              <td><a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a></td>
+              <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questo documento?")) return;
+    await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([b.dataset.path]);
+    await sb.from("documenti_volontario").delete().eq("id", parseInt(b.dataset.id));
+    caricaDocumentiVolontario();
+  }));
+}
+
+function mostraFormDocumentoVolontario(){
+  const v = _modalVolontarioCorrente;
+  const wrap = document.getElementById("documenti-volontario-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-documento-volontario">
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Tipo</label>
+          <select name="tipo">
+            <option value="attestato">Attestato</option>
+            <option value="certificato_medico">Certificato medico</option>
+            <option value="altro">Altro</option>
+          </select>
+        </div>
+        <div class="form-field full"><label>File (PDF o immagine)</label><input type="file" name="file" accept=".pdf,image/*" required></div>
+        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-documento-volontario">Annulla</button>
+        <button type="submit" class="btn-save">Carica</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-documento-volontario").addEventListener("click", () => form.remove());
+  document.getElementById("form-documento-volontario").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    const file = fd.get("file");
+    const btn = ev.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Caricamento…";
+
+    const path = `${v.cognome}_${v.nome}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+    const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
+    if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Carica"; return; }
+
+    const { error } = await sb.from("documenti_volontario").insert({
+      volontario_id: v.id,
+      tipo: fd.get("tipo"),
+      nome_file: file.name,
+      storage_path: path,
+      note: fd.get("note") || null,
+      created_by: state.user.id
+    });
+    if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Carica"; return; }
+
+    form.remove();
+    caricaDocumentiVolontario();
+  });
+}
+
 
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
