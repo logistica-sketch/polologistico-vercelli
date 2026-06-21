@@ -592,13 +592,13 @@ async function onAuthenticated(user){
 
   if (error || !profile){
     // primo accesso: nessun profilo app_users ancora collegato.
-    // Creiamo un profilo di default come 'viewer' così l'admin può poi promuoverlo da Impostazioni.
+    // Creiamo un profilo di default come 'standard' così l'IT Administrator può poi configurarlo da Impostazioni.
     const { data: created } = await sb
       .from("app_users")
-      .insert({ id: user.id, nome: user.email.split("@")[0], email: user.email, ruolo: "viewer" })
+      .insert({ id: user.id, nome: user.email.split("@")[0], email: user.email, ruolo: "standard" })
       .select()
       .single();
-    state.profile = created || { nome: user.email, ruolo: "viewer" };
+    state.profile = created || { nome: user.email, ruolo: "standard" };
   } else {
     state.profile = profile;
   }
@@ -621,12 +621,12 @@ function showApp(){
 }
 
 function labelRuolo(r){
-  const map = { admin:"Amministratore", resp_automezzi:"Responsabile Automezzi", resp_tlc:"Responsabile TLC", viewer:"Visualizzatore" };
+  const map = { it_admin:"IT Administrator", specialita:"Specialità", segreteria:"Segreteria", standard:"Standard" };
   return map[r] || r;
 }
 
 function userCanSee(permesso){
-  if (state.profile.ruolo === "admin") return true;
+  if (state.profile.ruolo === "it_admin") return true;
   return !!(state.profile.permessi && state.profile.permessi[permesso]);
 }
 
@@ -2191,7 +2191,7 @@ const PAGINE_PERMESSO = [
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
 
-  if (state.profile.ruolo !== "admin"){
+  if (state.profile.ruolo !== "it_admin"){
     content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Sezione riservata agli amministratori.</p></div>`;
     return;
   }
@@ -2219,7 +2219,7 @@ function renderListaUtenti(utenti){
         <div class="form-field">
           <label>Ruolo</label>
           <select data-field="ruolo" data-id="${u.id}">
-            ${["admin","resp_automezzi","resp_tlc","viewer"].map(r => `<option value="${r}" ${u.ruolo===r?"selected":""}>${labelRuolo(r)}</option>`).join("")}
+            ${["it_admin","specialita","segreteria","standard"].map(r => `<option value="${r}" ${u.ruolo===r?"selected":""}>${labelRuolo(r)}</option>`).join("")}
           </select>
         </div>
         <div class="form-field">
