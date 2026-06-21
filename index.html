@@ -220,6 +220,23 @@ input,select,textarea{font-family:inherit;}
 }
 .empty-state .ic{font-size:28px;margin-bottom:8px;}
 
+.collapse-block{
+  background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);
+  margin-bottom:16px;overflow:hidden;
+}
+.collapse-head{
+  width:100%;display:flex;align-items:center;gap:10px;
+  padding:16px 18px;background:none;border:none;cursor:pointer;
+  font-size:14.5px;font-weight:700;color:var(--blu-900);text-align:left;
+}
+.collapse-head:hover{background:var(--grigio-100);}
+.collapse-badge{
+  background:var(--rosso);color:#fff;font-size:11px;font-weight:700;
+  border-radius:999px;padding:2px 8px;display:none;
+}
+.collapse-arrow{margin-left:auto;color:var(--grigio-600);font-size:14px;}
+.collapse-body{display:none;padding:0 18px 18px;}
+
 .placeholder-page{
   background:#fff;border-radius:var(--radius);padding:40px;text-align:center;
   box-shadow:var(--shadow);color:var(--grigio-600);
@@ -769,69 +786,139 @@ window.addEventListener("hashchange", router);
    ============================================================ */
 async function renderHome(){
   const content = document.getElementById("page-content");
+  const puoVedereAutomezzi = userCanSee("automezzi");
+  const puoVedereTlc = userCanSee("tlc");
 
-  const [{ data: scadenze }, { data: automezzi }, { data: apparati }] = await Promise.all([
+  let html = "";
+
+  if (puoVedereAutomezzi){
+    html += `
+      <div class="collapse-block">
+        <button class="collapse-head" id="toggle-scadenze-automezzi">
+          <span>🚐 Scadenze Automezzi</span>
+          <span class="collapse-badge" id="badge-scadenze-automezzi"></span>
+          <span class="collapse-arrow">▾</span>
+        </button>
+        <div class="collapse-body" id="body-scadenze-automezzi"></div>
+      </div>
+    `;
+  }
+
+  if (puoVedereTlc){
+    html += `
+      <div class="collapse-block">
+        <button class="collapse-head" id="toggle-tlc-in-uso">
+          <span>📻 Radio attualmente in uso</span>
+          <span class="collapse-badge" id="badge-tlc-in-uso"></span>
+          <span class="collapse-arrow">▾</span>
+        </button>
+        <div class="collapse-body" id="body-tlc-in-uso"></div>
+      </div>
+    `;
+  }
+
+  if (!puoVedereAutomezzi && !puoVedereTlc){
+    html = `<div class="empty-state"><div class="ic">👋</div>Nessuna sezione abilitata per il tuo utente. Contatta un IT Administrator.</div>`;
+  }
+
+  content.innerHTML = html;
+
+  if (puoVedereAutomezzi) await caricaBloccoScadenzeAutomezzi();
+  if (puoVedereTlc) await caricaBloccoTlcInUso();
+}
+
+function attivaToggleCollapse(toggleId, bodyId){
+  const toggle = document.getElementById(toggleId);
+  const body = document.getElementById(bodyId);
+  toggle.addEventListener("click", () => {
+    const apri = body.style.display !== "block";
+    body.style.display = apri ? "block" : "none";
+    toggle.querySelector(".collapse-arrow").textContent = apri ? "▴" : "▾";
+  });
+}
+
+async function caricaBloccoScadenzeAutomezzi(){
+  const [{ data: scadenze }, { data: automezzi }] = await Promise.all([
     sb.from("v_scadenze").select("*"),
-    sb.from("automezzi").select("*"),
-    sb.from("tlc_apparati").select("id", { count: "exact", head: false })
+    sb.from("automezzi").select("*")
   ]);
 
   const elenco = (scadenze || [])
     .filter(s => s.data_scadenza)
     .map(s => ({ ...s, stato: statoScadenza(s.data_scadenza, s.giorni_preavviso), giorni: giorniDaOggi(s.data_scadenza) }))
+    .filter(s => s.stato !== "ok")
     .sort((a,b) => new Date(a.data_scadenza) - new Date(b.data_scadenza));
 
   const scaduti = elenco.filter(s => s.stato === "scaduto");
   const inAvvicinamento = elenco.filter(s => s.stato === "avvicinamento");
 
-  content.innerHTML = `
+  document.getElementById("badge-scadenze-automezzi").textContent = elenco.length || "";
+  document.getElementById("badge-scadenze-automezzi").style.display = elenco.length ? "inline-block" : "none";
+
+  const body = document.getElementById("body-scadenze-automezzi");
+  body.innerHTML = `
     <div class="toolbar" style="justify-content:flex-end;margin-bottom:14px;">
       <button class="btn-add" id="btn-report-revisioni">📄 Report revisioni scadute/in scadenza</button>
     </div>
-    <div class="alert-grid">
-      <div class="stat-card">
-        <div class="num">${automezzi ? automezzi.length : "—"}</div>
-        <div class="lbl">Automezzi in flotta</div>
-      </div>
-      <div class="stat-card">
-        <div class="num">${apparati ? apparati.length : "—"}</div>
-        <div class="lbl">Apparati TLC</div>
-      </div>
-      <div class="stat-card">
-        <div class="num" style="color:var(--rosso)">${scaduti.length}</div>
-        <div class="lbl">Scadenze scadute</div>
-      </div>
-      <div class="stat-card">
-        <div class="num" style="color:var(--giallo)">${inAvvicinamento.length}</div>
-        <div class="lbl">In avvicinamento</div>
-      </div>
-    </div>
-
     <div class="section-title">🔴 Scaduto</div>
     ${renderAlertList(scaduti, "scaduto")}
-
     <div class="section-title">🟡 In avvicinamento</div>
     ${renderAlertList(inAvvicinamento, "avvicinamento")}
   `;
 
   document.getElementById("btn-report-revisioni").addEventListener("click", () => generaReportRevisioniMese(automezzi));
 
-  content.querySelectorAll(".alert-row[data-modulo]").forEach(el => {
+  body.querySelectorAll(".alert-row[data-modulo]").forEach(el => {
     el.addEventListener("click", () => {
-      const modulo = el.dataset.modulo;
       const rif = parseInt(el.dataset.rif);
-      if (modulo === "automezzi"){
-        location.hash = "#/automezzi";
-        // attendi che la pagina carichi la lista, poi apri il modal del mezzo
-        setTimeout(() => {
-          const m = _automezziCache.find(x => x.id === rif);
-          if (m) apriModalMezzo(m.id);
-        }, 400);
-      } else {
-        location.hash = "#/" + modulo;
-      }
+      location.hash = "#/automezzi";
+      setTimeout(() => {
+        const m = _automezziCache.find(x => x.id === rif);
+        if (m) apriModalMezzo(m.id);
+      }, 400);
     });
   });
+
+  attivaToggleCollapse("toggle-scadenze-automezzi", "body-scadenze-automezzi");
+  document.getElementById("body-scadenze-automezzi").style.display = "block";
+}
+
+async function caricaBloccoTlcInUso(){
+  const { data, error } = await sb
+    .from("movimentazioni_tlc")
+    .select("*, movimentazioni_tlc_apparati(tlc_apparati(selettiva, modello))")
+    .eq("stato", "in_uso")
+    .order("data_uscita", { ascending: true });
+
+  document.getElementById("badge-tlc-in-uso").textContent = (data && data.length) || "";
+  document.getElementById("badge-tlc-in-uso").style.display = (data && data.length) ? "inline-block" : "none";
+
+  const body = document.getElementById("body-tlc-in-uso");
+  if (error){ body.innerHTML = `<p style="color:var(--rosso);font-size:13px;">Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (!data || data.length === 0){
+    body.innerHTML = `<div class="empty-state"><div class="ic">✅</div>Nessuna radio attualmente fuori sede.</div>`;
+  } else {
+    body.innerHTML = `<div class="alert-list">` + data.map(r => {
+      const apparati = (r.movimentazioni_tlc_apparati||[]).map(a => a.tlc_apparati?.selettiva).filter(Boolean).join(", ");
+      const giorni = giorniDaOggi(r.data_uscita);
+      return `
+        <div class="alert-row avvicinamento" data-mov="${r.id}">
+          <span class="dot"></span>
+          <span class="desc">${escapeHtml(apparati)} — ${escapeHtml(r.operatore)} (${escapeHtml(r.sezione_ana)})</span>
+          <span class="tag">USCITA</span>
+          <span class="data">${formatDataIt(r.data_uscita)} (da ${Math.abs(giorni)}gg)</span>
+        </div>
+      `;
+    }).join("") + `</div>`;
+  }
+
+  body.querySelectorAll(".alert-row[data-mov]").forEach(el => {
+    el.addEventListener("click", () => { location.hash = "#/tlc"; });
+  });
+
+  attivaToggleCollapse("toggle-tlc-in-uso", "body-tlc-in-uso");
+  document.getElementById("body-tlc-in-uso").style.display = "block";
 }
 
 function generaReportRevisioniMese(automezzi){
