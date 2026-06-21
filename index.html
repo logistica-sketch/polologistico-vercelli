@@ -15,6 +15,7 @@
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{
   --blu-900:#0b2545;
@@ -2322,6 +2323,10 @@ async function renderFormazione(){
         ${_catalogoCache.map(c => `<option value="${c.codice}" ${_formazioneFiltro.tipologia===c.codice?"selected":""}>${c.codice}</option>`).join("")}
       </select>
       <button class="btn-add" id="form-btn-cerca-volontari" style="background:var(--blu-700);">🔍 Cerca volontari</button>
+      <label class="btn-add" style="background:var(--grigio-800);cursor:pointer;">
+        📦 Import massivo attestati (ZIP)
+        <input type="file" id="input-import-zip-attestati" accept=".zip" style="display:none;">
+      </label>
       <button class="btn-add" id="form-btn-nuova">+ Nuova edizione corso</button>
     </div>
     <div class="results-count" id="form-results-count"></div>
@@ -2333,8 +2338,80 @@ async function renderFormazione(){
   document.getElementById("form-filtro-tipologia").addEventListener("change", e => { _formazioneFiltro.tipologia = e.target.value; renderFormazioneList(); });
   document.getElementById("form-btn-nuova").addEventListener("click", () => apriModalEdizione(null));
   document.getElementById("form-btn-cerca-volontari").addEventListener("click", () => apriModalRicercaVolontari());
+  document.getElementById("input-import-zip-attestati").addEventListener("change", (ev) => importaZipAttestati(ev));
 
   renderFormazioneList();
+}
+
+async function importaZipAttestati(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  ev.target.value = "";
+
+  if (!confirm(`Importare gli attestati dal file ${file.name}?\n\nOgni PDF deve essere nominato con il codice fiscale del volontario (es. RSSMNL90H01G674A.pdf, o RSSMNL90H01G674A_2.pdf per attestati multipli della stessa persona).`)) return;
+
+  const content = document.getElementById("page-content");
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(255,255,255,0.9);z-index:600;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;";
+  overlay.innerHTML = `<div class="loading-spin">Importazione in corso, non chiudere questa pagina…</div><div id="import-zip-progress" style="font-size:13px;color:var(--grigio-600);"></div>`;
+  document.body.appendChild(overlay);
+  const progressEl = overlay.querySelector("#import-zip-progress");
+
+  try{
+    const buf = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(buf);
+    const pdfEntries = Object.values(zip.files).filter(f => !f.dir && /\.pdf$/i.test(f.name));
+
+    let ok = 0, nonTrovati = [], errori = [];
+    let i = 0;
+    for (const entry of pdfEntries){
+      i++;
+      progressEl.textContent = `${i} di ${pdfEntries.length}…`;
+
+      const nomeBase = entry.name.split("/").pop();
+      const cfMatch = nomeBase.match(/^([A-Za-z0-9]{16})/);
+      if (!cfMatch){
+        errori.push(`${nomeBase}: nome file non contiene un codice fiscale valido`);
+        continue;
+      }
+      const cf = cfMatch[1].toUpperCase();
+
+      const { data: volontario } = await sb.from("volontari_formazione").select("id, cognome, nome").eq("codice_fiscale", cf).maybeSingle();
+      if (!volontario){
+        nonTrovati.push(`${nomeBase} (CF: ${cf})`);
+        continue;
+      }
+
+      try{
+        const blob = await entry.async("blob");
+        const path = `${volontario.cognome}_${volontario.nome}/${Date.now()}_${nomeBase}`.replace(/\s+/g, "_");
+        const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, blob, { contentType: "application/pdf" });
+        if (upErr) throw upErr;
+
+        const { error: docErr } = await sb.from("documenti_volontario").insert({
+          volontario_id: volontario.id,
+          tipo: "attestato",
+          nome_file: nomeBase,
+          storage_path: path,
+          created_by: state.user.id
+        });
+        if (docErr) throw docErr;
+        ok++;
+      }catch(err){
+        errori.push(`${nomeBase}: ${err.message}`);
+      }
+    }
+
+    overlay.remove();
+    let msg = `Import completato.\nAttestati caricati: ${ok}\nVolontari non trovati: ${nonTrovati.length}`;
+    if (nonTrovati.length) msg += `\n\nNon trovati:\n` + nonTrovati.join("\n");
+    if (errori.length) msg += `\n\nErrori:\n` + errori.join("\n");
+    alert(msg);
+
+  }catch(err){
+    overlay.remove();
+    alert("Errore nella lettura dello ZIP: " + err.message);
+  }
 }
 
 function labelStatoCorso(s){
@@ -2566,28 +2643,36 @@ async function eliminaEdizione(id){
 
 function renderTabVolontariEdizione(){
   const e = _modalEdizioneCorrente;
+  const terminato = e.stato === "terminato";
   const body = document.getElementById("modal-body");
   body.innerHTML = `
     <div class="storico-toolbar" style="justify-content:space-between;">
       <div style="display:flex;gap:8px;">
-        <button class="btn-add-mini" id="btn-scarica-template" style="background:var(--blu-700);">📥 Scarica template Excel</button>
-        <label class="btn-add-mini" style="background:var(--blu-700);cursor:pointer;">
-          📤 Carica volontari da Excel
-          <input type="file" id="input-carica-excel" accept=".xlsx,.xls" style="display:none;">
-        </label>
+        ${terminato ? `
+          <span style="font-size:12.5px;color:var(--grigio-600);align-self:center;">Corso terminato: carica gli attestati per ogni iscritto qui sotto.</span>
+        ` : `
+          <button class="btn-add-mini" id="btn-scarica-template" style="background:var(--blu-700);">📥 Scarica template Excel</button>
+          <label class="btn-add-mini" style="background:var(--blu-700);cursor:pointer;">
+            📤 Carica volontari da Excel
+            <input type="file" id="input-carica-excel" accept=".xlsx,.xls" style="display:none;">
+          </label>
+        `}
       </div>
-      <button class="btn-add-mini" id="btn-aggiungi-volontario-edizione">+ Aggiungi volontario</button>
+      ${terminato ? "" : `<button class="btn-add-mini" id="btn-aggiungi-volontario-edizione">+ Aggiungi volontario</button>`}
     </div>
     <div id="volontari-edizione-list"><div class="loading-spin">Caricamento…</div></div>
   `;
-  document.getElementById("btn-aggiungi-volontario-edizione").addEventListener("click", () => mostraFormAggiungiVolontario());
-  document.getElementById("btn-scarica-template").addEventListener("click", () => scaricaTemplateExcelCorso(e));
-  document.getElementById("input-carica-excel").addEventListener("change", (ev) => caricaVolontariDaExcel(ev, e));
+  if (!terminato){
+    document.getElementById("btn-aggiungi-volontario-edizione").addEventListener("click", () => mostraFormAggiungiVolontario());
+    document.getElementById("btn-scarica-template").addEventListener("click", () => scaricaTemplateExcelCorso(e));
+    document.getElementById("input-carica-excel").addEventListener("change", (ev) => caricaVolontariDaExcel(ev, e));
+  }
   caricaVolontariEdizione();
 }
 
 async function caricaVolontariEdizione(){
   const e = _modalEdizioneCorrente;
+  const terminato = e.stato === "terminato";
   const { data, error } = await sb
     .from("iscrizioni_corsi")
     .select("*, volontari_formazione(id, cognome, nome, sezione_ana)")
@@ -2598,39 +2683,86 @@ async function caricaVolontariEdizione(){
   if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
   if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun volontario iscritto a questa edizione.</div>`; return; }
 
-  // recupero eventuali documenti tipo 'attestato' per i volontari di questa lista
   const idVolontari = data.map(r => r.volontari_formazione.id);
   const { data: documenti } = await sb
     .from("documenti_volontario")
-    .select("volontario_id, storage_path")
+    .select("id, volontario_id, storage_path, nome_file")
     .eq("tipo", "attestato")
     .in("volontario_id", idVolontari);
   const attestatoPerVolontario = {};
-  (documenti||[]).forEach(d => { attestatoPerVolontario[d.volontario_id] = d.storage_path; });
+  (documenti||[]).forEach(d => { attestatoPerVolontario[d.volontario_id] = d; });
 
-  wrap.innerHTML = `
-    <table class="storico-table">
-      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Stato</th><th>Attestato</th></tr></thead>
-      <tbody>
-        ${data.map(r => {
-          const path = attestatoPerVolontario[r.volontari_formazione.id];
-          let linkAttestato = "—";
-          if (path){
-            const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(path);
-            linkAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a>`;
-          }
-          return `
-          <tr>
-            <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">${escapeHtml(r.volontari_formazione.cognome)} ${escapeHtml(r.volontari_formazione.nome)}</a></td>
-            <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
-            <td>${labelStatoIscrizione(r.stato)}</td>
-            <td>${linkAttestato}</td>
-          </tr>
-        `;
-        }).join("")}
-      </tbody>
-    </table>
-  `;
+  if (!terminato){
+    // Vista semplice: prima del termine corso, solo link attestato se presente
+    wrap.innerHTML = `
+      <table class="storico-table">
+        <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Stato</th><th>Attestato</th></tr></thead>
+        <tbody>
+          ${data.map(r => {
+            const doc = attestatoPerVolontario[r.volontari_formazione.id];
+            let linkAttestato = "—";
+            if (doc){
+              const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(doc.storage_path);
+              linkAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a>`;
+            }
+            return `
+            <tr>
+              <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">${escapeHtml(r.volontari_formazione.cognome)} ${escapeHtml(r.volontari_formazione.nome)}</a></td>
+              <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
+              <td>${labelStatoIscrizione(r.stato)}</td>
+              <td>${linkAttestato}</td>
+            </tr>
+          `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    // Vista corso terminato: flag Assente + upload attestato per riga, stato calcolato
+    wrap.innerHTML = `
+      <table class="storico-table">
+        <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Assente</th><th>Stato</th><th>Attestato</th></tr></thead>
+        <tbody>
+          ${data.map(r => {
+            const doc = attestatoPerVolontario[r.volontari_formazione.id];
+            const assente = r.stato === "assente";
+            let cellaAttestato;
+            if (doc){
+              const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(doc.storage_path);
+              cellaAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a> &nbsp;
+                <label style="cursor:pointer;color:var(--blu-500);font-size:11.5px;">Sostituisci
+                  <input type="file" accept=".pdf,image/*" style="display:none;" data-upload-attestato="${r.id}" data-volontario="${r.volontari_formazione.id}" data-cognome="${escapeHtml(r.volontari_formazione.cognome)}" data-nome="${escapeHtml(r.volontari_formazione.nome)}">
+                </label>`;
+            } else if (assente){
+              cellaAttestato = `<span style="color:var(--grigio-600);">—</span>`;
+            } else {
+              cellaAttestato = `<label class="btn-add-mini" style="cursor:pointer;padding:5px 10px;font-size:11.5px;">Carica
+                <input type="file" accept=".pdf,image/*" style="display:none;" data-upload-attestato="${r.id}" data-volontario="${r.volontari_formazione.id}" data-cognome="${escapeHtml(r.volontari_formazione.cognome)}" data-nome="${escapeHtml(r.volontari_formazione.nome)}">
+              </label>`;
+            }
+            return `
+            <tr>
+              <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">${escapeHtml(r.volontari_formazione.cognome)} ${escapeHtml(r.volontari_formazione.nome)}</a></td>
+              <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
+              <td><input type="checkbox" data-toggle-assente="${r.id}" ${assente?"checked":""}></td>
+              <td>${labelStatoIscrizione(r.stato)}</td>
+              <td>${cellaAttestato}</td>
+            </tr>
+          `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+
+    wrap.querySelectorAll("[data-toggle-assente]").forEach(chk => chk.addEventListener("change", async (ev) => {
+      const iscrizioneId = parseInt(ev.target.dataset.toggleAssente);
+      const nuovoStato = ev.target.checked ? "assente" : "in_verifica";
+      await sb.from("iscrizioni_corsi").update({ stato: nuovoStato }).eq("id", iscrizioneId);
+      caricaVolontariEdizione();
+    }));
+
+    wrap.querySelectorAll("[data-upload-attestato]").forEach(input => input.addEventListener("change", (ev) => caricaAttestatoIscrizione(ev, e)));
+  }
 
   wrap.querySelectorAll("[data-apri-volontario]").forEach(a => a.addEventListener("click", (ev) => {
     ev.preventDefault();
@@ -2638,8 +2770,34 @@ async function caricaVolontariEdizione(){
   }));
 }
 
+async function caricaAttestatoIscrizione(ev, edizione){
+  const file = ev.target.files[0];
+  if (!file) return;
+  const iscrizioneId = parseInt(ev.target.dataset.uploadAttestato);
+  const volontarioId = parseInt(ev.target.dataset.volontario);
+  const cognome = ev.target.dataset.cognome;
+  const nome = ev.target.dataset.nome;
+
+  const path = `${cognome}_${nome}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
+  if (upErr){ alert("Errore upload: " + upErr.message); return; }
+
+  const { error: errDoc } = await sb.from("documenti_volontario").insert({
+    volontario_id: volontarioId,
+    tipo: "attestato",
+    nome_file: file.name,
+    storage_path: path,
+    created_by: state.user.id
+  });
+  if (errDoc){ alert("Errore: " + errDoc.message); return; }
+
+  await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+
+  caricaVolontariEdizione();
+}
+
 function labelStatoIscrizione(s){
-  const map = { iscritto:"Iscritto", completato:"Completato", non_completato:"Non completato", ritirato:"Ritirato" };
+  const map = { iscritto:"Iscritto", in_verifica:"In verifica", completato:"Completato", assente:"Assente" };
   return map[s] || s;
 }
 
@@ -2785,7 +2943,7 @@ async function mostraFormAggiungiVolontario(){
         <div class="form-field">
           <label>Stato</label>
           <select name="stato">
-            ${["iscritto","completato","non_completato","ritirato"].map(s => `<option value="${s}">${labelStatoIscrizione(s)}</option>`).join("")}
+            ${["iscritto","in_verifica","completato","assente"].map(s => `<option value="${s}">${labelStatoIscrizione(s)}</option>`).join("")}
           </select>
         </div>
       </div>
