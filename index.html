@@ -1505,24 +1505,295 @@ function mostraFormMovimento(){
 
 
 /* ============================================================
-   PAGINA: TLC (placeholder — prossimo step)
+   MODULO TLC
    ============================================================ */
+let _tlcCache = [];
+let _tlcFiltro = { search:"", categoria:"", marca:"" };
+
 async function renderTlc(){
   const content = document.getElementById("page-content");
   const { data, error } = await sb.from("tlc_apparati").select("*").order("selettiva");
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  _tlcCache = data;
 
-  if (error){
-    content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`;
+  content.innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="tlc-search" placeholder="Cerca per selettiva…" value="${escapeHtml(_tlcFiltro.search)}">
+      <select id="tlc-filtro-categoria">
+        <option value="">Tutte le categorie</option>
+        ${["PORTATILE","VEICOLARE","STAZIONE FISSA","POC"].map(c =>
+          `<option value="${c}" ${_tlcFiltro.categoria===c?"selected":""}>${c}</option>`).join("")}
+      </select>
+      <select id="tlc-filtro-marca">
+        <option value="">Tutte le marche</option>
+        ${["MOTOROLA","HYTERA","UNIWA"].map(c =>
+          `<option value="${c}" ${_tlcFiltro.marca===c?"selected":""}>${c}</option>`).join("")}
+      </select>
+      <button class="btn-add" id="tlc-btn-nuovo">+ Nuovo apparato</button>
+    </div>
+    <div class="results-count" id="tlc-results-count"></div>
+    <div class="card-grid" id="tlc-grid"></div>
+  `;
+
+  document.getElementById("tlc-search").addEventListener("input", e => { _tlcFiltro.search = e.target.value; renderTlcGrid(); });
+  document.getElementById("tlc-filtro-categoria").addEventListener("change", e => { _tlcFiltro.categoria = e.target.value; renderTlcGrid(); });
+  document.getElementById("tlc-filtro-marca").addEventListener("change", e => { _tlcFiltro.marca = e.target.value; renderTlcGrid(); });
+  document.getElementById("tlc-btn-nuovo").addEventListener("click", () => apriModalTlc(null));
+
+  renderTlcGrid();
+}
+
+function renderTlcGrid(){
+  const f = _tlcFiltro;
+  const filtrati = _tlcCache.filter(a => {
+    if (f.search && !a.selettiva.toLowerCase().includes(f.search.toLowerCase())) return false;
+    if (f.categoria && a.categoria !== f.categoria) return false;
+    if (f.marca && a.marca !== f.marca) return false;
+    return true;
+  });
+
+  document.getElementById("tlc-results-count").textContent = `${filtrati.length} di ${_tlcCache.length} apparati`;
+
+  const grid = document.getElementById("tlc-grid");
+  if (filtrati.length === 0){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="ic">🔍</div>Nessun apparato corrisponde ai filtri.</div>`;
     return;
   }
 
-  content.innerHTML = `
-    <div class="placeholder-page">
-      <h3>📻 TLC / Radio</h3>
-      <p>${data.length} apparati caricati correttamente dal database.</p>
-      <p style="font-size:12px;">Modulo completo (scheda apparato, movimentazioni) in arrivo nel prossimo step.</p>
+  const iconaCategoria = { PORTATILE:"📻", VEICOLARE:"🚐", "STAZIONE FISSA":"🗼", POC:"📱" };
+
+  grid.innerHTML = filtrati.map(a => `
+    <div class="veicolo-card" data-id="${a.id}">
+      <div class="foto-wrap">
+        <span class="ph">${iconaCategoria[a.categoria] || "📻"}</span>
+        ${a.categoria ? `<span class="badge-cat">${a.categoria}</span>` : ""}
+      </div>
+      <div class="info">
+        <div class="targa">${escapeHtml(a.selettiva)}</div>
+        <div class="modello">${escapeHtml(a.marca || "")} ${escapeHtml(a.modello || "")}</div>
+        <div class="meta">
+          ${a.assegnato_a ? `<span>${escapeHtml(a.assegnato_a)}</span>` : `<span>Non assegnato</span>`}
+        </div>
+      </div>
+    </div>
+  `).join("");
+
+  grid.querySelectorAll(".veicolo-card").forEach(el => {
+    el.addEventListener("click", () => apriModalTlc(parseInt(el.dataset.id)));
+  });
+}
+
+/* ---------- MODAL APPARATO TLC ---------- */
+let _modalTlcCorrente = null;
+let _modalTlcTab = "dati";
+
+function apriModalTlc(id){
+  _modalTlcCorrente = id ? _tlcCache.find(a => a.id === id) : null;
+  _modalTlcTab = "dati";
+  renderModalTlc();
+}
+
+function renderModalTlc(){
+  chiudiModal();
+  const a = _modalTlcCorrente;
+  const isNuovo = !a;
+
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${isNuovo ? "Nuovo apparato" : escapeHtml(a.selettiva)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      ${isNuovo ? "" : `
+        <div class="modal-tabs">
+          <div class="modal-tab ${_modalTlcTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
+          <div class="modal-tab ${_modalTlcTab==="movimenti"?"active":""}" data-tab="movimenti">Movimentazioni</div>
+        </div>
+      `}
+      <div class="modal-body" id="modal-body"></div>
     </div>
   `;
+  document.body.appendChild(overlay);
+
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+  overlay.querySelectorAll(".modal-tab").forEach(tab => {
+    tab.addEventListener("click", () => { _modalTlcTab = tab.dataset.tab; renderModalTlc(); });
+  });
+
+  if (isNuovo || _modalTlcTab === "dati") renderTabDatiTlc();
+  else if (_modalTlcTab === "movimenti") renderTabMovimentiTlc();
+}
+
+function renderTabDatiTlc(){
+  const a = _modalTlcCorrente || {};
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <form id="form-tlc">
+      <div class="form-grid">
+        <div class="form-field"><label>Selettiva *</label><input name="selettiva" required value="${escapeHtml(a.selettiva||"")}"></div>
+        <div class="form-field">
+          <label>Marca</label>
+          <select name="marca">
+            <option value="">—</option>
+            ${["MOTOROLA","HYTERA","UNIWA"].map(m => `<option value="${m}" ${a.marca===m?"selected":""}>${m}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Categoria</label>
+          <select name="categoria">
+            <option value="">—</option>
+            ${["PORTATILE","VEICOLARE","STAZIONE FISSA","POC"].map(c => `<option value="${c}" ${a.categoria===c?"selected":""}>${c}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field"><label>Modello</label><input name="modello" value="${escapeHtml(a.modello||"")}"></div>
+        <div class="form-field"><label>Matricola</label><input name="matricola" value="${escapeHtml(a.matricola||"")}"></div>
+        <div class="form-field"><label>Assegnato a</label><input name="assegnato_a" value="${escapeHtml(a.assegnato_a||"")}"></div>
+        <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(a.descrizione||"")}"></div>
+        <div class="form-field full"><label>Note</label><textarea name="note">${escapeHtml(a.note||"")}</textarea></div>
+      </div>
+      <div class="form-actions">
+        ${a.id ? `<button type="button" class="btn-danger" id="btn-elimina-tlc">Elimina apparato</button>` : ""}
+        <button type="button" class="btn-cancel" id="btn-cancel-tlc">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("btn-cancel-tlc").addEventListener("click", chiudiModal);
+  if (a.id) document.getElementById("btn-elimina-tlc").addEventListener("click", () => eliminaTlc(a.id));
+
+  document.getElementById("form-tlc").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      selettiva: fd.get("selettiva").trim().toUpperCase(),
+      marca: fd.get("marca") || null,
+      categoria: fd.get("categoria") || null,
+      modello: fd.get("modello") || null,
+      matricola: fd.get("matricola") || null,
+      assegnato_a: fd.get("assegnato_a") || null,
+      descrizione: fd.get("descrizione") || null,
+      note: fd.get("note") || null
+    };
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let result;
+    if (a.id){
+      result = await sb.from("tlc_apparati").update(payload).eq("id", a.id).select().single();
+    } else {
+      result = await sb.from("tlc_apparati").insert(payload).select().single();
+    }
+
+    if (result.error){ alert("Errore: " + result.error.message); btn.disabled=false; btn.textContent="Salva"; return; }
+
+    chiudiModal();
+    renderTlc();
+  });
+}
+
+async function eliminaTlc(id){
+  if (!confirm("Eliminare definitivamente questo apparato?")) return;
+  const { error } = await sb.from("tlc_apparati").delete().eq("id", id);
+  if (error){ alert("Errore: " + error.message); return; }
+  chiudiModal();
+  renderTlc();
+}
+
+function renderTabMovimentiTlc(){
+  const a = _modalTlcCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-movimento-tlc">+ Nuova movimentazione</button></div>
+    <div id="movimenti-tlc-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-nuovo-movimento-tlc").addEventListener("click", () => mostraFormMovimentoTlc());
+  caricaMovimentiTlc();
+}
+
+async function caricaMovimentiTlc(){
+  const a = _modalTlcCorrente;
+  const { data, error } = await sb.from("movimenti_tlc").select("*").eq("apparato_id", a.id).order("data_movimento", { ascending:false });
+  const wrap = document.getElementById("movimenti-tlc-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessuna movimentazione registrata.</div>`; return; }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Data</th><th>Operatore</th><th>Destinazione</th><th>Motivo</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td>${formatDataIt(r.data_movimento)}</td>
+            <td>${escapeHtml(r.operatore||"—")}</td>
+            <td>${escapeHtml(r.destinazione||"—")}</td>
+            <td>${escapeHtml(r.motivo||"—")}</td>
+            <td><button class="row-del" data-id="${r.id}">Elimina</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questa movimentazione?")) return;
+    await sb.from("movimenti_tlc").delete().eq("id", parseInt(b.dataset.id));
+    caricaMovimentiTlc();
+  }));
+}
+
+function mostraFormMovimentoTlc(){
+  const a = _modalTlcCorrente;
+  const wrap = document.getElementById("movimenti-tlc-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-movimento-tlc">
+      <div class="form-grid">
+        <div class="form-field"><label>Data</label><input type="date" name="data_movimento" value="${new Date().toISOString().slice(0,10)}" required></div>
+        <div class="form-field"><label>Operatore</label><input name="operatore"></div>
+        <div class="form-field full"><label>Destinazione / Assegnatario</label><input name="destinazione"></div>
+        <div class="form-field full"><label>Motivo</label><input name="motivo"></div>
+        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-movimento-tlc">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-movimento-tlc").addEventListener("click", () => form.remove());
+  document.getElementById("form-movimento-tlc").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      apparato_id: a.id,
+      data_movimento: fd.get("data_movimento"),
+      operatore: fd.get("operatore") || null,
+      destinazione: fd.get("destinazione") || null,
+      motivo: fd.get("motivo") || null,
+      note: fd.get("note") || null,
+      created_by: state.user.id
+    };
+    const { error } = await sb.from("movimenti_tlc").insert(payload);
+    if (error){ alert("Errore: " + error.message); return; }
+
+    // aggiorna anche assegnato_a sulla scheda apparato, se indicata destinazione
+    if (payload.destinazione){
+      await sb.from("tlc_apparati").update({ assegnato_a: payload.destinazione }).eq("id", a.id);
+      a.assegnato_a = payload.destinazione;
+      const idx = _tlcCache.findIndex(x => x.id === a.id);
+      if (idx >= 0) _tlcCache[idx].assegnato_a = payload.destinazione;
+    }
+
+    form.remove();
+    caricaMovimentiTlc();
+  });
 }
 
 /* ============================================================
