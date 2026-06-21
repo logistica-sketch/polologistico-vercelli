@@ -473,8 +473,9 @@ input,select,textarea{font-family:inherit;}
 <!-- ===================== LOGIN ===================== -->
 <div id="login-screen">
   <div class="login-box">
-    <h1>Polo Logistico 1 RGPT/CAP</h1>
-    <p class="sub">Vercelli — accesso gestionale</p>
+    <img id="login-logo" alt="Servizio Nazionale Protezione Civile - Volontariato" style="display:block;margin:0 auto 14px;height:70px;">
+    <h1 style="text-align:center;">Polo Logistico 1 RGPT/CAP</h1>
+    <p class="sub" style="text-align:center;">Gestionale Operativo</p>
 
     <div id="login-error" class="login-error" style="display:none;"></div>
     <div id="login-msg-ok" class="login-msg-ok" style="display:none;"></div>
@@ -2434,6 +2435,7 @@ async function salvaUtente(id){
 /* ============================================================
    AVVIO
    ============================================================ */
+document.getElementById("login-logo").src = LOGO_VOLONTARIATO_BASE64;
 initAuth();
 
 if ("serviceWorker" in navigator){
