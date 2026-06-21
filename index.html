@@ -4,7 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Polo Logistico 1 RGPT/CAP Vercelli</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b2545">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Polo Logistico">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1617,20 +1623,27 @@ function mostraFormMovimento(){
    MODULO TLC
    ============================================================ */
 let _tlcCache = [];
+let _tlcCategorie = [];
 let _tlcFiltro = { search:"", categoria:"", marca:"" };
+
+async function caricaCategorieTlc(){
+  const { data } = await sb.from("tlc_categorie").select("*").order("nome");
+  _tlcCategorie = (data || []).map(c => c.nome);
+}
 
 async function renderTlc(){
   const content = document.getElementById("page-content");
   const { data, error } = await sb.from("tlc_apparati").select("*").order("selettiva");
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _tlcCache = data;
+  await caricaCategorieTlc();
 
   content.innerHTML = `
     <div class="toolbar">
       <input type="search" id="tlc-search" placeholder="Cerca per selettiva…" value="${escapeHtml(_tlcFiltro.search)}">
       <select id="tlc-filtro-categoria">
         <option value="">Tutte le categorie</option>
-        ${["PORTATILE","VEICOLARE","STAZIONE FISSA","POC"].map(c =>
+        ${_tlcCategorie.map(c =>
           `<option value="${c}" ${_tlcFiltro.categoria===c?"selected":""}>${c}</option>`).join("")}
       </select>
       <select id="tlc-filtro-marca">
@@ -1671,12 +1684,9 @@ function renderTlcGrid(){
     return;
   }
 
-  const iconaCategoria = { PORTATILE:"📻", VEICOLARE:"🚐", "STAZIONE FISSA":"🗼", POC:"📱" };
-
   grid.innerHTML = filtrati.map(a => `
     <div class="veicolo-card tlc-card" data-id="${a.id}">
       <div class="tlc-card-head">
-        <span class="tlc-ic">${iconaCategoria[a.categoria] || "📻"}</span>
         ${a.categoria ? `<span class="badge-cat" style="position:static;">${a.categoria}</span>` : ""}
       </div>
       <div class="info">
@@ -1751,7 +1761,7 @@ function renderTabDatiTlc(){
           <label>Categoria</label>
           <select name="categoria">
             <option value="">—</option>
-            ${["PORTATILE","VEICOLARE","STAZIONE FISSA","POC"].map(c => `<option value="${c}" ${a.categoria===c?"selected":""}>${c}</option>`).join("")}
+            ${_tlcCategorie.map(c => `<option value="${c}" ${a.categoria===c?"selected":""}>${c}</option>`).join("")}
           </select>
         </div>
         <div class="form-field"><label>Modello</label><input name="modello" value="${escapeHtml(a.modello||"")}"></div>
@@ -2277,23 +2287,83 @@ const PAGINE_PERMESSO = [
 
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
+  const isAdmin = state.profile.ruolo === "it_admin";
+  const puoGestireTlc = userCanSee("tlc");
 
-  if (state.profile.ruolo !== "it_admin"){
-    content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Sezione riservata agli amministratori.</p></div>`;
+  if (!isAdmin && !puoGestireTlc){
+    content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Nessuna impostazione disponibile per il tuo utente.</p></div>`;
     return;
   }
 
-  const { data, error } = await sb.from("app_users").select("*").order("nome");
-  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  let html = "";
 
-  content.innerHTML = `
-    <div class="section-title">Utenti abilitati</div>
-    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
-      Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
-    </p>
-    <div id="utenti-list"></div>
+  if (isAdmin){
+    html += `
+      <div class="section-title">Utenti abilitati</div>
+      <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
+        Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
+      </p>
+      <div id="utenti-list"></div>
+    `;
+  }
+
+  if (puoGestireTlc){
+    html += `
+      <div class="section-title" style="margin-top:32px;">Categorie apparati TLC</div>
+      <div id="tlc-categorie-list"></div>
+      <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-categoria-tlc">+ Nuova categoria</button></div>
+    `;
+  }
+
+  content.innerHTML = html;
+
+  if (isAdmin){
+    const { data, error } = await sb.from("app_users").select("*").order("nome");
+    if (error){ document.getElementById("utenti-list").innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; }
+    else renderListaUtenti(data);
+  }
+
+  if (puoGestireTlc){
+    await renderListaCategorieTlc();
+    document.getElementById("btn-nuova-categoria-tlc").addEventListener("click", aggiungiCategoriaTlc);
+  }
+}
+
+async function renderListaCategorieTlc(){
+  const { data, error } = await sb.from("tlc_categorie").select("*").order("nome");
+  const wrap = document.getElementById("tlc-categorie-list");
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (!data || data.length === 0){
+    wrap.innerHTML = `<div class="storico-empty">Nessuna categoria definita.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Nome categoria</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(c => `
+          <tr>
+            <td>${escapeHtml(c.nome)}</td>
+            <td><button class="row-del" data-id="${c.id}">Elimina</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
   `;
-  renderListaUtenti(data);
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questa categoria? Gli apparati che la usano non verranno modificati.")) return;
+    await sb.from("tlc_categorie").delete().eq("id", parseInt(b.dataset.id));
+    renderListaCategorieTlc();
+  }));
+}
+
+async function aggiungiCategoriaTlc(){
+  const nome = prompt("Nome nuova categoria (es. PORTATILE, VEICOLARE…):");
+  if (!nome || !nome.trim()) return;
+  const { error } = await sb.from("tlc_categorie").insert({ nome: nome.trim().toUpperCase() });
+  if (error){ alert("Errore: " + error.message); return; }
+  renderListaCategorieTlc();
 }
 
 function renderListaUtenti(utenti){
@@ -2365,6 +2435,12 @@ async function salvaUtente(id){
    AVVIO
    ============================================================ */
 initAuth();
+
+if ("serviceWorker" in navigator){
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
