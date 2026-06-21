@@ -2327,6 +2327,7 @@ async function renderFormazione(){
         📦 Import massivo attestati (ZIP)
         <input type="file" id="input-import-zip-attestati" accept=".zip" style="display:none;">
       </label>
+      <button class="btn-add" id="form-btn-verifica-mancanti" style="background:var(--rosso);">⚠️ Verifica attestati mancanti</button>
       <button class="btn-add" id="form-btn-nuova">+ Nuova edizione corso</button>
     </div>
     <div class="results-count" id="form-results-count"></div>
@@ -2339,9 +2340,67 @@ async function renderFormazione(){
   document.getElementById("form-btn-nuova").addEventListener("click", () => apriModalEdizione(null));
   document.getElementById("form-btn-cerca-volontari").addEventListener("click", () => apriModalRicercaVolontari());
   document.getElementById("input-import-zip-attestati").addEventListener("change", (ev) => importaZipAttestati(ev));
+  document.getElementById("form-btn-verifica-mancanti").addEventListener("click", () => apriModalAttestatiMancanti());
 
   renderFormazioneList();
 }
+
+async function apriModalAttestatiMancanti(){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>⚠️ Attestati mancanti</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body" id="attestati-mancanti-body"><div class="loading-spin">Verifica in corso…</div></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
+
+  const { data, error } = await sb
+    .from("iscrizioni_corsi")
+    .select("*, volontari_formazione(id, cognome, nome, sezione_ana), edizioni_corso!inner(label, data_corso, stato)")
+    .eq("stato", "in_verifica")
+    .eq("edizioni_corso.stato", "terminato")
+    .order("id");
+
+  const body = document.getElementById("attestati-mancanti-body");
+  if (error){ body.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (!data || data.length === 0){
+    body.innerHTML = `<div class="empty-state"><div class="ic">✅</div>Nessun attestato mancante: tutti gli iscritti ai corsi terminati sono completati o segnati assenti.</div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <p style="font-size:13px;color:var(--grigio-600);margin-top:0;">${data.length} iscrizioni su corsi terminati ancora "In verifica" — manca l'attestato o il flag Assente.</p>
+    <table class="storico-table">
+      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Corso</th><th>Data</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td>${escapeHtml(r.volontari_formazione.cognome)} ${escapeHtml(r.volontari_formazione.nome)}</td>
+            <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
+            <td>${escapeHtml(r.edizioni_corso.label)}</td>
+            <td>${r.edizioni_corso.data_corso ? formatDataIt(r.edizioni_corso.data_corso) : "—"}</td>
+            <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">Apri scheda</a></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  body.querySelectorAll("[data-apri-volontario]").forEach(a => a.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    apriModalVolontario(parseInt(a.dataset.apriVolontario), "ricerca");
+  }));
+}
+
 
 async function importaZipAttestati(ev){
   const file = ev.target.files[0];
