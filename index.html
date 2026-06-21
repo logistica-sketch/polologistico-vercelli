@@ -14,6 +14,7 @@
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --blu-900:#0b2545;
@@ -2320,6 +2321,7 @@ async function renderFormazione(){
         <option value="">Tutte le tipologie</option>
         ${_catalogoCache.map(c => `<option value="${c.codice}" ${_formazioneFiltro.tipologia===c.codice?"selected":""}>${c.codice}</option>`).join("")}
       </select>
+      <button class="btn-add" id="form-btn-cerca-volontari" style="background:var(--blu-700);">🔍 Cerca volontari</button>
       <button class="btn-add" id="form-btn-nuova">+ Nuova edizione corso</button>
     </div>
     <div class="results-count" id="form-results-count"></div>
@@ -2330,6 +2332,7 @@ async function renderFormazione(){
   document.getElementById("form-filtro-stato").addEventListener("change", e => { _formazioneFiltro.stato = e.target.value; renderFormazioneList(); });
   document.getElementById("form-filtro-tipologia").addEventListener("change", e => { _formazioneFiltro.tipologia = e.target.value; renderFormazioneList(); });
   document.getElementById("form-btn-nuova").addEventListener("click", () => apriModalEdizione(null));
+  document.getElementById("form-btn-cerca-volontari").addEventListener("click", () => apriModalRicercaVolontari());
 
   renderFormazioneList();
 }
@@ -2372,6 +2375,73 @@ function renderFormazioneList(){
 
   wrap.querySelectorAll(".alert-row[data-id]").forEach(el => {
     el.addEventListener("click", () => apriModalEdizione(parseInt(el.dataset.id)));
+  });
+}
+
+/* ---------- MODAL RICERCA VOLONTARI ---------- */
+function apriModalRicercaVolontari(){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Cerca volontari</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="search" id="ricerca-volontari-input" placeholder="Cerca per cognome o nome…" style="width:100%;padding:10px 12px;border:1px solid var(--grigio-400);border-radius:8px;font-size:14px;margin-bottom:14px;" autofocus>
+        <div id="ricerca-volontari-risultati"><div class="empty-state"><div class="ic">🔍</div>Digita almeno 2 caratteri per cercare.</div></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
+
+  const input = document.getElementById("ricerca-volontari-input");
+  let timeoutId = null;
+  input.addEventListener("input", () => {
+    clearTimeout(timeoutId);
+    const q = input.value.trim();
+    if (q.length < 2){
+      document.getElementById("ricerca-volontari-risultati").innerHTML = `<div class="empty-state"><div class="ic">🔍</div>Digita almeno 2 caratteri per cercare.</div>`;
+      return;
+    }
+    timeoutId = setTimeout(() => eseguiRicercaVolontari(q), 250);
+  });
+}
+
+async function eseguiRicercaVolontari(q){
+  const wrap = document.getElementById("ricerca-volontari-risultati");
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="loading-spin">Ricerca…</div>`;
+
+  const { data, error } = await sb
+    .from("volontari_formazione")
+    .select("id, cognome, nome, sezione_ana, iscrizioni_corsi(stato, edizioni_corso(label, data_corso))")
+    .or(`cognome.ilike.%${q}%,nome.ilike.%${q}%`)
+    .order("cognome")
+    .limit(30);
+
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="empty-state"><div class="ic">🔍</div>Nessun volontario trovato.</div>`; return; }
+
+  wrap.innerHTML = `<div class="alert-list">` + data.map(v => {
+    const corsi = (v.iscrizioni_corsi||[]).map(ic => ic.edizioni_corso).filter(Boolean);
+    const ultimo = corsi.sort((a,b) => new Date(b.data_corso||0) - new Date(a.data_corso||0))[0];
+    return `
+      <div class="alert-row" data-id="${v.id}" style="cursor:pointer;border-left-color:var(--blu-500);">
+        <span class="dot" style="background:var(--blu-500);"></span>
+        <span class="desc">${escapeHtml(v.cognome)} ${escapeHtml(v.nome)} ${v.sezione_ana?`— ${escapeHtml(v.sezione_ana)}`:""}</span>
+        <span class="data">${ultimo ? `Ultimo corso: ${escapeHtml(ultimo.label)}` : "Nessun corso registrato"}</span>
+      </div>
+    `;
+  }).join("") + `</div>`;
+
+  wrap.querySelectorAll(".alert-row[data-id]").forEach(el => {
+    el.addEventListener("click", () => apriModalVolontario(parseInt(el.dataset.id), "ricerca"));
   });
 }
 
@@ -2498,10 +2568,21 @@ function renderTabVolontariEdizione(){
   const e = _modalEdizioneCorrente;
   const body = document.getElementById("modal-body");
   body.innerHTML = `
-    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-aggiungi-volontario-edizione">+ Aggiungi volontario</button></div>
+    <div class="storico-toolbar" style="justify-content:space-between;">
+      <div style="display:flex;gap:8px;">
+        <button class="btn-add-mini" id="btn-scarica-template" style="background:var(--blu-700);">📥 Scarica template Excel</button>
+        <label class="btn-add-mini" style="background:var(--blu-700);cursor:pointer;">
+          📤 Carica volontari da Excel
+          <input type="file" id="input-carica-excel" accept=".xlsx,.xls" style="display:none;">
+        </label>
+      </div>
+      <button class="btn-add-mini" id="btn-aggiungi-volontario-edizione">+ Aggiungi volontario</button>
+    </div>
     <div id="volontari-edizione-list"><div class="loading-spin">Caricamento…</div></div>
   `;
   document.getElementById("btn-aggiungi-volontario-edizione").addEventListener("click", () => mostraFormAggiungiVolontario());
+  document.getElementById("btn-scarica-template").addEventListener("click", () => scaricaTemplateExcelCorso(e));
+  document.getElementById("input-carica-excel").addEventListener("change", (ev) => caricaVolontariDaExcel(ev, e));
   caricaVolontariEdizione();
 }
 
@@ -2517,43 +2598,167 @@ async function caricaVolontariEdizione(){
   if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
   if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun volontario iscritto a questa edizione.</div>`; return; }
 
+  // recupero eventuali documenti tipo 'attestato' per i volontari di questa lista
+  const idVolontari = data.map(r => r.volontari_formazione.id);
+  const { data: documenti } = await sb
+    .from("documenti_volontario")
+    .select("volontario_id, storage_path")
+    .eq("tipo", "attestato")
+    .in("volontario_id", idVolontari);
+  const attestatoPerVolontario = {};
+  (documenti||[]).forEach(d => { attestatoPerVolontario[d.volontario_id] = d.storage_path; });
+
   wrap.innerHTML = `
     <table class="storico-table">
-      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Stato</th><th>Attestato</th><th></th><th></th></tr></thead>
+      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Stato</th><th>Attestato</th></tr></thead>
       <tbody>
-        ${data.map(r => `
+        ${data.map(r => {
+          const path = attestatoPerVolontario[r.volontari_formazione.id];
+          let linkAttestato = "—";
+          if (path){
+            const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(path);
+            linkAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a>`;
+          }
+          return `
           <tr>
             <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">${escapeHtml(r.volontari_formazione.cognome)} ${escapeHtml(r.volontari_formazione.nome)}</a></td>
             <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
             <td>${labelStatoIscrizione(r.stato)}</td>
-            <td>${r.attestato_rilasciato ? "✅" : "—"}</td>
-            <td><button class="row-del" data-toggle-attestato="${r.id}" data-val="${!r.attestato_rilasciato}">${r.attestato_rilasciato?"Revoca attestato":"Segna attestato"}</button></td>
-            <td><button class="row-del" data-rimuovi="${r.id}">Rimuovi</button></td>
+            <td>${linkAttestato}</td>
           </tr>
-        `).join("")}
+        `;
+        }).join("")}
       </tbody>
     </table>
   `;
 
   wrap.querySelectorAll("[data-apri-volontario]").forEach(a => a.addEventListener("click", (ev) => {
     ev.preventDefault();
-    apriModalVolontario(parseInt(a.dataset.apriVolontario));
-  }));
-  wrap.querySelectorAll("[data-toggle-attestato]").forEach(b => b.addEventListener("click", async () => {
-    const val = b.dataset.val === "true";
-    await sb.from("iscrizioni_corsi").update({ attestato_rilasciato: val }).eq("id", parseInt(b.dataset.toggleAttestato));
-    caricaVolontariEdizione();
-  }));
-  wrap.querySelectorAll("[data-rimuovi]").forEach(b => b.addEventListener("click", async () => {
-    if (!confirm("Rimuovere questo volontario dall'edizione?")) return;
-    await sb.from("iscrizioni_corsi").delete().eq("id", parseInt(b.dataset.rimuovi));
-    caricaVolontariEdizione();
+    apriModalVolontario(parseInt(a.dataset.apriVolontario), "edizione");
   }));
 }
 
 function labelStatoIscrizione(s){
   const map = { iscritto:"Iscritto", completato:"Completato", non_completato:"Non completato", ritirato:"Ritirato" };
   return map[s] || s;
+}
+
+function scaricaTemplateExcelCorso(e){
+  const intestazione = [
+    ["", "", "COORDINAMENTO REGIONALE DEL VOLONTARIATO DI PROTEZIONE CIVILE DEL PIEMONTE ODV"],
+    ["", "", "SCUOLA DI FORMAZIONE"],
+    [],
+    ["", "", "FORMAT PER INSERIMENTO DATI CORSISTI"],
+    [],
+    [],
+    ["ASSOCIAZIONE NAZIONALE ALPINI - ELENCO GENERALE"],
+    [],
+    [`CORSO : ${e.catalogo_corsi?.codice || e.label}`],
+    [`DATA : ${e.data_corso ? formatDataIt(e.data_corso) : ""}`],
+    [`SEDE DEL CORSO: ${e.sede || ""}`],
+    [],
+    [],
+    ["COGNOME","NOME","LUOGO NASCITA","PROV","DATA NASCITA","CODICE FISCALE","TELEFONO","MAIL","SEZIONE"]
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(intestazione);
+  ws["!cols"] = [
+    {wch:18},{wch:18},{wch:16},{wch:6},{wch:12},{wch:18},{wch:14},{wch:26},{wch:16}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Foglio1");
+  XLSX.writeFile(wb, `Template_${e.label.replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
+}
+
+async function caricaVolontariDaExcel(ev, e){
+  const file = ev.target.files[0];
+  if (!file) return;
+  ev.target.value = ""; // reset input per permettere ricaricare lo stesso file
+
+  const wrap = document.getElementById("volontari-edizione-list");
+  wrap.innerHTML = `<div class="loading-spin">Lettura file ed importazione…</div>`;
+
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:"array", cellDates:true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const righe = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+
+    // trova la riga di intestazione colonne (quella che contiene "COGNOME")
+    let idxHeader = righe.findIndex(r => (r[0]||"").toString().trim().toUpperCase() === "COGNOME");
+    if (idxHeader === -1){
+      alert("Non trovo l'intestazione 'COGNOME' nel file. Verifica che sia il template corretto.");
+      caricaVolontariEdizione();
+      return;
+    }
+
+    const dati = righe.slice(idxHeader + 1).filter(r => (r[0]||"").toString().trim() !== "");
+
+    let nuovi = 0, aggiornati = 0, iscritti = 0, errori = [];
+
+    for (const r of dati){
+      const cognome = (r[0]||"").toString().trim();
+      const nome = (r[1]||"").toString().trim();
+      const luogoNascita = (r[2]||"").toString().trim() || null;
+      const prov = (r[3]||"").toString().trim() || null;
+      let dataNascita = r[4];
+      if (dataNascita instanceof Date){
+        dataNascita = dataNascita.toISOString().slice(0,10);
+      } else if (typeof dataNascita === "string" && dataNascita.includes("/")){
+        const p = dataNascita.split("/");
+        dataNascita = p.length===3 ? `${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}` : null;
+      } else {
+        dataNascita = null;
+      }
+      const cf = (r[5]||"").toString().trim().toUpperCase() || null;
+      const telefono = (r[6]||"").toString().trim() || null;
+      const email = (r[7]||"").toString().trim() || null;
+      const sezione = (r[8]||"").toString().trim().toUpperCase() || null;
+
+      if (!cognome || !nome){ continue; }
+
+      try{
+        let volontarioId;
+        if (cf){
+          const { data: esistente } = await sb.from("volontari_formazione").select("id").eq("codice_fiscale", cf).maybeSingle();
+          if (esistente){
+            await sb.from("volontari_formazione").update({
+              cognome, nome, luogo_nascita: luogoNascita, provincia_nascita: prov,
+              data_nascita: dataNascita, telefono, email, sezione_ana: sezione
+            }).eq("id", esistente.id);
+            volontarioId = esistente.id;
+            aggiornati++;
+          }
+        }
+        if (!volontarioId){
+          const { data: creato, error: errCrea } = await sb.from("volontari_formazione").insert({
+            cognome, nome, codice_fiscale: cf, luogo_nascita: luogoNascita, provincia_nascita: prov,
+            data_nascita: dataNascita, telefono, email, sezione_ana: sezione
+          }).select().single();
+          if (errCrea) throw errCrea;
+          volontarioId = creato.id;
+          nuovi++;
+        }
+
+        const { data: giaIscritto } = await sb.from("iscrizioni_corsi").select("id").eq("volontario_id", volontarioId).eq("edizione_corso_id", e.id).maybeSingle();
+        if (!giaIscritto){
+          await sb.from("iscrizioni_corsi").insert({ volontario_id: volontarioId, edizione_corso_id: e.id, stato:"iscritto" });
+          iscritti++;
+        }
+      }catch(err){
+        errori.push(`${cognome} ${nome}: ${err.message}`);
+      }
+    }
+
+    let msg = `Importazione completata.\nNuovi volontari creati: ${nuovi}\nVolontari aggiornati: ${aggiornati}\nIscrizioni aggiunte: ${iscritti}`;
+    if (errori.length) msg += `\n\nErrori (${errori.length}):\n` + errori.join("\n");
+    alert(msg);
+
+  }catch(err){
+    alert("Errore nella lettura del file: " + err.message);
+  }
+
+  caricaVolontariEdizione();
 }
 
 async function mostraFormAggiungiVolontario(){
@@ -2583,9 +2788,6 @@ async function mostraFormAggiungiVolontario(){
             ${["iscritto","completato","non_completato","ritirato"].map(s => `<option value="${s}">${labelStatoIscrizione(s)}</option>`).join("")}
           </select>
         </div>
-        <div class="form-field" style="display:flex;align-items:flex-end;">
-          <div class="form-checkbox"><input type="checkbox" name="attestato_rilasciato"><label style="margin:0;">Attestato rilasciato</label></div>
-        </div>
       </div>
       <div class="form-actions">
         <button type="button" class="btn-cancel" id="btn-cancel-aggiungi-volontario">Annulla</button>
@@ -2601,8 +2803,7 @@ async function mostraFormAggiungiVolontario(){
     const payload = {
       volontario_id: parseInt(fd.get("volontario_id")),
       edizione_corso_id: e.id,
-      stato: fd.get("stato"),
-      attestato_rilasciato: fd.get("attestato_rilasciato") === "on"
+      stato: fd.get("stato")
     };
     const { error } = await sb.from("iscrizioni_corsi").insert(payload);
     if (error){ alert("Errore: " + error.message); return; }
@@ -2616,11 +2817,14 @@ const STORAGE_BUCKET_DOC_VOLONTARI = "volontari-documenti";
 let _modalVolontarioCorrente = null;
 let _modalVolontarioTab = "dati";
 
-async function apriModalVolontario(id){
+let _modalVolontarioProvenienza = "edizione"; // 'edizione' | 'ricerca'
+
+async function apriModalVolontario(id, provenienza){
   const { data, error } = await sb.from("volontari_formazione").select("*").eq("id", id).single();
   if (error){ alert("Errore: " + error.message); return; }
   _modalVolontarioCorrente = data;
   _modalVolontarioTab = "dati";
+  _modalVolontarioProvenienza = provenienza || "edizione";
   renderModalVolontario();
 }
 
@@ -2651,7 +2855,11 @@ function renderModalVolontario(){
 
   document.getElementById("modal-close-btn").addEventListener("click", () => {
     chiudiModal();
-    renderModalEdizione(); // torna al modal edizione sottostante
+    if (_modalVolontarioProvenienza === "edizione" && _modalEdizioneCorrente){
+      renderModalEdizione();
+    } else {
+      apriModalRicercaVolontari();
+    }
   });
   overlay.querySelectorAll(".modal-tab").forEach(tab => {
     tab.addEventListener("click", () => { _modalVolontarioTab = tab.dataset.tab; renderModalVolontario(); });
@@ -2700,7 +2908,11 @@ function renderTabDatiVolontario(){
     const { error } = await sb.from("volontari_formazione").delete().eq("id", v.id);
     if (error){ alert("Errore: " + error.message); return; }
     chiudiModal();
-    renderModalEdizione();
+    if (_modalVolontarioProvenienza === "edizione" && _modalEdizioneCorrente){
+      renderModalEdizione();
+    } else {
+      renderFormazione();
+    }
   });
 
   document.getElementById("form-volontario").addEventListener("submit", async (ev) => {
