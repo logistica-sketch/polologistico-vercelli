@@ -512,10 +512,10 @@ const state = {
    (null = tutti i ruoli autenticati)
    ============================================================ */
 const MENU = [
-  { route: "home",         label: "Home",         icon: "🏠", roles: null },
-  { route: "automezzi",    label: "Automezzi",     icon: "🚐", roles: null },
-  { route: "tlc",          label: "TLC / Radio",   icon: "📻", roles: null },
-  { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", roles: ["admin"] },
+  { route: "home",         label: "Home",         icon: "🏠", permesso: "home" },
+  { route: "automezzi",    label: "Automezzi",     icon: "🚐", permesso: "automezzi" },
+  { route: "tlc",          label: "TLC / Radio",   icon: "📻", permesso: "tlc" },
+  { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "impostazioni" },
 ];
 
 /* ============================================================
@@ -608,9 +608,9 @@ function labelRuolo(r){
   return map[r] || r;
 }
 
-function userCanSee(roles){
-  if (!roles) return true;
-  return roles.includes(state.profile.ruolo);
+function userCanSee(permesso){
+  if (state.profile.ruolo === "admin") return true;
+  return !!(state.profile.permessi && state.profile.permessi[permesso]);
 }
 
 document.getElementById("form-login").addEventListener("submit", async (e) => {
@@ -670,7 +670,7 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
    ============================================================ */
 function renderSidebar(){
   const list = document.getElementById("nav-list");
-  list.innerHTML = MENU.filter(m => userCanSee(m.roles)).map(m => `
+  list.innerHTML = MENU.filter(m => userCanSee(m.permesso)).map(m => `
     <div class="nav-item ${state.route === m.route ? "active" : ""}" data-route="${m.route}">
       <span class="ic">${m.icon}</span>
       <span>${m.label}</span>
@@ -723,7 +723,12 @@ const PAGE_TITLES = {
 
 function router(){
   const hash = location.hash.replace("#/", "") || "home";
-  const route = MENU.some(m => m.route === hash) ? hash : "home";
+  let route = MENU.some(m => m.route === hash) ? hash : "home";
+
+  const menuItem = MENU.find(m => m.route === route);
+  if (!userCanSee(menuItem.permesso)){
+    route = "home";
+  }
   state.route = route;
 
   const [title, sub] = PAGE_TITLES[route] || ["", ""];
@@ -1530,6 +1535,7 @@ async function renderTlc(){
           `<option value="${c}" ${_tlcFiltro.marca===c?"selected":""}>${c}</option>`).join("")}
       </select>
       <button class="btn-add" id="tlc-btn-nuovo">+ Nuovo apparato</button>
+      <button class="btn-add" id="tlc-btn-movimentazioni" style="background:var(--blu-700);">📋 Movimentazioni</button>
     </div>
     <div class="results-count" id="tlc-results-count"></div>
     <div class="card-grid" id="tlc-grid"></div>
@@ -1539,6 +1545,7 @@ async function renderTlc(){
   document.getElementById("tlc-filtro-categoria").addEventListener("change", e => { _tlcFiltro.categoria = e.target.value; renderTlcGrid(); });
   document.getElementById("tlc-filtro-marca").addEventListener("change", e => { _tlcFiltro.marca = e.target.value; renderTlcGrid(); });
   document.getElementById("tlc-btn-nuovo").addEventListener("click", () => apriModalTlc(null));
+  document.getElementById("tlc-btn-movimentazioni").addEventListener("click", () => renderMovimentazioniTlc());
 
   renderTlcGrid();
 }
@@ -1607,12 +1614,7 @@ function renderModalTlc(){
         <h3>${isNuovo ? "Nuovo apparato" : escapeHtml(a.selettiva)}</h3>
         <button class="modal-close" id="modal-close-btn">✕</button>
       </div>
-      ${isNuovo ? "" : `
-        <div class="modal-tabs">
-          <div class="modal-tab ${_modalTlcTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
-          <div class="modal-tab ${_modalTlcTab==="movimenti"?"active":""}" data-tab="movimenti">Movimentazioni</div>
-        </div>
-      `}
+      ${isNuovo ? "" : ""}
       <div class="modal-body" id="modal-body"></div>
     </div>
   `;
@@ -1624,8 +1626,7 @@ function renderModalTlc(){
     tab.addEventListener("click", () => { _modalTlcTab = tab.dataset.tab; renderModalTlc(); });
   });
 
-  if (isNuovo || _modalTlcTab === "dati") renderTabDatiTlc();
-  else if (_modalTlcTab === "movimenti") renderTabMovimentiTlc();
+  renderTabDatiTlc();
 }
 
 function renderTabDatiTlc(){
@@ -1704,110 +1705,331 @@ async function eliminaTlc(id){
   renderTlc();
 }
 
-function renderTabMovimentiTlc(){
-  const a = _modalTlcCorrente;
-  const body = document.getElementById("modal-body");
-  body.innerHTML = `
-    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-movimento-tlc">+ Nuova movimentazione</button></div>
-    <div id="movimenti-tlc-list"><div class="loading-spin">Caricamento…</div></div>
+/* ============================================================
+   MOVIMENTAZIONE TLC — multi-apparato con bolla PDF
+   ============================================================ */
+const SEZIONI_ANA = [
+  "ACQUI TERME","ALESSANDRIA","AOSTA","ASTI","BIELLA","CASALE MONFERRATO",
+  "CEVA","CUNEO","DOMODOSSOLA","GENOVA","IMPERIA","INTRA","IVREA",
+  "LA SPEZIA","MONDOVI","NOVARA","OMEGNA","PINEROLO","SALUZZO","SAVONA",
+  "TORINO","VALSESIANA","VALSUSA","VERCELLI"
+];
+const STORAGE_BUCKET_BOLLE = "tlc-bolle";
+
+async function renderMovimentazioniTlc(){
+  const content = document.getElementById("page-content");
+  const { data, error } = await sb
+    .from("movimentazioni_tlc")
+    .select("*, movimentazioni_tlc_apparati(apparato_id, tlc_apparati(selettiva, modello))")
+    .order("data_uscita", { ascending:false });
+
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+
+  content.innerHTML = `
+    <div class="toolbar" style="justify-content:flex-end;">
+      <button class="btn-add" id="btn-nuova-movimentazione-tlc">+ Nuova movimentazione</button>
+    </div>
+    <div id="movimentazioni-tlc-list"></div>
   `;
-  document.getElementById("btn-nuovo-movimento-tlc").addEventListener("click", () => mostraFormMovimentoTlc());
-  caricaMovimentiTlc();
+  document.getElementById("btn-nuova-movimentazione-tlc").addEventListener("click", () => apriModalNuovaMovimentazioneTlc());
+  renderTabellaMovimentazioniTlc(data);
 }
 
-async function caricaMovimentiTlc(){
-  const a = _modalTlcCorrente;
-  const { data, error } = await sb.from("movimenti_tlc").select("*").eq("apparato_id", a.id).order("data_movimento", { ascending:false });
-  const wrap = document.getElementById("movimenti-tlc-list");
-  if (!wrap) return;
-  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
-  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessuna movimentazione registrata.</div>`; return; }
-
+function renderTabellaMovimentazioniTlc(data){
+  const wrap = document.getElementById("movimentazioni-tlc-list");
+  if (!data || data.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">📻</div>Nessuna movimentazione registrata.</div>`;
+    return;
+  }
   wrap.innerHTML = `
     <table class="storico-table">
-      <thead><tr><th>Data</th><th>Operatore</th><th>Destinazione</th><th>Motivo</th><th></th></tr></thead>
+      <thead><tr><th>Uscita</th><th>Rientro</th><th>Operatore</th><th>Sezione</th><th>Apparati</th><th>Stato</th><th>Bolla</th><th></th></tr></thead>
       <tbody>
-        ${data.map(r => `
+        ${data.map(r => {
+          const apparati = (r.movimentazioni_tlc_apparati||[]).map(a => a.tlc_apparati?.selettiva).filter(Boolean).join(", ");
+          return `
           <tr>
-            <td>${formatDataIt(r.data_movimento)}</td>
-            <td>${escapeHtml(r.operatore||"—")}</td>
-            <td>${escapeHtml(r.destinazione||"—")}</td>
-            <td>${escapeHtml(r.motivo||"—")}</td>
-            <td><button class="row-del" data-id="${r.id}">Elimina</button></td>
+            <td>${formatDataIt(r.data_uscita)}</td>
+            <td>${r.data_rientro ? formatDataIt(r.data_rientro) : "—"}</td>
+            <td>${escapeHtml(r.operatore)}</td>
+            <td>${escapeHtml(r.sezione_ana)}</td>
+            <td>${escapeHtml(apparati)}</td>
+            <td>${r.stato === "in_uso" ? '<span class="tag" style="background:var(--giallo-bg);color:var(--giallo);">IN USO</span>' : '<span class="tag" style="background:var(--verde-bg);color:var(--verde);">RIENTRATO</span>'}</td>
+            <td>${r.bolla_path ? `<a href="${sb.storage.from(STORAGE_BUCKET_BOLLE).getPublicUrl(r.bolla_path).data.publicUrl}" target="_blank" rel="noopener">PDF</a>` : "—"}</td>
+            <td>${r.stato === "in_uso" ? `<button class="row-del" style="color:var(--blu-500);" data-rientro="${r.id}">Registra rientro</button>` : ""}</td>
           </tr>
-        `).join("")}
+        `}).join("")}
       </tbody>
     </table>
   `;
-  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
-    if (!confirm("Eliminare questa movimentazione?")) return;
-    await sb.from("movimenti_tlc").delete().eq("id", parseInt(b.dataset.id));
-    caricaMovimentiTlc();
-  }));
+  wrap.querySelectorAll("[data-rientro]").forEach(b => b.addEventListener("click", () => registraRientroTlc(parseInt(b.dataset.rientro))));
 }
 
-function mostraFormMovimentoTlc(){
-  const a = _modalTlcCorrente;
-  const wrap = document.getElementById("movimenti-tlc-list");
-  const form = document.createElement("div");
-  form.className = "mini-form";
-  form.innerHTML = `
-    <form id="form-movimento-tlc">
-      <div class="form-grid">
-        <div class="form-field"><label>Data</label><input type="date" name="data_movimento" value="${new Date().toISOString().slice(0,10)}" required></div>
-        <div class="form-field"><label>Operatore</label><input name="operatore"></div>
-        <div class="form-field full"><label>Destinazione / Assegnatario</label><input name="destinazione"></div>
-        <div class="form-field full"><label>Motivo</label><input name="motivo"></div>
-        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+async function apriModalNuovaMovimentazioneTlc(){
+  const { data: apparatiLiberi } = await sb
+    .from("tlc_apparati")
+    .select("*")
+    .order("selettiva");
+
+  // Escludi apparati attualmente "in_uso" in una movimentazione non rientrata
+  const { data: inUso } = await sb
+    .from("movimentazioni_tlc_apparati")
+    .select("apparato_id, movimentazioni_tlc!inner(stato)")
+    .eq("movimentazioni_tlc.stato", "in_uso");
+  const idInUso = new Set((inUso||[]).map(r => r.apparato_id));
+  const disponibili = apparatiLiberi.filter(a => !idInUso.has(a.id));
+
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Nuova movimentazione TLC</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
       </div>
-      <div class="form-actions">
-        <button type="button" class="btn-cancel" id="btn-cancel-movimento-tlc">Annulla</button>
-        <button type="submit" class="btn-save">Salva</button>
+      <div class="modal-body">
+        <form id="form-movimentazione-tlc">
+          <div class="form-grid">
+            <div class="form-field"><label>Data uscita</label><input type="date" name="data_uscita" value="${new Date().toISOString().slice(0,10)}" required></div>
+            <div class="form-field"><label>Operatore (chi prende gli apparati) *</label><input name="operatore" required></div>
+            <div class="form-field full">
+              <label>Sezione ANA *</label>
+              <select name="sezione_ana" required>
+                <option value="">— Seleziona —</option>
+                ${SEZIONI_ANA.map(s => `<option value="${s}">${s}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-field full"><label>Motivo</label><input name="motivo"></div>
+            <div class="form-field full">
+              <label>Apparati da assegnare * (${disponibili.length} disponibili)</label>
+              <div style="max-height:200px;overflow-y:auto;border:1px solid var(--grigio-400);border-radius:8px;padding:8px;">
+                ${disponibili.length === 0 ? '<p style="font-size:12.5px;color:var(--grigio-600);margin:4px;">Nessun apparato disponibile, tutti in uso.</p>' : disponibili.map(a => `
+                  <label style="display:flex;align-items:center;gap:8px;padding:5px 4px;font-size:13px;">
+                    <input type="checkbox" name="apparati" value="${a.id}">
+                    <strong style="font-family:monospace;">${escapeHtml(a.selettiva)}</strong> — ${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")} (${a.categoria||"—"})
+                  </label>
+                `).join("")}
+              </div>
+            </div>
+            <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-cancel" id="btn-cancel-mov-tlc">Annulla</button>
+            <button type="submit" class="btn-save">Salva e genera bolla</button>
+          </div>
+        </form>
       </div>
-    </form>
+    </div>
   `;
-  wrap.prepend(form);
-  document.getElementById("btn-cancel-movimento-tlc").addEventListener("click", () => form.remove());
-  document.getElementById("form-movimento-tlc").addEventListener("submit", async (e) => {
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  document.getElementById("btn-cancel-mov-tlc").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+
+  document.getElementById("form-movimentazione-tlc").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const apparatiSelezionati = fd.getAll("apparati").map(Number);
+
+    if (apparatiSelezionati.length === 0){ alert("Seleziona almeno un apparato."); return; }
+
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
     const payload = {
-      apparato_id: a.id,
-      data_movimento: fd.get("data_movimento"),
-      operatore: fd.get("operatore") || null,
-      destinazione: fd.get("destinazione") || null,
+      data_uscita: fd.get("data_uscita"),
+      operatore: fd.get("operatore").trim(),
+      sezione_ana: fd.get("sezione_ana"),
       motivo: fd.get("motivo") || null,
       note: fd.get("note") || null,
       created_by: state.user.id
     };
-    const { error } = await sb.from("movimenti_tlc").insert(payload);
-    if (error){ alert("Errore: " + error.message); return; }
 
-    // aggiorna anche assegnato_a sulla scheda apparato, se indicata destinazione
-    if (payload.destinazione){
-      await sb.from("tlc_apparati").update({ assegnato_a: payload.destinazione }).eq("id", a.id);
-      a.assegnato_a = payload.destinazione;
-      const idx = _tlcCache.findIndex(x => x.id === a.id);
-      if (idx >= 0) _tlcCache[idx].assegnato_a = payload.destinazione;
-    }
+    const { data: mov, error } = await sb.from("movimentazioni_tlc").insert(payload).select().single();
+    if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Salva e genera bolla"; return; }
 
-    form.remove();
-    caricaMovimentiTlc();
+    const righe = apparatiSelezionati.map(id => ({ movimentazione_id: mov.id, apparato_id: id }));
+    await sb.from("movimentazioni_tlc_apparati").insert(righe);
+
+    const apparatiDettaglio = disponibili.filter(a => apparatiSelezionati.includes(a.id));
+    await generaEArchiviaBollaTlc(mov, apparatiDettaglio);
+
+    chiudiModal();
+    renderMovimentazioniTlc();
   });
 }
 
+async function registraRientroTlc(movId){
+  const dataRientro = prompt("Data di rientro (GG/MM/AAAA):", new Date().toLocaleDateString("it-IT"));
+  if (!dataRientro) return;
+  const parts = dataRientro.split("/");
+  if (parts.length !== 3){ alert("Formato data non valido."); return; }
+  const iso = `${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`;
+
+  const { error } = await sb.from("movimentazioni_tlc").update({ data_rientro: iso, stato: "rientrato" }).eq("id", movId);
+  if (error){ alert("Errore: " + error.message); return; }
+  renderMovimentazioniTlc();
+}
+
+async function generaEArchiviaBollaTlc(mov, apparati){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  doc.setFontSize(14);
+  doc.text("Polo Logistico 1 RGPT/CAP Vercelli", 14, 18);
+  doc.setFontSize(12);
+  doc.text("Bolla di movimentazione apparati TLC", 14, 26);
+  doc.setFontSize(9);
+  doc.text(`N. movimentazione: ${mov.id}`, 14, 33);
+
+  let y = 44;
+  doc.setFontSize(10);
+  doc.text(`Data uscita: ${formatDataIt(mov.data_uscita)}`, 14, y); y += 7;
+  doc.text(`Operatore: ${mov.operatore}`, 14, y); y += 7;
+  doc.text(`Sezione ANA: ${mov.sezione_ana}`, 14, y); y += 7;
+  if (mov.motivo){ doc.text(`Motivo: ${mov.motivo}`, 14, y); y += 7; }
+  y += 4;
+
+  doc.setFont(undefined, "bold");
+  doc.text("Apparati assegnati", 14, y); y += 6;
+  doc.setFont(undefined, "normal");
+  doc.text("Selettiva", 14, y);
+  doc.text("Marca/Modello", 60, y);
+  doc.text("Categoria", 130, y);
+  doc.text("Matricola", 165, y);
+  y += 4;
+  doc.line(14, y, 196, y);
+  y += 6;
+
+  apparati.forEach(a => {
+    doc.text(a.selettiva, 14, y);
+    doc.text(`${a.marca||""} ${a.modello||""}`.trim().slice(0,30), 60, y);
+    doc.text(a.categoria||"—", 130, y);
+    doc.text(a.matricola||"—", 165, y);
+    y += 7;
+  });
+
+  y += 14;
+  doc.setFont(undefined, "bold");
+  doc.text("Firma di consegna", 14, y);
+  doc.text("Firma di rientro", 110, y);
+  y += 18;
+  doc.setFont(undefined, "normal");
+  doc.line(14, y, 90, y);
+  doc.line(110, y, 186, y);
+  y += 6;
+  doc.setFontSize(8);
+  doc.text(`Data: ${formatDataIt(mov.data_uscita)}`, 14, y);
+  doc.text("Data: ___________________", 110, y);
+
+  const blob = doc.output("blob");
+  const path = `mov_${mov.id}_${mov.data_uscita}.pdf`;
+  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).upload(path, blob, { contentType: "application/pdf" });
+  if (!upErr){
+    await sb.from("movimentazioni_tlc").update({ bolla_path: path }).eq("id", mov.id);
+  }
+
+  doc.save(`bolla_movimentazione_${mov.id}.pdf`);
+}
+
+
 /* ============================================================
-   PAGINA: IMPOSTAZIONI (placeholder — prossimo step)
+   PAGINA: IMPOSTAZIONI — gestione utenti e permessi
    ============================================================ */
+const PAGINE_PERMESSO = [
+  { key:"home", label:"Home" },
+  { key:"automezzi", label:"Automezzi" },
+  { key:"tlc", label:"TLC / Radio" },
+  { key:"impostazioni", label:"Impostazioni" }
+];
+
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
+
+  if (state.profile.ruolo !== "admin"){
+    content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Sezione riservata agli amministratori.</p></div>`;
+    return;
+  }
+
+  const { data, error } = await sb.from("app_users").select("*").order("nome");
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+
   content.innerHTML = `
-    <div class="placeholder-page">
-      <h3>⚙️ Impostazioni</h3>
-      <p>Gestione utenti, ruoli e soglie di alert in arrivo nel prossimo step.</p>
-    </div>
+    <div class="section-title">Utenti abilitati</div>
+    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
+      Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
+    </p>
+    <div id="utenti-list"></div>
   `;
+  renderListaUtenti(data);
 }
+
+function renderListaUtenti(utenti){
+  const wrap = document.getElementById("utenti-list");
+  wrap.innerHTML = utenti.map(u => `
+    <div class="mini-form" style="margin-bottom:12px;">
+      <div class="form-grid">
+        <div class="form-field"><label>Nome</label><input data-field="nome" data-id="${u.id}" value="${escapeHtml(u.nome)}"></div>
+        <div class="form-field"><label>Email</label><input value="${escapeHtml(u.email)}" disabled></div>
+        <div class="form-field">
+          <label>Ruolo</label>
+          <select data-field="ruolo" data-id="${u.id}">
+            ${["admin","resp_automezzi","resp_tlc","viewer"].map(r => `<option value="${r}" ${u.ruolo===r?"selected":""}>${labelRuolo(r)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Attivo</label>
+          <div class="form-checkbox"><input type="checkbox" data-field="attivo" data-id="${u.id}" ${u.attivo?"checked":""}><label style="margin:0;">Utente attivo</label></div>
+        </div>
+        <div class="form-field full">
+          <label>Pagine abilitate</label>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;">
+            ${PAGINE_PERMESSO.map(p => `
+              <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;">
+                <input type="checkbox" data-perm="${p.key}" data-id="${u.id}" ${u.permessi && u.permessi[p.key] ? "checked" : ""}>
+                ${p.label}
+              </label>
+            `).join("")}
+          </div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-save" data-save="${u.id}">Salva</button>
+      </div>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll('[data-save]').forEach(btn => {
+    btn.addEventListener("click", () => salvaUtente(btn.dataset.save));
+  });
+}
+
+async function salvaUtente(id){
+  const nome = document.querySelector(`[data-field="nome"][data-id="${id}"]`).value.trim();
+  const ruolo = document.querySelector(`[data-field="ruolo"][data-id="${id}"]`).value;
+  const attivo = document.querySelector(`[data-field="attivo"][data-id="${id}"]`).checked;
+  const permessi = {};
+  PAGINE_PERMESSO.forEach(p => {
+    permessi[p.key] = document.querySelector(`[data-perm="${p.key}"][data-id="${id}"]`).checked;
+  });
+
+  const { error } = await sb.from("app_users").update({ nome, ruolo, attivo, permessi }).eq("id", id);
+  if (error){ alert("Errore: " + error.message); return; }
+
+  if (id === state.user.id){
+    state.profile.nome = nome;
+    state.profile.ruolo = ruolo;
+    state.profile.permessi = permessi;
+    document.getElementById("sidebar-user-name").textContent = nome;
+    document.getElementById("sidebar-user-role").textContent = labelRuolo(ruolo);
+    renderSidebar();
+  }
+
+  alert("Utente aggiornato.");
+}
+
 
 /* ============================================================
    AVVIO
