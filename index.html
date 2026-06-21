@@ -457,16 +457,51 @@ input,select,textarea{font-family:inherit;}
 
 /* ---------- RESPONSIVE ---------- */
 @media (max-width:880px){
-  #sidebar{transform:translateX(-100%);}
+  #sidebar{transform:translateX(-100%);width:260px;}
   #sidebar.open{transform:translateX(0);}
   #main-area{margin-left:0;}
   #sidebar-toggle{display:flex;align-items:center;justify-content:center;}
-  #page-content{padding:20px 16px 50px;}
+  #page-content{padding:16px 12px 50px;}
   #topbar{padding:14px 18px 14px 60px;}
   .form-grid{grid-template-columns:1fr;}
   .foto-grid4{grid-template-columns:1fr 1fr;}
-  .modal-box{max-height:94vh;}
   .storico-table{display:block;overflow-x:auto;white-space:nowrap;}
+
+  /* Modal: usa quasi tutta la larghezza/altezza dello schermo su mobile */
+  .modal-overlay{padding:0;align-items:flex-end;}
+  .modal-box{
+    max-width:100%;width:100%;max-height:96vh;
+    border-radius:16px 16px 0 0;
+  }
+  .modal-tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .modal-tab{flex-shrink:0;}
+
+  /* Radio "Tipo firma" in colonna su mobile, niente testo tagliato */
+  .radio-group{flex-direction:column;gap:10px;align-items:flex-start;}
+  .radio-group label{white-space:normal;}
+
+  /* Toolbar filtri: impilata invece che su una riga che esce dallo schermo */
+  .toolbar{flex-wrap:wrap;}
+  .toolbar input[type="search"],
+  .toolbar select,
+  .toolbar .btn-add{
+    width:100%;
+  }
+
+  /* Card grid: una colonna su mobile per leggibilità */
+  .card-grid{grid-template-columns:1fr;}
+
+  /* Sidebar header: titolo non tagliato */
+  .sidebar-header{padding:18px 16px 14px;}
+  .sidebar-header .title{font-size:14px;}
+
+  /* Firma canvas: altezza adattata */
+  .firma-canvas-wrap canvas{height:140px;}
+}
+
+@media (max-width:480px){
+  .login-box{padding:28px 22px;max-width:100%;}
+  .stat-card .num{font-size:22px;}
 }
 </style>
 </head>
@@ -728,15 +763,38 @@ function renderSidebar(){
 
   // toggle mobile dopo click su una voce
   list.querySelectorAll(".nav-item").forEach(el => {
-    el.addEventListener("click", () => document.getElementById("sidebar").classList.remove("open"));
+    el.addEventListener("click", () => {
+      document.getElementById("sidebar").classList.remove("open");
+      toggleSidebarBackdrop(false);
+    });
   });
 
   refreshAlertBadge();
 }
 
 document.getElementById("sidebar-toggle").addEventListener("click", () => {
-  document.getElementById("sidebar").classList.toggle("open");
+  const sidebar = document.getElementById("sidebar");
+  sidebar.classList.toggle("open");
+  toggleSidebarBackdrop(sidebar.classList.contains("open"));
 });
+
+function toggleSidebarBackdrop(mostra){
+  let backdrop = document.getElementById("sidebar-backdrop");
+  if (mostra){
+    if (!backdrop){
+      backdrop = document.createElement("div");
+      backdrop.id = "sidebar-backdrop";
+      backdrop.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:90;";
+      backdrop.addEventListener("click", () => {
+        document.getElementById("sidebar").classList.remove("open");
+        toggleSidebarBackdrop(false);
+      });
+      document.body.appendChild(backdrop);
+    }
+  } else if (backdrop){
+    backdrop.remove();
+  }
+}
 
 async function refreshAlertBadge(){
   try{
@@ -2363,15 +2421,26 @@ async function apriModalAttestatiMancanti(){
   document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
   overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
 
-  const { data, error } = await sb
+  await caricaAttestatiMancanti();
+}
+
+async function caricaAttestatiMancanti(){
+  const body = document.getElementById("attestati-mancanti-body");
+  if (!body) return;
+  body.innerHTML = `<div class="loading-spin">Verifica in corso…</div>`;
+
+  const { data: datiGrezzi, error } = await sb
     .from("iscrizioni_corsi")
     .select("*, volontari_formazione(id, cognome, nome, sezione_ana), edizioni_corso!inner(label, data_corso, stato)")
     .eq("stato", "in_verifica")
-    .eq("edizioni_corso.stato", "terminato")
-    .order("id");
+    .eq("edizioni_corso.stato", "terminato");
 
-  const body = document.getElementById("attestati-mancanti-body");
   if (error){ body.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  const data = (datiGrezzi||[]).sort((a,b) => {
+    const ca = a.volontari_formazione.cognome.localeCompare(b.volontari_formazione.cognome);
+    return ca !== 0 ? ca : a.volontari_formazione.nome.localeCompare(b.volontari_formazione.nome);
+  });
 
   if (!data || data.length === 0){
     body.innerHTML = `<div class="empty-state"><div class="ic">✅</div>Nessun attestato mancante: tutti gli iscritti ai corsi terminati sono completati o segnati assenti.</div>`;
@@ -2381,7 +2450,7 @@ async function apriModalAttestatiMancanti(){
   body.innerHTML = `
     <p style="font-size:13px;color:var(--grigio-600);margin-top:0;">${data.length} iscrizioni su corsi terminati ancora "In verifica" — manca l'attestato o il flag Assente.</p>
     <table class="storico-table">
-      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Corso</th><th>Data</th><th></th></tr></thead>
+      <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Corso</th><th>Data</th><th>Assente</th><th>Attestato</th><th></th></tr></thead>
       <tbody>
         ${data.map(r => `
           <tr>
@@ -2389,6 +2458,12 @@ async function apriModalAttestatiMancanti(){
             <td>${escapeHtml(r.volontari_formazione.sezione_ana||"—")}</td>
             <td>${escapeHtml(r.edizioni_corso.label)}</td>
             <td>${r.edizioni_corso.data_corso ? formatDataIt(r.edizioni_corso.data_corso) : "—"}</td>
+            <td><input type="checkbox" data-toggle-assente-mancanti="${r.id}"></td>
+            <td>
+              <label class="btn-add-mini" style="cursor:pointer;padding:5px 10px;font-size:11.5px;">Carica
+                <input type="file" accept=".pdf,image/*" style="display:none;" data-upload-attestato-mancanti="${r.id}" data-volontario="${r.volontari_formazione.id}" data-cognome="${escapeHtml(r.volontari_formazione.cognome)}" data-nome="${escapeHtml(r.volontari_formazione.nome)}">
+              </label>
+            </td>
             <td><a href="#" data-apri-volontario="${r.volontari_formazione.id}" style="color:var(--blu-500);font-weight:600;">Apri scheda</a></td>
           </tr>
         `).join("")}
@@ -2399,6 +2474,39 @@ async function apriModalAttestatiMancanti(){
     ev.preventDefault();
     apriModalVolontario(parseInt(a.dataset.apriVolontario), "ricerca");
   }));
+  body.querySelectorAll("[data-toggle-assente-mancanti]").forEach(chk => chk.addEventListener("change", async (ev) => {
+    if (!ev.target.checked) return;
+    const iscrizioneId = parseInt(ev.target.dataset.toggleAssenteMancanti);
+    await sb.from("iscrizioni_corsi").update({ stato: "assente" }).eq("id", iscrizioneId);
+    caricaAttestatiMancanti();
+  }));
+  body.querySelectorAll("[data-upload-attestato-mancanti]").forEach(input => input.addEventListener("change", (ev) => caricaAttestatoDaListaMancanti(ev)));
+}
+
+async function caricaAttestatoDaListaMancanti(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  const iscrizioneId = parseInt(ev.target.dataset.uploadAttestatoMancanti);
+  const volontarioId = parseInt(ev.target.dataset.volontario);
+  const cognome = ev.target.dataset.cognome;
+  const nome = ev.target.dataset.nome;
+
+  const path = `${cognome}_${nome}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
+  if (upErr){ alert("Errore upload: " + upErr.message); return; }
+
+  const { error: errDoc } = await sb.from("documenti_volontario").insert({
+    volontario_id: volontarioId,
+    tipo: "attestato",
+    nome_file: file.name,
+    storage_path: path,
+    created_by: state.user.id
+  });
+  if (errDoc){ alert("Errore: " + errDoc.message); return; }
+
+  await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+
+  caricaAttestatiMancanti();
 }
 
 
@@ -2732,11 +2840,14 @@ function renderTabVolontariEdizione(){
 async function caricaVolontariEdizione(){
   const e = _modalEdizioneCorrente;
   const terminato = e.stato === "terminato";
-  const { data, error } = await sb
+  const { data: datiGrezzi, error } = await sb
     .from("iscrizioni_corsi")
     .select("*, volontari_formazione(id, cognome, nome, sezione_ana)")
-    .eq("edizione_corso_id", e.id)
-    .order("id");
+    .eq("edizione_corso_id", e.id);
+  const data = (datiGrezzi||[]).sort((a,b) => {
+    const ca = a.volontari_formazione.cognome.localeCompare(b.volontari_formazione.cognome);
+    return ca !== 0 ? ca : a.volontari_formazione.nome.localeCompare(b.volontari_formazione.nome);
+  });
   const wrap = document.getElementById("volontari-edizione-list");
   if (!wrap) return;
   if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
@@ -2982,7 +3093,7 @@ async function mostraFormAggiungiVolontario(){
   const e = _modalEdizioneCorrente;
   const wrap = document.getElementById("volontari-edizione-list");
 
-  const { data: tuttiVolontari } = await sb.from("volontari_formazione").select("id, cognome, nome").order("cognome");
+  const { data: tuttiVolontari } = await sb.from("volontari_formazione").select("id, cognome, nome").order("cognome").order("nome");
   const { data: giaIscritti } = await sb.from("iscrizioni_corsi").select("volontario_id").eq("edizione_corso_id", e.id);
   const idIscritti = new Set((giaIscritti||[]).map(r => r.volontario_id));
   const disponibili = tuttiVolontari.filter(v => !idIscritti.has(v.id));
