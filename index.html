@@ -299,14 +299,14 @@ input,select,textarea{font-family:inherit;}
   font-size:10px;font-weight:700;text-transform:uppercase;
   padding:3px 8px;border-radius:6px;letter-spacing:.3px;
 }
-.veicolo-card .badge-stato{
-  position:absolute;top:8px;right:8px;
-  width:10px;height:10px;border-radius:50%;
-  border:2px solid #fff;
+.badge-stato-mezzo{
+  display:inline-block;font-size:10.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.3px;padding:3px 9px;border-radius:6px;margin-bottom:6px;
 }
-.veicolo-card .badge-stato.scaduto{background:var(--rosso);}
-.veicolo-card .badge-stato.avvicinamento{background:var(--giallo);}
-.veicolo-card .badge-stato.ok{background:var(--verde);}
+.badge-stato-mezzo.operativo{background:var(--verde-bg);color:var(--verde);}
+.badge-stato-mezzo.revisionare{background:var(--rosso-bg);color:var(--rosso);}
+.badge-stato-mezzo.in_manutenzione{background:var(--giallo-bg);color:var(--giallo);}
+.badge-stato-mezzo.dismesso{background:var(--grigio-200);color:var(--grigio-600);}
 .veicolo-card .info{padding:12px 14px;}
 .veicolo-card .targa{
   font-size:14.5px;font-weight:700;color:var(--blu-900);
@@ -1113,6 +1113,21 @@ async function renderAutomezzi(){
   renderAutomezziGrid();
 }
 
+function statoOperativoMezzo(m){
+  // Il dismesso è definitivo: niente automatismo, resta sempre dismesso.
+  if (m.stato_manuale === "dismesso") return "dismesso";
+  // La revisione scaduta vince sempre sugli altri stati (tranne dismesso).
+  if (m.scadenza_revisione && statoScadenza(m.scadenza_revisione, 30) === "scaduto"){
+    return "revisionare";
+  }
+  return m.stato_manuale || "operativo";
+}
+
+function labelStatoMezzo(s){
+  const map = { operativo:"Operativo", revisionare:"Revisionare", in_manutenzione:"In Manutenzione", dismesso:"Dismesso" };
+  return map[s] || s;
+}
+
 function renderAutomezziGrid(){
   const f = _automezziFiltro;
   const filtrati = _automezziCache.filter(m => {
@@ -1123,25 +1138,63 @@ function renderAutomezziGrid(){
     return true;
   });
 
-  document.getElementById("am-results-count").textContent = `${filtrati.length} di ${_automezziCache.length} mezzi`;
+  const attivi = filtrati.filter(m => m.stato_manuale !== "dismesso");
+  const dismessi = filtrati.filter(m => m.stato_manuale === "dismesso");
+
+  document.getElementById("am-results-count").textContent = `${attivi.length} di ${_automezziCache.filter(m=>m.stato_manuale!=="dismesso").length} mezzi attivi`;
 
   const grid = document.getElementById("am-grid");
-  if (filtrati.length === 0){
+  if (attivi.length === 0){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="ic">🔍</div>Nessun mezzo corrisponde ai filtri.</div>`;
-    return;
+  } else {
+    grid.innerHTML = renderCardMezziHtml(attivi);
+    attaccaListenerCardMezzi(grid);
   }
 
-  grid.innerHTML = filtrati.map(m => {
-    const stato = m.scadenza_revisione ? statoScadenza(m.scadenza_revisione, 30) : "ok";
+  // Sezione dismessi, collassabile, in fondo
+  let sezioneDismessi = document.getElementById("am-sezione-dismessi");
+  if (!sezioneDismessi){
+    sezioneDismessi = document.createElement("div");
+    sezioneDismessi.id = "am-sezione-dismessi";
+    sezioneDismessi.className = "collapse-block";
+    sezioneDismessi.style.marginTop = "20px";
+    grid.parentElement.appendChild(sezioneDismessi);
+  }
+  if (dismessi.length === 0){
+    sezioneDismessi.style.display = "none";
+  } else {
+    sezioneDismessi.style.display = "block";
+    sezioneDismessi.innerHTML = `
+      <button class="collapse-head" id="toggle-am-dismessi">
+        <span>🗑️ Mezzi dismessi</span>
+        <span class="collapse-badge" style="display:inline-block;background:var(--grigio-600);">${dismessi.length}</span>
+        <span class="collapse-arrow">▾</span>
+      </button>
+      <div class="collapse-body" id="body-am-dismessi"><div class="card-grid">${renderCardMezziHtml(dismessi)}</div></div>
+    `;
+    attaccaListenerCardMezzi(sezioneDismessi);
+    const toggle = document.getElementById("toggle-am-dismessi");
+    const bodyDism = document.getElementById("body-am-dismessi");
+    toggle.addEventListener("click", () => {
+      const apri = bodyDism.style.display !== "block";
+      bodyDism.style.display = apri ? "block" : "none";
+      toggle.querySelector(".collapse-arrow").textContent = apri ? "▴" : "▾";
+    });
+  }
+}
+
+function renderCardMezziHtml(elenco){
+  return elenco.map(m => {
+    const statoOp = statoOperativoMezzo(m);
     const fotoUrl = m.foto_fronte ? urlFotoMezzo(m.targa, "fronte") : null;
     return `
       <div class="veicolo-card" data-id="${m.id}">
         <div class="foto-wrap">
           ${fotoUrl ? `<img src="${fotoUrl}" alt="${escapeHtml(m.targa)}" onerror="this.parentElement.innerHTML='<span class=ph>🚐</span>'">` : `<span class="ph">🚐</span>`}
           ${m.categoria ? `<span class="badge-cat">${m.categoria}</span>` : ""}
-          <span class="badge-stato ${stato}" title="Revisione: ${stato}"></span>
         </div>
         <div class="info">
+          <span class="badge-stato-mezzo ${statoOp}">${labelStatoMezzo(statoOp)}</span>
           <div class="targa">${escapeHtml(m.targa)}</div>
           <div class="modello">${escapeHtml(m.marca || "")} ${escapeHtml(m.modello || "")}</div>
           <div class="meta">
@@ -1152,8 +1205,10 @@ function renderAutomezziGrid(){
       </div>
     `;
   }).join("");
+}
 
-  grid.querySelectorAll(".veicolo-card").forEach(el => {
+function attaccaListenerCardMezzi(container){
+  container.querySelectorAll(".veicolo-card[data-id]").forEach(el => {
     el.addEventListener("click", () => apriModalMezzo(parseInt(el.dataset.id)));
   });
 }
@@ -1250,6 +1305,23 @@ function renderTabDatiMezzo(){
           </select>
         </div>
         <div class="form-field"><label>Scadenza revisione</label><input name="scadenza_revisione" type="date" value="${m.scadenza_revisione||""}"></div>
+        <div class="form-field">
+          <label>Frequenza revisione</label>
+          <select name="frequenza_revisione_anni">
+            <option value="1" ${m.frequenza_revisione_anni===1?"selected":""}>Ogni 1 anno</option>
+            <option value="2" ${(!m.frequenza_revisione_anni || m.frequenza_revisione_anni===2)?"selected":""}>Ogni 2 anni</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Stato</label>
+          <select name="stato_manuale" id="select-stato-manuale" ${m.stato_manuale==="dismesso" ? "disabled" : ""}>
+            <option value="operativo" ${m.stato_manuale==="operativo"||!m.stato_manuale?"selected":""}>Operativo</option>
+            <option value="in_manutenzione" ${m.stato_manuale==="in_manutenzione"?"selected":""}>In Manutenzione</option>
+            <option value="dismesso" ${m.stato_manuale==="dismesso"?"selected":""}>Dismesso</option>
+          </select>
+          ${m.stato_manuale==="dismesso" ? `<p style="font-size:11px;color:var(--grigio-600);margin:4px 0 0;">Mezzo dismesso: stato non più modificabile.</p>` : ""}
+          ${statoOperativoMezzo(m) === "revisionare" && m.stato_manuale !== "dismesso" ? `<p style="font-size:11px;color:var(--rosso);margin:4px 0 0;">Revisione scaduta: lo stato mostrato resta "Revisionare" finché non aggiorni la data, indipendentemente da questa scelta.</p>` : ""}
+        </div>
         <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(m.descrizione||"")}"></div>
         <div class="form-field"><label>Carte carburante</label><input name="carte_carburante" value="${escapeHtml(m.carte_carburante||"")}"></div>
         <div class="form-field" style="display:flex;align-items:flex-end;">
@@ -1271,6 +1343,13 @@ function renderTabDatiMezzo(){
   document.getElementById("form-mezzo").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const nuovoStato = fd.get("stato_manuale");
+
+    if (nuovoStato === "dismesso" && m.stato_manuale !== "dismesso"){
+      const ok = confirm("Stai per dismettere definitivamente questo mezzo.\n\nUna volta dismesso, il mezzo verrà spostato nella sezione \"Mezzi dismessi\" e non sarà più possibile riportarlo operativo.\n\nConfermi la dismissione?");
+      if (!ok) return;
+    }
+
     const payload = {
       targa: fd.get("targa").trim().toUpperCase(),
       marca: fd.get("marca") || null,
@@ -1280,6 +1359,8 @@ function renderTabDatiMezzo(){
       proprietario: fd.get("proprietario") || null,
       posizione: fd.get("posizione") || null,
       scadenza_revisione: fd.get("scadenza_revisione") || null,
+      frequenza_revisione_anni: parseInt(fd.get("frequenza_revisione_anni")),
+      stato_manuale: nuovoStato,
       descrizione: fd.get("descrizione") || null,
       carte_carburante: fd.get("carte_carburante") || null,
       assicurato_2026: fd.get("assicurato_2026") === "on",
