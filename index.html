@@ -572,7 +572,12 @@ input,select,textarea{font-family:inherit;}
    ============================================================ */
 const SUPABASE_URL = "https://hzovguvwnadoptwrdyub.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6b3ZndXZ3bmFkb3B0d3JkeXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NjM3OTAsImV4cCI6MjA5NzUzOTc5MH0.wUyxlGUU6rVM2AC4YLtkTb2D4XPQuAzpTnfWYEMoDdE";
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false
+  }
+});
 
 /* ============================================================
    STATO GLOBALE
