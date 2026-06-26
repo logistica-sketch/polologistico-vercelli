@@ -16,6 +16,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <style>
 :root{
   --blu-900:#0b2545;
@@ -455,6 +457,39 @@ input,select,textarea{font-family:inherit;}
 .radio-group{display:flex;gap:16px;}
 .radio-group label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;}
 
+/* ---------- FIRMA DOCUMENTI ---------- */
+.firma-layout{display:flex;gap:20px;align-items:flex-start;}
+.firma-sidebar{width:240px;flex-shrink:0;display:flex;flex-direction:column;gap:14px;}
+.firma-lib-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+.firma-lib-item{
+  border:2px solid var(--grigio-400);border-radius:8px;padding:6px;
+  cursor:pointer;background:#fff;text-align:center;position:relative;
+}
+.firma-lib-item.selezionata{border-color:var(--blu-500);background:var(--blu-500);background:#eef4fb;}
+.firma-lib-item img{max-width:100%;height:50px;object-fit:contain;}
+.firma-lib-item .nome{font-size:10.5px;color:var(--grigio-600);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.firma-lib-item .del{
+  position:absolute;top:-6px;right:-6px;background:var(--rosso);color:#fff;
+  width:18px;height:18px;border-radius:50%;font-size:11px;line-height:18px;text-align:center;
+}
+
+.firma-pdf-viewer{
+  flex:1;background:var(--grigio-200);border-radius:var(--radius);
+  overflow:auto;max-height:75vh;display:flex;flex-direction:column;align-items:center;gap:14px;padding:16px;
+}
+.firma-page-wrap{position:relative;box-shadow:var(--shadow);background:#fff;}
+.firma-page-wrap canvas{display:block;}
+.firma-overlay-sign{
+  position:absolute;cursor:move;border:1.5px dashed var(--blu-500);
+  touch-action:none;
+}
+.firma-overlay-sign img{width:100%;height:100%;object-fit:contain;pointer-events:none;}
+.firma-resize-handle{
+  position:absolute;bottom:-6px;right:-6px;width:14px;height:14px;
+  background:var(--blu-500);border:2px solid #fff;border-radius:50%;cursor:nwse-resize;
+}
+.firma-page-num{font-size:11px;color:var(--grigio-600);font-weight:600;}
+
 /* ---------- RESPONSIVE ---------- */
 @media (max-width:880px){
   #sidebar{transform:translateX(-100%);width:260px;}
@@ -497,6 +532,9 @@ input,select,textarea{font-family:inherit;}
 
   /* Firma canvas: altezza adattata */
   .firma-canvas-wrap canvas{height:140px;}
+
+  .firma-layout{flex-direction:column;}
+  .firma-sidebar{width:100%;}
 }
 
 @media (max-width:480px){
@@ -579,6 +617,10 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
+if (window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
 /* ============================================================
    STATO GLOBALE
    ============================================================ */
@@ -598,6 +640,7 @@ const MENU = [
   { route: "automezzi",    label: "Automezzi",     icon: "🚐", permesso: "automezzi" },
   { route: "tlc",          label: "TLC / Radio",   icon: "📻", permesso: "tlc" },
   { route: "formazione",   label: "Formazione",    icon: "🎓", permesso: "formazione" },
+  { route: "firma",        label: "Firma Documenti", icon: "✍️", permesso: "firma_documenti" },
   { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "impostazioni" },
 ];
 
@@ -828,6 +871,7 @@ const PAGE_TITLES = {
   automezzi: ["Automezzi", "Flotta, revisioni e movimentazioni"],
   tlc: ["TLC / Radio", "Apparati e movimentazioni"],
   formazione: ["Formazione", "Corsi e volontari"],
+  firma: ["Firma Documenti", "Carica PDF, apponi la firma e scarica"],
   impostazioni: ["Impostazioni", "Utenti, ruoli e configurazioni"]
 };
 
@@ -854,6 +898,7 @@ function router(){
   else if (route === "automezzi") renderAutomezzi();
   else if (route === "tlc") renderTlc();
   else if (route === "formazione") renderFormazione();
+  else if (route === "firma") renderFirmaDocumenti();
   else if (route === "impostazioni") renderImpostazioni();
 }
 window.addEventListener("hashchange", router);
@@ -1124,7 +1169,9 @@ async function renderAutomezzi(){
 function statoOperativoMezzo(m){
   // Il dismesso è definitivo: niente automatismo, resta sempre dismesso.
   if (m.stato_manuale === "dismesso") return "dismesso";
-  // La revisione scaduta vince sempre sugli altri stati (tranne dismesso).
+  // Esente da revisione: niente controllo data, mai "Revisionare" automatico.
+  if (m.frequenza_revisione_anni === 0) return m.stato_manuale || "operativo";
+  // La revisione scaduta vince sempre sugli altri stati (tranne dismesso/esente).
   if (m.scadenza_revisione && statoScadenza(m.scadenza_revisione, 30) === "scaduto"){
     return "revisionare";
   }
@@ -1318,6 +1365,7 @@ function renderTabDatiMezzo(){
           <select name="frequenza_revisione_anni">
             <option value="1" ${m.frequenza_revisione_anni===1?"selected":""}>Ogni 1 anno</option>
             <option value="2" ${(!m.frequenza_revisione_anni || m.frequenza_revisione_anni===2)?"selected":""}>Ogni 2 anni</option>
+            <option value="0" ${m.frequenza_revisione_anni===0?"selected":""}>Esente</option>
           </select>
         </div>
         <div class="form-field">
@@ -2447,6 +2495,7 @@ const PAGINE_PERMESSO = [
   { key:"automezzi", label:"Automezzi" },
   { key:"tlc", label:"TLC / Radio" },
   { key:"formazione", label:"Formazione" },
+  { key:"firma_documenti", label:"Firma Documenti" },
   { key:"impostazioni", label:"Impostazioni" }
 ];
 
@@ -3504,6 +3553,326 @@ function mostraFormDocumentoVolontario(){
     form.remove();
     caricaDocumentiVolontario();
   });
+}
+
+
+/* ============================================================
+   MODULO FIRMA DOCUMENTI
+   ============================================================ */
+const STORAGE_BUCKET_FIRME = "firme";
+let _firmeLibreria = [];
+let _firmaSelezionataId = null;
+let _pdfCorrente = null;       // documento pdf.js
+let _pdfBytesOriginali = null; // ArrayBuffer originale, per pdf-lib
+let _firmePosizionate = [];    // { pagina, xPct, yPct, wPct, hPct, firmaUrl, firmaId }
+let _paginaAttivaDrag = null;
+
+async function renderFirmaDocumenti(){
+  const content = document.getElementById("page-content");
+  content.innerHTML = `
+    <div class="firma-layout">
+      <div class="firma-sidebar">
+        <div class="stat-card">
+          <div class="section-title" style="margin:0 0 10px;">Libreria firme</div>
+          <div class="firma-lib-grid" id="firma-lib-grid"><div class="loading-spin">Caricamento…</div></div>
+          <label class="btn-add-mini" style="display:block;text-align:center;cursor:pointer;margin-top:10px;">
+            + Carica nuova firma
+            <input type="file" id="input-nuova-firma" accept="image/png" style="display:none;">
+          </label>
+        </div>
+        <div class="stat-card">
+          <div class="section-title" style="margin:0 0 10px;">Documento</div>
+          <label class="btn-add" style="display:block;text-align:center;cursor:pointer;width:100%;">
+            📄 Carica PDF
+            <input type="file" id="input-carica-pdf" accept="application/pdf" style="display:none;">
+          </label>
+          <p id="firma-pdf-stato" style="font-size:12px;color:var(--grigio-600);margin:10px 0 0;">Nessun PDF caricato.</p>
+          <button class="btn-add" id="btn-scarica-pdf-firmato" style="display:none;width:100%;margin-top:10px;background:var(--verde);">⬇️ Scarica PDF firmato</button>
+        </div>
+      </div>
+      <div class="firma-pdf-viewer" id="firma-pdf-viewer">
+        <div class="empty-state"><div class="ic">✍️</div>Carica un PDF per iniziare.</div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("input-nuova-firma").addEventListener("change", (ev) => caricaNuovaFirma(ev));
+  document.getElementById("input-carica-pdf").addEventListener("change", (ev) => caricaPdfPerFirma(ev));
+  document.getElementById("btn-scarica-pdf-firmato").addEventListener("click", () => generaPdfFirmato());
+
+  await caricaLibreriaFirme();
+}
+
+async function caricaLibreriaFirme(){
+  const { data, error } = await sb.from("firme_salvate").select("*").order("nome");
+  const grid = document.getElementById("firma-lib-grid");
+  if (!grid) return;
+  if (error){ grid.innerHTML = `<p style="font-size:12px;">Errore: ${escapeHtml(error.message)}</p>`; return; }
+  _firmeLibreria = data || [];
+
+  if (_firmeLibreria.length === 0){
+    grid.innerHTML = `<p style="font-size:12px;color:var(--grigio-600);grid-column:1/-1;">Nessuna firma salvata. Caricane una.</p>`;
+    return;
+  }
+
+  grid.innerHTML = _firmeLibreria.map(f => {
+    const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME).getPublicUrl(f.storage_path);
+    const selezionata = _firmaSelezionataId === f.id;
+    return `
+      <div class="firma-lib-item ${selezionata?"selezionata":""}" data-id="${f.id}" data-url="${u.publicUrl}">
+        <img src="${u.publicUrl}" alt="${escapeHtml(f.nome)}">
+        <div class="nome">${escapeHtml(f.nome)}</div>
+        <div class="del" data-elimina-firma="${f.id}">✕</div>
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll(".firma-lib-item").forEach(el => {
+    el.addEventListener("click", (e) => {
+      if (e.target.dataset.eliminaFirma) return; // gestito separatamente
+      _firmaSelezionataId = parseInt(el.dataset.id);
+      caricaLibreriaFirme();
+    });
+  });
+  grid.querySelectorAll("[data-elimina-firma]").forEach(b => b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm("Eliminare questa firma dalla libreria?")) return;
+    const id = parseInt(b.dataset.eliminaFirma);
+    const firma = _firmeLibreria.find(f => f.id === id);
+    if (firma) await sb.storage.from(STORAGE_BUCKET_FIRME).remove([firma.storage_path]);
+    await sb.from("firme_salvate").delete().eq("id", id);
+    if (_firmaSelezionataId === id) _firmaSelezionataId = null;
+    caricaLibreriaFirme();
+  }));
+}
+
+async function caricaNuovaFirma(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  ev.target.value = "";
+  const nome = prompt("Nome per questa firma (es. il tuo nome):", file.name.replace(/\.png$/i, ""));
+  if (!nome) return;
+
+  const path = `${Date.now()}_${file.name}`;
+  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_FIRME).upload(path, file, { contentType: "image/png" });
+  if (upErr){ alert("Errore upload: " + upErr.message); return; }
+
+  const { error } = await sb.from("firme_salvate").insert({ nome, storage_path: path, created_by: state.user.id });
+  if (error){ alert("Errore: " + error.message); return; }
+
+  caricaLibreriaFirme();
+}
+
+async function caricaPdfPerFirma(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+
+  document.getElementById("firma-pdf-stato").textContent = "Caricamento PDF…";
+  _firmePosizionate = [];
+
+  const buf = await file.arrayBuffer();
+  _pdfBytesOriginali = buf.slice(0); // copia, perché pdf.js consuma il buffer
+
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  _pdfCorrente = pdf;
+
+  const viewer = document.getElementById("firma-pdf-viewer");
+  viewer.innerHTML = "";
+
+  for (let i = 1; i <= pdf.numPages; i++){
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1.3 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d");
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const wrap = document.createElement("div");
+    wrap.className = "firma-page-wrap";
+    wrap.dataset.pagina = i;
+    wrap.style.width = viewport.width + "px";
+    wrap.style.height = viewport.height + "px";
+    wrap.appendChild(canvas);
+    wrap.addEventListener("click", (e) => onClickPaginaPerFirma(e, wrap, i));
+
+    const pageNumLabel = document.createElement("div");
+    pageNumLabel.className = "firma-page-num";
+    pageNumLabel.textContent = `Pagina ${i} di ${pdf.numPages}`;
+
+    viewer.appendChild(pageNumLabel);
+    viewer.appendChild(wrap);
+  }
+
+  document.getElementById("firma-pdf-stato").textContent = `PDF caricato: ${file.name} (${pdf.numPages} pagine)`;
+  document.getElementById("btn-scarica-pdf-firmato").style.display = "block";
+}
+
+function onClickPaginaPerFirma(e, wrap, numeroPagina){
+  if (e.target.closest(".firma-overlay-sign")) return; // click su firma esistente, non aggiungerne una nuova
+  if (!_firmaSelezionataId){
+    alert("Seleziona prima una firma dalla libreria a sinistra.");
+    return;
+  }
+  const firma = _firmeLibreria.find(f => f.id === _firmaSelezionataId);
+  const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME).getPublicUrl(firma.storage_path);
+
+  const rect = wrap.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  const larghezzaIniziale = 140;
+  const altezzaIniziale = 60;
+
+  const posizione = {
+    id: "fp_" + Date.now(),
+    pagina: numeroPagina,
+    xPct: (x - larghezzaIniziale/2) / rect.width,
+    yPct: (y - altezzaIniziale/2) / rect.height,
+    wPct: larghezzaIniziale / rect.width,
+    hPct: altezzaIniziale / rect.height,
+    firmaUrl: u.publicUrl
+  };
+  _firmePosizionate.push(posizione);
+  renderOverlayFirma(wrap, posizione);
+}
+
+function renderOverlayFirma(wrap, pos){
+  const rect = wrap.getBoundingClientRect();
+  const overlay = document.createElement("div");
+  overlay.className = "firma-overlay-sign";
+  overlay.dataset.id = pos.id;
+  overlay.style.left = (pos.xPct * rect.width) + "px";
+  overlay.style.top = (pos.yPct * rect.height) + "px";
+  overlay.style.width = (pos.wPct * rect.width) + "px";
+  overlay.style.height = (pos.hPct * rect.height) + "px";
+  overlay.innerHTML = `<img src="${pos.firmaUrl}"><div class="firma-resize-handle"></div><div class="del" style="position:absolute;top:-8px;left:-8px;" data-rimuovi-firma="${pos.id}">✕</div>`;
+  wrap.appendChild(overlay);
+
+  abilitaDragResize(overlay, wrap, pos);
+
+  overlay.querySelector("[data-rimuovi-firma]").addEventListener("click", (e) => {
+    e.stopPropagation();
+    overlay.remove();
+    _firmePosizionate = _firmePosizionate.filter(p => p.id !== pos.id);
+  });
+}
+
+function abilitaDragResize(overlay, wrap, pos){
+  let modo = null; // 'drag' | 'resize'
+  let startX, startY, startLeft, startTop, startW, startH;
+
+  function pointerPos(e){
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX, y: t.clientY };
+  }
+
+  overlay.addEventListener("mousedown", (e) => iniziaAzione(e, "drag"));
+  overlay.addEventListener("touchstart", (e) => iniziaAzione(e, "drag"), { passive:false });
+  overlay.querySelector(".firma-resize-handle").addEventListener("mousedown", (e) => { e.stopPropagation(); iniziaAzione(e, "resize"); });
+  overlay.querySelector(".firma-resize-handle").addEventListener("touchstart", (e) => { e.stopPropagation(); iniziaAzione(e, "resize"); }, { passive:false });
+
+  function iniziaAzione(e, tipo){
+    if (e.target.dataset.rimuoviFirma) return;
+    e.preventDefault();
+    modo = tipo;
+    const p = pointerPos(e);
+    startX = p.x; startY = p.y;
+    startLeft = parseFloat(overlay.style.left);
+    startTop = parseFloat(overlay.style.top);
+    startW = parseFloat(overlay.style.width);
+    startH = parseFloat(overlay.style.height);
+    document.addEventListener("mousemove", muovi);
+    document.addEventListener("touchmove", muovi, { passive:false });
+    document.addEventListener("mouseup", fine);
+    document.addEventListener("touchend", fine);
+  }
+
+  function muovi(e){
+    if (!modo) return;
+    e.preventDefault();
+    const p = pointerPos(e);
+    const dx = p.x - startX, dy = p.y - startY;
+    const rect = wrap.getBoundingClientRect();
+
+    if (modo === "drag"){
+      overlay.style.left = Math.max(0, Math.min(rect.width - startW, startLeft + dx)) + "px";
+      overlay.style.top = Math.max(0, Math.min(rect.height - startH, startTop + dy)) + "px";
+    } else {
+      overlay.style.width = Math.max(30, startW + dx) + "px";
+      overlay.style.height = Math.max(20, startH + dy) + "px";
+    }
+  }
+
+  function fine(){
+    if (!modo) return;
+    modo = null;
+    document.removeEventListener("mousemove", muovi);
+    document.removeEventListener("touchmove", muovi);
+    document.removeEventListener("mouseup", fine);
+    document.removeEventListener("touchend", fine);
+
+    // aggiorna percentuali salvate
+    const rect = wrap.getBoundingClientRect();
+    pos.xPct = parseFloat(overlay.style.left) / rect.width;
+    pos.yPct = parseFloat(overlay.style.top) / rect.height;
+    pos.wPct = parseFloat(overlay.style.width) / rect.width;
+    pos.hPct = parseFloat(overlay.style.height) / rect.height;
+  }
+}
+
+async function generaPdfFirmato(){
+  if (!_pdfBytesOriginali){ alert("Carica prima un PDF."); return; }
+  if (_firmePosizionate.length === 0){
+    if (!confirm("Non hai posizionato nessuna firma. Scaricare comunque il PDF originale?")) return;
+  }
+
+  const btn = document.getElementById("btn-scarica-pdf-firmato");
+  btn.disabled = true; btn.textContent = "Generazione…";
+
+  try{
+    const { PDFDocument } = PDFLib;
+    const pdfDoc = await PDFDocument.load(_pdfBytesOriginali.slice(0));
+    const pagine = pdfDoc.getPages();
+
+    // cache immagini già scaricate per evitare richieste duplicate
+    const cacheImmagini = {};
+
+    for (const pos of _firmePosizionate){
+      const pagina = pagine[pos.pagina - 1];
+      if (!pagina) continue;
+      const { width: pw, height: ph } = pagina.getSize();
+
+      if (!cacheImmagini[pos.firmaUrl]){
+        const resp = await fetch(pos.firmaUrl);
+        const bytes = await resp.arrayBuffer();
+        cacheImmagini[pos.firmaUrl] = await pdfDoc.embedPng(bytes);
+      }
+      const img = cacheImmagini[pos.firmaUrl];
+
+      const wPdf = pos.wPct * pw;
+      const hPdf = pos.hPct * ph;
+      const xPdf = pos.xPct * pw;
+      // PDF ha l'origine in basso a sinistra, il viewer in alto: convertiamo
+      const yPdf = ph - (pos.yPct * ph) - hPdf;
+
+      pagina.drawImage(img, { x: xPdf, y: yPdf, width: wPdf, height: hPdf });
+    }
+
+    const pdfBytesFinale = await pdfDoc.save();
+    const blob = new Blob([pdfBytesFinale], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "documento_firmato.pdf";
+    a.click();
+    URL.revokeObjectURL(url);
+
+  }catch(err){
+    alert("Errore nella generazione del PDF: " + err.message);
+  }
+
+  btn.disabled = false; btn.textContent = "⬇️ Scarica PDF firmato";
 }
 
 
