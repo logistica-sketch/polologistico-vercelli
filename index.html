@@ -3971,31 +3971,30 @@ async function renderGestioneUtenti(){
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
 
   content.innerHTML = `
-    <div class="collapse-block" style="margin-bottom:20px;">
+    <div class="section-title">Utenti abilitati</div>
+    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
+      Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
+    </p>
+    <div id="utenti-list"></div>
+
+    <div class="collapse-block" style="margin-top:28px;">
       <button class="collapse-head" id="toggle-log-accessi">
         <span>📋 Log accessi</span>
         <span class="collapse-arrow">▾</span>
       </button>
       <div class="collapse-body" id="body-log-accessi"><div class="loading-spin">Caricamento…</div></div>
     </div>
-
-    <div class="section-title">Utenti abilitati</div>
-    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
-      Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
-    </p>
-    <div id="utenti-list"></div>
   `;
 
   const toggleLog = document.getElementById("toggle-log-accessi");
   const bodyLog = document.getElementById("body-log-accessi");
+  let logCaricato = false;
   toggleLog.addEventListener("click", () => {
     const apri = bodyLog.style.display !== "block";
     bodyLog.style.display = apri ? "block" : "none";
     toggleLog.querySelector(".collapse-arrow").textContent = apri ? "▴" : "▾";
+    if (apri && !logCaricato){ logCaricato = true; caricaLogAccessi(); }
   });
-  bodyLog.style.display = "block";
-  toggleLog.querySelector(".collapse-arrow").textContent = "▴";
-  caricaLogAccessi();
 
   renderListaUtenti(data);
 }
@@ -4301,6 +4300,18 @@ function descrizioneSinteticaLog(r){
     }
   }
   return escapeHtml(etichetta);
+}
+
+/* ============================================================
+   AVVIO
+   ============================================================ */
+document.getElementById("login-logo").src = LOGO_VOLONTARIATO_BASE64;
+initAuth();
+
+if ("serviceWorker" in navigator){
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
 }
 </script>
 </body>
