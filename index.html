@@ -716,6 +716,13 @@ async function onAuthenticated(user){
     state.profile = profile;
   }
 
+  // Registra questo accesso nel log (best-effort, non blocca il login se fallisce)
+  sb.from("log_accessi").insert({
+    utente_id: user.id,
+    utente_email: user.email,
+    utente_nome: state.profile.nome || user.email
+  }).then(() => {}).catch(() => {});
+
   showApp();
 }
 
@@ -3964,12 +3971,67 @@ async function renderGestioneUtenti(){
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
 
   content.innerHTML = `
-    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:0;">
+    <div class="collapse-block" style="margin-bottom:20px;">
+      <button class="collapse-head" id="toggle-log-accessi">
+        <span>📋 Log accessi</span>
+        <span class="collapse-arrow">▾</span>
+      </button>
+      <div class="collapse-body" id="body-log-accessi"><div class="loading-spin">Caricamento…</div></div>
+    </div>
+
+    <div class="section-title">Utenti abilitati</div>
+    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
       Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
     </p>
     <div id="utenti-list"></div>
   `;
+
+  const toggleLog = document.getElementById("toggle-log-accessi");
+  const bodyLog = document.getElementById("body-log-accessi");
+  toggleLog.addEventListener("click", () => {
+    const apri = bodyLog.style.display !== "block";
+    bodyLog.style.display = apri ? "block" : "none";
+    toggleLog.querySelector(".collapse-arrow").textContent = apri ? "▴" : "▾";
+  });
+  bodyLog.style.display = "block";
+  toggleLog.querySelector(".collapse-arrow").textContent = "▴";
+  caricaLogAccessi();
+
   renderListaUtenti(data);
+}
+
+async function caricaLogAccessi(){
+  const wrap = document.getElementById("body-log-accessi");
+  if (!wrap) return;
+
+  const { data, error } = await sb.from("log_accessi").select("*").order("accesso_il", { ascending:false }).limit(100);
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (!data || data.length === 0){
+    wrap.innerHTML = `<div class="storico-empty">Nessun accesso registrato.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Utente</th><th>Data/ora accesso</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr style="cursor:pointer;" data-apri-sessione="${r.id}" data-utente-id="${r.utente_id}" data-accesso-il="${r.accesso_il}" data-nome="${escapeHtml(r.utente_nome||r.utente_email)}">
+            <td>${escapeHtml(r.utente_nome || r.utente_email)}</td>
+            <td>${formatDataOraIt(r.accesso_il)}</td>
+            <td style="color:var(--blu-500);font-weight:600;">Vedi operazioni →</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
+  wrap.querySelectorAll("[data-apri-sessione]").forEach(tr => {
+    tr.addEventListener("click", () => apriModalSessione(
+      tr.dataset.utenteId, tr.dataset.accessoIl, tr.dataset.nome, data
+    ));
+  });
 }
 
 let _utenteEspansoId = null;
@@ -4013,7 +4075,6 @@ function renderListaUtenti(utenti){
           </div>
         </div>
         <div class="form-actions">
-          <button class="btn-cancel" data-vedi-log="${u.id}" data-nome-log="${escapeHtml(u.nome)}">📋 Vedi log attività</button>
           <button class="btn-save" data-save="${u.id}">Salva</button>
         </div>
       </div>
@@ -4026,12 +4087,6 @@ function renderListaUtenti(utenti){
       const id = btn.dataset.toggleUtente;
       _utenteEspansoId = (_utenteEspansoId === id) ? null : id;
       renderListaUtenti(utenti);
-    });
-  });
-  wrap.querySelectorAll('[data-vedi-log]').forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      apriModalLogUtente(btn.dataset.vediLog, btn.dataset.nomeLog);
     });
   });
   wrap.querySelectorAll('[data-save]').forEach(btn => {
@@ -4074,6 +4129,65 @@ const LABEL_TABELLE_LOG = {
   firme_salvate: "Firme salvate", app_users: "Utenti app"
 };
 const LABEL_OPERAZIONE_LOG = { INSERT:"Creazione", UPDATE:"Modifica", DELETE:"Eliminazione" };
+
+async function apriModalSessione(utenteId, accessoIl, nomeUtente, tutteLeSessioni){
+  // Trova la sessione successiva dello STESSO utente per delimitare la finestra temporale
+  const sessioniUtente = tutteLeSessioni
+    .filter(s => s.utente_id === utenteId)
+    .sort((a,b) => new Date(a.accesso_il) - new Date(b.accesso_il));
+  const idx = sessioniUtente.findIndex(s => s.accesso_il === accessoIl);
+  const fine = (idx >= 0 && idx < sessioniUtente.length - 1) ? sessioniUtente[idx + 1].accesso_il : null;
+
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:900px;">
+      <div class="modal-head">
+        <h3>${escapeHtml(nomeUtente)} — sessione del ${formatDataOraIt(accessoIl)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12.5px;color:var(--grigio-600);margin-top:0;">
+          Operazioni eseguite da ${formatDataOraIt(accessoIl)}${fine ? ` a ${formatDataOraIt(fine)} (accesso successivo)` : " ad ora (sessione più recente)"}.
+        </p>
+        <div id="sessione-attivita-list"><div class="loading-spin">Caricamento…</div></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
+
+  let query = sb.from("log_attivita").select("*").eq("utente_id", utenteId).gte("creato_il", accessoIl).order("creato_il", { ascending:false });
+  if (fine) query = query.lt("creato_il", fine);
+
+  const { data, error } = await query;
+  const wrap = document.getElementById("sessione-attivita-list");
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (!data || data.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">📋</div>Nessuna operazione registrata in questa sessione.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Data/ora</th><th>Tabella</th><th>Operazione</th><th>Dettaglio</th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td style="white-space:nowrap;">${formatDataOraIt(r.creato_il)}</td>
+            <td>${LABEL_TABELLE_LOG[r.tabella] || r.tabella}</td>
+            <td><span class="tag" style="background:${coloreOperazioneLog(r.operazione)};color:#fff;">${LABEL_OPERAZIONE_LOG[r.operazione]}</span></td>
+            <td>${descrizioneSinteticaLog(r)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
 
 async function apriModalLogUtente(utenteId, nomeUtente){
   chiudiModal();
