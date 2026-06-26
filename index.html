@@ -641,7 +641,8 @@ const MENU = [
   { route: "tlc",          label: "TLC / Radio",   icon: "📻", permesso: "tlc" },
   { route: "formazione",   label: "Formazione",    icon: "🎓", permesso: "formazione" },
   { route: "firma",        label: "Firma Documenti", icon: "✍️", permesso: "firma_documenti" },
-  { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "impostazioni" },
+  { route: "utenti",       label: "Gestione Utenti", icon: "👥", permesso: "_solo_it_admin" },
+  { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "_almeno_una_sezione" },
 ];
 
 /* ============================================================
@@ -738,8 +739,19 @@ function labelRuolo(r){
 }
 
 function userCanSee(permesso){
+  if (permesso === "_solo_it_admin") return state.profile.ruolo === "it_admin";
+  if (permesso === "_almeno_una_sezione") return paginaImpostazioniHaSezioni();
   if (state.profile.ruolo === "it_admin") return true;
   return !!(state.profile.permessi && state.profile.permessi[permesso]);
+}
+
+function paginaImpostazioniHaSezioni(){
+  // La pagina Impostazioni è visibile se l'utente ha almeno un permesso
+  // tra quelli che sbloccano una sezione di configurazione (es. tlc).
+  // it_admin la vede sempre (per coerenza con userCanSee sopra).
+  if (state.profile.ruolo === "it_admin") return true;
+  const p = state.profile.permessi || {};
+  return !!p.tlc; // estendere qui quando si aggiungono altre sezioni (es. p.automezzi)
 }
 
 document.getElementById("form-login").addEventListener("submit", async (e) => {
@@ -872,7 +884,8 @@ const PAGE_TITLES = {
   tlc: ["TLC / Radio", "Apparati e movimentazioni"],
   formazione: ["Formazione", "Corsi e volontari"],
   firma: ["Firma Documenti", "Carica PDF, apponi la firma e scarica"],
-  impostazioni: ["Impostazioni", "Utenti, ruoli e configurazioni"]
+  utenti: ["Gestione Utenti", "Utenti abilitati e relativi permessi"],
+  impostazioni: ["Impostazioni", "Configurazioni per modulo"]
 };
 
 function router(){
@@ -899,6 +912,7 @@ function router(){
   else if (route === "tlc") renderTlc();
   else if (route === "formazione") renderFormazione();
   else if (route === "firma") renderFirmaDocumenti();
+  else if (route === "utenti") renderGestioneUtenti();
   else if (route === "impostazioni") renderImpostazioni();
 }
 window.addEventListener("hashchange", router);
@@ -3878,41 +3892,27 @@ async function generaPdfFirmato(){
 
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
-  const isAdmin = state.profile.ruolo === "it_admin";
   const puoGestireTlc = userCanSee("tlc");
 
-  if (!isAdmin && !puoGestireTlc){
+  if (!puoGestireTlc){
     content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Nessuna impostazione disponibile per il tuo utente.</p></div>`;
     return;
   }
 
   let html = "";
 
-  if (isAdmin){
-    html += `
-      <div class="section-title">Utenti abilitati</div>
-      <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
-        Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
-      </p>
-      <div id="utenti-list"></div>
-    `;
-  }
-
   if (puoGestireTlc){
     html += `
-      <div class="section-title" style="margin-top:32px;">Categorie apparati TLC</div>
+      <div class="section-title">Categorie apparati TLC</div>
       <div id="tlc-categorie-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-categoria-tlc">+ Nuova categoria</button></div>
     `;
   }
 
-  content.innerHTML = html;
+  // Altre sezioni future (es. Automezzi) si aggiungono qui con lo stesso pattern:
+  // if (userCanSee("automezzi")) { html += `...`; }
 
-  if (isAdmin){
-    const { data, error } = await sb.from("app_users").select("*").order("nome");
-    if (error){ document.getElementById("utenti-list").innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; }
-    else renderListaUtenti(data);
-  }
+  content.innerHTML = html;
 
   if (puoGestireTlc){
     await renderListaCategorieTlc();
@@ -3957,47 +3957,81 @@ async function aggiungiCategoriaTlc(){
   renderListaCategorieTlc();
 }
 
+async function renderGestioneUtenti(){
+  const content = document.getElementById("page-content");
+  const { data, error } = await sb.from("app_users").select("*").order("nome");
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+
+  content.innerHTML = `
+    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:0;">
+      Per aggiungere un nuovo utente: crealo prima da Supabase (Authentication &gt; Users), poi al primo accesso comparirà qui automaticamente con permessi minimi.
+    </p>
+    <div id="utenti-list"></div>
+  `;
+  renderListaUtenti(data);
+}
+
+let _utenteEspansoId = null;
+
 function renderListaUtenti(utenti){
   const wrap = document.getElementById("utenti-list");
-  wrap.innerHTML = utenti.map(u => `
-    <div class="mini-form" style="margin-bottom:12px;">
-      <div class="form-grid">
-        <div class="form-field"><label>Nome</label><input data-field="nome" data-id="${u.id}" value="${escapeHtml(u.nome)}"></div>
-        <div class="form-field"><label>Email</label><input value="${escapeHtml(u.email)}" disabled></div>
-        <div class="form-field">
-          <label>Ruolo</label>
-          <select data-field="ruolo" data-id="${u.id}">
-            ${["it_admin","specialita","segreteria","standard"].map(r => `<option value="${r}" ${u.ruolo===r?"selected":""}>${labelRuolo(r)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="form-field">
-          <label>Attivo</label>
-          <div class="form-checkbox"><input type="checkbox" data-field="attivo" data-id="${u.id}" ${u.attivo?"checked":""}><label style="margin:0;">Utente attivo</label></div>
-        </div>
-        <div class="form-field full">
-          <label>Pagine abilitate</label>
-          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;">
-            ${PAGINE_PERMESSO.map(p => `
-              <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;">
-                <input type="checkbox" data-perm="${p.key}" data-id="${u.id}" ${u.permessi && u.permessi[p.key] ? "checked" : ""}>
-                ${p.label}
-              </label>
-            `).join("")}
+  wrap.innerHTML = utenti.map(u => {
+    const espanso = _utenteEspansoId === u.id;
+    return `
+    <div class="collapse-block" style="margin-bottom:10px;">
+      <button class="collapse-head" data-toggle-utente="${u.id}">
+        <span>${escapeHtml(u.nome)}</span>
+        <span class="tag" style="background:var(--grigio-100);color:var(--grigio-800);margin-left:8px;">${labelRuolo(u.ruolo)}</span>
+        <span class="tag" style="background:${u.attivo?"var(--verde-bg)":"var(--rosso-bg)"};color:${u.attivo?"var(--verde)":"var(--rosso)"};">${u.attivo?"Attivo":"Disattivato"}</span>
+        <span class="collapse-arrow">${espanso?"▴":"▾"}</span>
+      </button>
+      <div class="collapse-body" id="utente-body-${u.id}" style="display:${espanso?"block":"none"};">
+        <div class="form-grid">
+          <div class="form-field"><label>Nome</label><input data-field="nome" data-id="${u.id}" value="${escapeHtml(u.nome)}"></div>
+          <div class="form-field"><label>Email</label><input value="${escapeHtml(u.email)}" disabled></div>
+          <div class="form-field">
+            <label>Ruolo</label>
+            <select data-field="ruolo" data-id="${u.id}">
+              ${["it_admin","specialita","segreteria","standard"].map(r => `<option value="${r}" ${u.ruolo===r?"selected":""}>${labelRuolo(r)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Attivo</label>
+            <div class="form-checkbox"><input type="checkbox" data-field="attivo" data-id="${u.id}" ${u.attivo?"checked":""}><label style="margin:0;">Utente attivo</label></div>
+          </div>
+          <div class="form-field full">
+            <label>Pagine abilitate</label>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;">
+              ${PAGINE_PERMESSO.map(p => `
+                <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;">
+                  <input type="checkbox" data-perm="${p.key}" data-id="${u.id}" ${u.permessi && u.permessi[p.key] ? "checked" : ""}>
+                  ${p.label}
+                </label>
+              `).join("")}
+            </div>
           </div>
         </div>
-      </div>
-      <div class="form-actions">
-        <button class="btn-save" data-save="${u.id}">Salva</button>
+        <div class="form-actions">
+          <button class="btn-save" data-save="${u.id}">Salva</button>
+        </div>
       </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
+  wrap.querySelectorAll('[data-toggle-utente]').forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.toggleUtente;
+      _utenteEspansoId = (_utenteEspansoId === id) ? null : id;
+      renderListaUtenti(utenti);
+    });
+  });
   wrap.querySelectorAll('[data-save]').forEach(btn => {
-    btn.addEventListener("click", () => salvaUtente(btn.dataset.save));
+    btn.addEventListener("click", () => salvaUtente(btn.dataset.save, utenti));
   });
 }
 
-async function salvaUtente(id){
+async function salvaUtente(id, utenti){
   const nome = document.querySelector(`[data-field="nome"][data-id="${id}"]`).value.trim();
   const ruolo = document.querySelector(`[data-field="ruolo"][data-id="${id}"]`).value;
   const attivo = document.querySelector(`[data-field="attivo"][data-id="${id}"]`).checked;
@@ -4019,6 +4053,7 @@ async function salvaUtente(id){
   }
 
   alert("Utente aggiornato.");
+  renderGestioneUtenti();
 }
 
 
