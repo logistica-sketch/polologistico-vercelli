@@ -753,13 +753,18 @@ function userCanSee(permesso){
   return !!(state.profile.permessi && state.profile.permessi[permesso]);
 }
 
+function livelloPermesso(sezione){
+  // Per sezioni con granularità (es. 'tlc'): restituisce 'completo', 'base' o null.
+  // it_admin ha sempre 'completo'.
+  if (state.profile.ruolo === "it_admin") return "completo";
+  const v = state.profile.permessi && state.profile.permessi[sezione];
+  if (v === "completo" || v === "base") return v;
+  return null;
+}
+
 function paginaImpostazioniHaSezioni(){
-  // La pagina Impostazioni è visibile se l'utente ha almeno un permesso
-  // tra quelli che sbloccano una sezione di configurazione (es. tlc).
-  // it_admin la vede sempre (per coerenza con userCanSee sopra).
   if (state.profile.ruolo === "it_admin") return true;
-  const p = state.profile.permessi || {};
-  return !!p.tlc; // estendere qui quando si aggiungono altre sezioni (es. p.automezzi)
+  return livelloPermesso("tlc") === "completo";
 }
 
 document.getElementById("form-login").addEventListener("submit", async (e) => {
@@ -1871,6 +1876,8 @@ async function renderTlc(){
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _tlcCache = data;
   await caricaCategorieTlc();
+  const livello = livelloPermesso("tlc");
+  const soloLettura = livello !== "completo";
 
   content.innerHTML = `
     <div class="toolbar">
@@ -1885,7 +1892,7 @@ async function renderTlc(){
         ${["MOTOROLA","HYTERA","UNIWA"].map(c =>
           `<option value="${c}" ${_tlcFiltro.marca===c?"selected":""}>${c}</option>`).join("")}
       </select>
-      <button class="btn-add" id="tlc-btn-nuovo">+ Nuovo apparato</button>
+      ${soloLettura ? "" : `<button class="btn-add" id="tlc-btn-nuovo">+ Nuovo apparato</button>`}
       <button class="btn-add" id="tlc-btn-movimentazioni" style="background:var(--blu-700);">📋 Movimentazioni</button>
     </div>
     <div class="results-count" id="tlc-results-count"></div>
@@ -1895,7 +1902,7 @@ async function renderTlc(){
   document.getElementById("tlc-search").addEventListener("input", e => { _tlcFiltro.search = e.target.value; renderTlcGrid(); });
   document.getElementById("tlc-filtro-categoria").addEventListener("change", e => { _tlcFiltro.categoria = e.target.value; renderTlcGrid(); });
   document.getElementById("tlc-filtro-marca").addEventListener("change", e => { _tlcFiltro.marca = e.target.value; renderTlcGrid(); });
-  document.getElementById("tlc-btn-nuovo").addEventListener("click", () => apriModalTlc(null));
+  if (!soloLettura) document.getElementById("tlc-btn-nuovo").addEventListener("click", () => apriModalTlc(null));
   document.getElementById("tlc-btn-movimentazioni").addEventListener("click", () => renderMovimentazioniTlc());
 
   renderTlcGrid();
@@ -1934,7 +1941,7 @@ function renderTlcGrid(){
   `).join("");
 
   grid.querySelectorAll(".veicolo-card").forEach(el => {
-    el.addEventListener("click", () => apriModalTlc(parseInt(el.dataset.id)));
+    el.addEventListener("click", () => apriModalTlc(parseInt(el.dataset.id), livelloPermesso("tlc") !== "completo"));
   });
 }
 
@@ -1942,9 +1949,12 @@ function renderTlcGrid(){
 let _modalTlcCorrente = null;
 let _modalTlcTab = "dati";
 
-function apriModalTlc(id){
+let _modalTlcSoloLettura = false;
+
+function apriModalTlc(id, soloLettura){
   _modalTlcCorrente = id ? _tlcCache.find(a => a.id === id) : null;
   _modalTlcTab = "dati";
+  _modalTlcSoloLettura = !!soloLettura;
   renderModalTlc();
 }
 
@@ -1979,41 +1989,44 @@ function renderModalTlc(){
 
 function renderTabDatiTlc(){
   const a = _modalTlcCorrente || {};
+  const ro = _modalTlcSoloLettura ? "disabled" : "";
   const body = document.getElementById("modal-body");
   body.innerHTML = `
     <form id="form-tlc">
+      ${_modalTlcSoloLettura ? `<p style="font-size:12px;color:var(--grigio-600);margin-top:0;">Visualizzazione in sola lettura. Il tuo livello di accesso TLC non permette modifiche agli apparati.</p>` : ""}
       <div class="form-grid">
-        <div class="form-field"><label>Selettiva *</label><input name="selettiva" required value="${escapeHtml(a.selettiva||"")}"></div>
+        <div class="form-field"><label>Selettiva *</label><input name="selettiva" required value="${escapeHtml(a.selettiva||"")}" ${ro}></div>
         <div class="form-field">
           <label>Marca</label>
-          <select name="marca">
+          <select name="marca" ${ro}>
             <option value="">—</option>
             ${["MOTOROLA","HYTERA","UNIWA"].map(m => `<option value="${m}" ${a.marca===m?"selected":""}>${m}</option>`).join("")}
           </select>
         </div>
         <div class="form-field">
           <label>Categoria</label>
-          <select name="categoria">
+          <select name="categoria" ${ro}>
             <option value="">—</option>
             ${_tlcCategorie.map(c => `<option value="${c}" ${a.categoria===c?"selected":""}>${c}</option>`).join("")}
           </select>
         </div>
-        <div class="form-field"><label>Modello</label><input name="modello" value="${escapeHtml(a.modello||"")}"></div>
-        <div class="form-field"><label>Matricola</label><input name="matricola" value="${escapeHtml(a.matricola||"")}"></div>
-        <div class="form-field"><label>Assegnato a</label><input name="assegnato_a" value="${escapeHtml(a.assegnato_a||"")}"></div>
-        <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(a.descrizione||"")}"></div>
-        <div class="form-field full"><label>Note</label><textarea name="note">${escapeHtml(a.note||"")}</textarea></div>
+        <div class="form-field"><label>Modello</label><input name="modello" value="${escapeHtml(a.modello||"")}" ${ro}></div>
+        <div class="form-field"><label>Matricola</label><input name="matricola" value="${escapeHtml(a.matricola||"")}" ${ro}></div>
+        <div class="form-field"><label>Assegnato a</label><input name="assegnato_a" value="${escapeHtml(a.assegnato_a||"")}" ${ro}></div>
+        <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(a.descrizione||"")}" ${ro}></div>
+        <div class="form-field full"><label>Note</label><textarea name="note" ${ro}>${escapeHtml(a.note||"")}</textarea></div>
       </div>
       <div class="form-actions">
-        ${a.id ? `<button type="button" class="btn-danger" id="btn-elimina-tlc">Elimina apparato</button>` : ""}
-        <button type="button" class="btn-cancel" id="btn-cancel-tlc">Annulla</button>
-        <button type="submit" class="btn-save">Salva</button>
+        ${(a.id && !_modalTlcSoloLettura) ? `<button type="button" class="btn-danger" id="btn-elimina-tlc">Elimina apparato</button>` : ""}
+        <button type="button" class="btn-cancel" id="btn-cancel-tlc">${_modalTlcSoloLettura ? "Chiudi" : "Annulla"}</button>
+        ${_modalTlcSoloLettura ? "" : `<button type="submit" class="btn-save">Salva</button>`}
       </div>
     </form>
   `;
 
   document.getElementById("btn-cancel-tlc").addEventListener("click", chiudiModal);
-  if (a.id) document.getElementById("btn-elimina-tlc").addEventListener("click", () => eliminaTlc(a.id));
+  if (a.id && !_modalTlcSoloLettura) document.getElementById("btn-elimina-tlc").addEventListener("click", () => eliminaTlc(a.id));
+  if (_modalTlcSoloLettura) return; // niente submit da agganciare
 
   document.getElementById("form-tlc").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -2515,7 +2528,7 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
 const PAGINE_PERMESSO = [
   { key:"home", label:"Home" },
   { key:"automezzi", label:"Automezzi" },
-  { key:"tlc", label:"TLC / Radio" },
+  { key:"tlc", label:"TLC / Radio", livelli:true },
   { key:"formazione", label:"Formazione" },
   { key:"firma_documenti", label:"Firma Documenti" },
   { key:"impostazioni", label:"Impostazioni" }
@@ -3900,7 +3913,7 @@ async function generaPdfFirmato(){
 
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
-  const puoGestireTlc = userCanSee("tlc");
+  const puoGestireTlc = livelloPermesso("tlc") === "completo";
 
   if (!puoGestireTlc){
     content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Nessuna impostazione disponibile per il tuo utente.</p></div>`;
@@ -4063,13 +4076,28 @@ function renderListaUtenti(utenti){
           </div>
           <div class="form-field full">
             <label>Pagine abilitate</label>
-            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;">
-              ${PAGINE_PERMESSO.map(p => `
-                <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;">
-                  <input type="checkbox" data-perm="${p.key}" data-id="${u.id}" ${u.permessi && u.permessi[p.key] ? "checked" : ""}>
-                  ${p.label}
-                </label>
-              `).join("")}
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;align-items:center;">
+              ${PAGINE_PERMESSO.map(p => {
+                if (p.livelli){
+                  const valoreAttuale = (u.permessi && (u.permessi[p.key] === "completo" || u.permessi[p.key] === "base")) ? u.permessi[p.key] : "no";
+                  return `
+                    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;">
+                      ${p.label}
+                      <select data-perm-livello="${p.key}" data-id="${u.id}" style="font-size:12px;padding:3px 6px;">
+                        <option value="no" ${valoreAttuale==="no"?"selected":""}>Nessun accesso</option>
+                        <option value="base" ${valoreAttuale==="base"?"selected":""}>Base</option>
+                        <option value="completo" ${valoreAttuale==="completo"?"selected":""}>Completo</option>
+                      </select>
+                    </label>
+                  `;
+                }
+                return `
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;">
+                    <input type="checkbox" data-perm="${p.key}" data-id="${u.id}" ${u.permessi && u.permessi[p.key] ? "checked" : ""}>
+                    ${p.label}
+                  </label>
+                `;
+              }).join("")}
             </div>
           </div>
         </div>
@@ -4099,7 +4127,12 @@ async function salvaUtente(id, utenti){
   const attivo = document.querySelector(`[data-field="attivo"][data-id="${id}"]`).checked;
   const permessi = {};
   PAGINE_PERMESSO.forEach(p => {
-    permessi[p.key] = document.querySelector(`[data-perm="${p.key}"][data-id="${id}"]`).checked;
+    if (p.livelli){
+      const valore = document.querySelector(`[data-perm-livello="${p.key}"][data-id="${id}"]`).value;
+      permessi[p.key] = valore === "no" ? false : valore;
+    } else {
+      permessi[p.key] = document.querySelector(`[data-perm="${p.key}"][data-id="${id}"]`).checked;
+    }
   });
 
   const { error } = await sb.from("app_users").update({ nome, ruolo, attivo, permessi }).eq("id", id);
