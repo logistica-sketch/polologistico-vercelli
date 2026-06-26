@@ -1332,6 +1332,13 @@ function renderTabDatiMezzo(){
         </div>
         <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(m.descrizione||"")}"></div>
         <div class="form-field"><label>Carte carburante</label><input name="carte_carburante" value="${escapeHtml(m.carte_carburante||"")}"></div>
+        <div class="form-field">
+          <div class="form-checkbox"><input type="checkbox" name="ha_telepass" id="chk-ha-telepass" ${m.ha_telepass?"checked":""}><label style="margin:0;">Telepass presente</label></div>
+        </div>
+        <div class="form-field" id="campo-numero-telepass" style="${m.ha_telepass?"":"display:none;"}">
+          <label>Numero Telepass</label>
+          <input name="numero_telepass" value="${escapeHtml(m.numero_telepass||"")}">
+        </div>
         <div class="form-field" style="display:flex;align-items:flex-end;">
           <div class="form-checkbox"><input type="checkbox" name="assicurato_2026" ${m.assicurato_2026?"checked":""}><label style="margin:0;">Assicurato 2026</label></div>
         </div>
@@ -1347,6 +1354,9 @@ function renderTabDatiMezzo(){
 
   document.getElementById("btn-cancel-mezzo").addEventListener("click", chiudiModal);
   if (m.id) document.getElementById("btn-elimina-mezzo").addEventListener("click", () => eliminaMezzo(m.id));
+  document.getElementById("chk-ha-telepass").addEventListener("change", (e) => {
+    document.getElementById("campo-numero-telepass").style.display = e.target.checked ? "block" : "none";
+  });
 
   document.getElementById("form-mezzo").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1371,6 +1381,8 @@ function renderTabDatiMezzo(){
       stato_manuale: nuovoStato,
       descrizione: fd.get("descrizione") || null,
       carte_carburante: fd.get("carte_carburante") || null,
+      ha_telepass: fd.get("ha_telepass") === "on",
+      numero_telepass: fd.get("ha_telepass") === "on" ? (fd.get("numero_telepass") || null) : null,
       assicurato_2026: fd.get("assicurato_2026") === "on",
       note: fd.get("note") || null
     };
