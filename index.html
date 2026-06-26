@@ -730,6 +730,7 @@ function showApp(){
   document.getElementById("sidebar-user-name").textContent = state.profile.nome || state.user.email;
   document.getElementById("sidebar-user-role").textContent = labelRuolo(state.profile.ruolo);
   renderSidebar();
+  location.hash = "#/home";
   router();
 }
 
@@ -4012,6 +4013,7 @@ function renderListaUtenti(utenti){
           </div>
         </div>
         <div class="form-actions">
+          <button class="btn-cancel" data-vedi-log="${u.id}" data-nome-log="${escapeHtml(u.nome)}">📋 Vedi log attività</button>
           <button class="btn-save" data-save="${u.id}">Salva</button>
         </div>
       </div>
@@ -4024,6 +4026,12 @@ function renderListaUtenti(utenti){
       const id = btn.dataset.toggleUtente;
       _utenteEspansoId = (_utenteEspansoId === id) ? null : id;
       renderListaUtenti(utenti);
+    });
+  });
+  wrap.querySelectorAll('[data-vedi-log]').forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      apriModalLogUtente(btn.dataset.vediLog, btn.dataset.nomeLog);
     });
   });
   wrap.querySelectorAll('[data-save]').forEach(btn => {
@@ -4056,17 +4064,129 @@ async function salvaUtente(id, utenti){
   renderGestioneUtenti();
 }
 
+/* ---------- LOG ATTIVITÀ PER UTENTE ---------- */
+const LABEL_TABELLE_LOG = {
+  automezzi: "Automezzi", manutenzioni_automezzi: "Manutenzioni automezzi", movimenti_automezzi: "Movimenti automezzi",
+  documenti_automezzi: "Documenti automezzi", tlc_apparati: "Apparati TLC", movimentazioni_tlc: "Movimentazioni TLC",
+  movimentazioni_tlc_apparati: "Dettaglio movimentazioni TLC", tlc_categorie: "Categorie TLC",
+  volontari_formazione: "Volontari Formazione", edizioni_corso: "Edizioni corso", catalogo_corsi: "Catalogo corsi",
+  iscrizioni_corsi: "Iscrizioni corsi", documenti_volontario: "Documenti volontario", documenti_catalogo_corsi: "Documenti catalogo",
+  firme_salvate: "Firme salvate", app_users: "Utenti app"
+};
+const LABEL_OPERAZIONE_LOG = { INSERT:"Creazione", UPDATE:"Modifica", DELETE:"Eliminazione" };
 
-/* ============================================================
-   AVVIO
-   ============================================================ */
-document.getElementById("login-logo").src = LOGO_VOLONTARIATO_BASE64;
-initAuth();
+async function apriModalLogUtente(utenteId, nomeUtente){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:900px;">
+      <div class="modal-head">
+        <h3>Log attività — ${escapeHtml(nomeUtente)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="toolbar" style="margin-bottom:14px;">
+          <select id="log-filtro-tabella">
+            <option value="">Tutte le tabelle</option>
+          </select>
+          <select id="log-filtro-operazione">
+            <option value="">Tutte le operazioni</option>
+            <option value="INSERT">Creazione</option>
+            <option value="UPDATE">Modifica</option>
+            <option value="DELETE">Eliminazione</option>
+          </select>
+        </div>
+        <div id="log-utente-list"><div class="loading-spin">Caricamento…</div></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
 
-if ("serviceWorker" in navigator){
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
-  });
+  document.getElementById("log-filtro-tabella").addEventListener("change", () => caricaLogUtente(utenteId));
+  document.getElementById("log-filtro-operazione").addEventListener("change", () => caricaLogUtente(utenteId));
+
+  await caricaLogUtente(utenteId, true);
+}
+
+async function caricaLogUtente(utenteId, primaVolta){
+  const wrap = document.getElementById("log-utente-list");
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="loading-spin">Caricamento…</div>`;
+
+  const filtroTabella = document.getElementById("log-filtro-tabella")?.value || "";
+  const filtroOperazione = document.getElementById("log-filtro-operazione")?.value || "";
+
+  let query = sb.from("log_attivita").select("*").eq("utente_id", utenteId).order("creato_il", { ascending:false }).limit(200);
+  if (filtroTabella) query = query.eq("tabella", filtroTabella);
+  if (filtroOperazione) query = query.eq("operazione", filtroOperazione);
+
+  const { data, error } = await query;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (primaVolta){
+    const tabelleUsate = [...new Set(data.map(r => r.tabella))].sort();
+    const select = document.getElementById("log-filtro-tabella");
+    tabelleUsate.forEach(t => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = LABEL_TABELLE_LOG[t] || t;
+      select.appendChild(opt);
+    });
+  }
+
+  if (!data || data.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">📋</div>Nessuna attività registrata per questo utente.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Data/ora</th><th>Tabella</th><th>Operazione</th><th>Dettaglio</th></tr></thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td style="white-space:nowrap;">${formatDataOraIt(r.creato_il)}</td>
+            <td>${LABEL_TABELLE_LOG[r.tabella] || r.tabella}</td>
+            <td><span class="tag" style="background:${coloreOperazioneLog(r.operazione)};color:#fff;">${LABEL_OPERAZIONE_LOG[r.operazione]}</span></td>
+            <td>${descrizioneSinteticaLog(r)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function formatDataOraIt(iso){
+  const d = new Date(iso);
+  return d.toLocaleDateString("it-IT") + " " + d.toLocaleTimeString("it-IT", { hour:"2-digit", minute:"2-digit" });
+}
+
+function coloreOperazioneLog(op){
+  if (op === "INSERT") return "var(--verde)";
+  if (op === "DELETE") return "var(--rosso)";
+  return "var(--giallo)";
+}
+
+function descrizioneSinteticaLog(r){
+  const dati = r.dati_dopo || r.dati_prima || {};
+  const candidati = ["targa","selettiva","label","cognome","nome","nome_file","codice"];
+  let etichetta = "";
+  for (const c of candidati){
+    if (dati[c]){ etichetta += (etichetta ? " " : "") + dati[c]; if (etichetta.split(" ").length >= 2) break; }
+  }
+  if (!etichetta) etichetta = `ID ${r.record_id || "?"}`;
+
+  if (r.operazione === "UPDATE" && r.dati_prima && r.dati_dopo){
+    const cambiati = Object.keys(r.dati_dopo).filter(k => JSON.stringify(r.dati_prima[k]) !== JSON.stringify(r.dati_dopo[k]) && k !== "updated_at");
+    if (cambiati.length > 0){
+      return `${escapeHtml(etichetta)} — campi modificati: ${cambiati.map(escapeHtml).join(", ")}`;
+    }
+  }
+  return escapeHtml(etichetta);
 }
 </script>
 </body>
