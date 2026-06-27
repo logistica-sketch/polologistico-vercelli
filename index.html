@@ -1899,7 +1899,7 @@ async function renderTlc(){
 
   content.innerHTML = `
     <div class="toolbar">
-      <input type="search" id="tlc-search" placeholder="Cerca per codice ANA…" value="${escapeHtml(_tlcFiltro.search)}">
+      <input type="search" id="tlc-search" placeholder="Cerca per codice, selettiva, marca, modello…" value="${escapeHtml(_tlcFiltro.search)}">
       <select id="tlc-filtro-categoria">
         <option value="">Tutte le categorie</option>
         ${_tlcCategorie.map(c =>
@@ -1929,7 +1929,12 @@ async function renderTlc(){
 function renderTlcGrid(){
   const f = _tlcFiltro;
   const filtrati = _tlcCache.filter(a => {
-    if (f.search && !(a.codice_ana||"").toLowerCase().includes(f.search.toLowerCase())) return false;
+    if (f.search){
+      const q = f.search.toLowerCase();
+      const campi = [a.codice_ana, a.selettiva, a.marca, a.modello, a.matricola, a.assegnato_a, a.descrizione];
+      const trovato = campi.some(c => (c || "").toLowerCase().includes(q));
+      if (!trovato) return false;
+    }
     if (f.categoria && a.categoria !== f.categoria) return false;
     if (f.marca && a.marca !== f.marca) return false;
     return true;
@@ -1956,6 +1961,7 @@ function renderTlcGrid(){
         <div class="modello">${escapeHtml(a.marca || "")} ${escapeHtml(a.modello || "")}</div>
         <div class="meta">
           ${a.assegnato_a ? `<span>${escapeHtml(a.assegnato_a)}</span>` : `<span>Non assegnato</span>`}
+          ${a.selettiva ? `<span>${escapeHtml(a.selettiva)}</span>` : ""}
         </div>
       </div>
     </div>
