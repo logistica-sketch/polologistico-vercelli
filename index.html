@@ -4325,6 +4325,10 @@ async function renderLibroMatricola(){
       <button class="btn-add" id="lm-btn-export-excel-tutto" style="background:var(--verde);">📊 Esporta tutto (Excel)</button>
       <button class="btn-add" id="lm-btn-export-pdf-tutto" style="background:var(--blu-700);">📄 Esporta tutto (PDF)</button>
       <button class="btn-add" id="lm-btn-export-sezione" style="background:var(--grigio-800);">📁 Esporta per sezione</button>
+      <label class="btn-add" style="background:var(--grigio-600);cursor:pointer;">
+        📦 Carica ZIP polizze
+        <input type="file" id="lm-input-zip-polizze" accept=".zip" style="display:none;">
+      </label>
     </div>
     <div class="results-count" id="lm-results-count"></div>
     <div id="lm-table-wrap"></div>
@@ -4337,6 +4341,7 @@ async function renderLibroMatricola(){
   document.getElementById("lm-btn-export-excel-tutto").addEventListener("click", () => esportaLibroMatricolaExcel(_libroMatricolaCache.filter(r => r.stato==="attivo"), "Libro_Matricola_completo"));
   document.getElementById("lm-btn-export-pdf-tutto").addEventListener("click", () => esportaLibroMatricolaPdf(_libroMatricolaCache.filter(r => r.stato==="attivo"), "Libro Matricola completo"));
   document.getElementById("lm-btn-export-sezione").addEventListener("click", () => apriModalExportPerSezione(sezioni));
+  document.getElementById("lm-input-zip-polizze").addEventListener("change", (ev) => importaZipPolizzeLibroMatricola(ev));
 
   renderLibroMatricolaTable();
 }
@@ -4479,7 +4484,6 @@ function renderTabDatiLibroMatricola(){
     <form id="form-libro-matricola">
       <div class="form-grid">
         <div class="form-field"><label>Targa/Telaio *</label><input name="targa_telaio" required value="${escapeHtml(r.targa_telaio||"")}"></div>
-        <div class="form-field"><label>N. Applicazione</label><input name="numero_applicazione" value="${escapeHtml(r.numero_applicazione||"")}"></div>
         <div class="form-field full"><label>Descrizione bene</label><input name="descrizione_bene" value="${escapeHtml(r.descrizione_bene||"")}"></div>
         <div class="form-field"><label>Sezione</label><input name="sezione" value="${escapeHtml(r.sezione||"")}"></div>
         <div class="form-field"><label>Provincia</label><input name="provincia" value="${escapeHtml(r.provincia||"")}"></div>
@@ -4516,7 +4520,6 @@ function renderTabDatiLibroMatricola(){
     const fd = new FormData(e.target);
     const payload = {
       targa_telaio: fd.get("targa_telaio").trim().toUpperCase(),
-      numero_applicazione: fd.get("numero_applicazione") || null,
       descrizione_bene: fd.get("descrizione_bene") || null,
       sezione: fd.get("sezione") || null,
       provincia: fd.get("provincia") || null,
@@ -4661,7 +4664,6 @@ function mostraFormDocumentoLm(){
 /* ---------- EXPORT EXCEL ---------- */
 function esportaLibroMatricolaExcel(righe, nomeFile){
   const dati = righe.map(r => ({
-    "N. Appl.": r.numero_applicazione || "",
     "Targa/Telaio": r.targa_telaio,
     "Descrizione Bene": r.descrizione_bene || "",
     "Data Incl.": r.data_inclusione ? formatDataIt(r.data_inclusione) : "",
@@ -4733,6 +4735,92 @@ function esportaLibroMatricolaPdf(righe, titolo){
 }
 
 /* ---------- EXPORT PER SEZIONE ---------- */
+/* ---------- IMPORT MASSIVO ZIP POLIZZE ---------- */
+async function importaZipPolizzeLibroMatricola(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  ev.target.value = "";
+
+  if (!confirm(`Importare le polizze dal file ${file.name}?\n\nOgni PDF nella root deve essere nominato NUMERO_TARGA.PDF (es. 000053_GA132VZ.PDF) → tipo Polizza.\nOgni PDF nella cartella CAI deve essere nominato TARGA_CAI.PDF → tipo CAI.\n\nVerranno associati al mezzo corrispondente per targa, con anno ${new Date().getFullYear()}.`)) return;
+
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(255,255,255,0.9);z-index:600;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;";
+  overlay.innerHTML = `<div class="loading-spin">Importazione in corso, non chiudere questa pagina…</div><div id="import-zip-polizze-progress" style="font-size:13px;color:var(--grigio-600);"></div>`;
+  document.body.appendChild(overlay);
+  const progressEl = overlay.querySelector("#import-zip-polizze-progress");
+
+  const annoCorrente = new Date().getFullYear();
+
+  try{
+    const buf = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(buf);
+    const pdfEntries = Object.values(zip.files).filter(f => !f.dir && /\.pdf$/i.test(f.name));
+
+    let ok = 0, nonTrovati = [], errori = [];
+    let i = 0;
+    for (const entry of pdfEntries){
+      i++;
+      progressEl.textContent = `${i} di ${pdfEntries.length}…`;
+
+      const nomeBase = entry.name.split("/").pop();
+      const inCartellaCai = /\/CAI\//i.test(entry.name) || /_CAI\.PDF$/i.test(nomeBase);
+
+      let targa = null, tipo = null;
+      if (inCartellaCai){
+        const m = nomeBase.match(/^(.+?)_CAI\.PDF$/i);
+        if (m){ targa = m[1].toUpperCase(); tipo = "cai"; }
+      } else {
+        const m = nomeBase.match(/^\d+_(.+?)\.PDF$/i);
+        if (m){ targa = m[1].toUpperCase(); tipo = "polizza"; }
+      }
+
+      if (!targa){
+        errori.push(`${nomeBase}: nome file non riconosciuto (formato atteso NUMERO_TARGA.PDF o TARGA_CAI.PDF)`);
+        continue;
+      }
+
+      const mezzo = _libroMatricolaCache.find(r => (r.targa_telaio||"").toUpperCase() === targa);
+      if (!mezzo){
+        nonTrovati.push(`${nomeBase} (targa: ${targa})`);
+        continue;
+      }
+
+      try{
+        const blob = await entry.async("blob");
+        const path = `${mezzo.targa_telaio}/${Date.now()}_${nomeBase}`.replace(/\s+/g, "_");
+        const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).upload(path, blob, { contentType: "application/pdf" });
+        if (upErr) throw upErr;
+
+        const nomeFileSalvato = `${mezzo.targa_telaio} - ${tipo === "cai" ? "CAI" : "Polizza"} ${annoCorrente}`;
+        const { error: docErr } = await sb.from("documenti_libro_matricola").insert({
+          libro_matricola_id: mezzo.id,
+          tipo: tipo,
+          anno: annoCorrente,
+          nome_file: nomeFileSalvato,
+          storage_path: path,
+          created_by: state.user.id
+        });
+        if (docErr) throw docErr;
+        ok++;
+      }catch(err){
+        errori.push(`${nomeBase}: ${err.message}`);
+      }
+    }
+
+    overlay.remove();
+    let msg = `Import completato.\nDocumenti caricati: ${ok}\nMezzi non trovati: ${nonTrovati.length}`;
+    if (nonTrovati.length) msg += `\n\nNon trovati:\n` + nonTrovati.join("\n");
+    if (errori.length) msg += `\n\nErrori:\n` + errori.join("\n");
+    alert(msg);
+
+    renderLibroMatricola();
+
+  }catch(err){
+    overlay.remove();
+    alert("Errore nella lettura dello ZIP: " + err.message);
+  }
+}
+
 function apriModalExportPerSezione(sezioni){
   chiudiModal();
   const overlay = document.createElement("div");
