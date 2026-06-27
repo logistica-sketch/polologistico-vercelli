@@ -2491,10 +2491,10 @@ async function apriModalNuovaMovimentazioneTlc(){
           </button>
           <div class="mov-gruppo-body" style="display:${aperto?"block":"none"};padding-bottom:6px;">
             ${apparatiGruppo.map(a => `
-              <label style="display:flex;align-items:center;gap:8px;padding:7px 8px;font-size:12.5px;border-radius:6px;${selezionati.has(a.id)?"background:var(--grigio-100);":""}width:100%;box-sizing:border-box;overflow:hidden;">
+              <label style="display:flex;align-items:center;gap:8px;padding:7px 8px;font-size:12.5px;border-radius:6px;${selezionati.has(a.id)?"background:var(--grigio-100);":""}width:100%;box-sizing:border-box;">
                 <input type="checkbox" data-apparato-id="${a.id}" ${selezionati.has(a.id)?"checked":""} style="flex-shrink:0;">
-                <span style="font-family:monospace;font-weight:700;flex-shrink:0;">${escapeHtml(a.codice_ana)}</span>
-                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grigio-800);min-width:0;flex:1;">${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")}${a.selettiva ? ` · ${escapeHtml(a.selettiva)}` : ""}${a.sottocategoria_radio ? ` · ${a.sottocategoria_radio}` : ""}</span>
+                <span style="font-family:monospace;font-weight:700;flex-shrink:0;white-space:nowrap;">${escapeHtml(a.codice_ana)}</span>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grigio-800);flex:1 1 auto;min-width:60px;">${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")}${a.selettiva ? ` · ${escapeHtml(a.selettiva)}` : ""}${a.sottocategoria_radio ? ` · ${a.sottocategoria_radio}` : ""}</span>
               </label>
             `).join("")}
           </div>
