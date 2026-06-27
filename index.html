@@ -763,8 +763,9 @@ function livelloPermesso(sezione){
 }
 
 function paginaImpostazioniHaSezioni(){
-  if (state.profile.ruolo === "it_admin") return true;
-  return livelloPermesso("tlc") === "completo";
+  // Impostazioni è ora sempre visibile a tutti gli utenti autenticati,
+  // perché contiene almeno la sezione "La mia firma personale".
+  return true;
 }
 
 document.getElementById("form-login").addEventListener("submit", async (e) => {
@@ -1862,6 +1863,15 @@ function mostraFormMovimento(){
    MODULO TLC
    ============================================================ */
 let _tlcCache = [];
+let _idApparatiInUsoTlc = new Set();
+
+async function caricaApparatiInUsoTlc(){
+  const { data } = await sb
+    .from("movimentazioni_tlc_apparati")
+    .select("apparato_id, movimentazioni_tlc!inner(stato)")
+    .eq("movimentazioni_tlc.stato", "in_uso");
+  _idApparatiInUsoTlc = new Set((data||[]).map(r => r.apparato_id));
+}
 let _tlcCategorie = [];
 let _tlcFiltro = { search:"", categoria:"", marca:"" };
 
@@ -1876,6 +1886,7 @@ async function renderTlc(){
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _tlcCache = data;
   await caricaCategorieTlc();
+  await caricaApparatiInUsoTlc();
   const livello = livelloPermesso("tlc");
   const soloLettura = livello !== "completo";
 
@@ -1925,10 +1936,13 @@ function renderTlcGrid(){
     return;
   }
 
-  grid.innerHTML = filtrati.map(a => `
+  grid.innerHTML = filtrati.map(a => {
+    const inUscita = _idApparatiInUsoTlc.has(a.id);
+    return `
     <div class="veicolo-card tlc-card" data-id="${a.id}">
       <div class="tlc-card-head">
         ${a.categoria ? `<span class="badge-cat" style="position:static;">${a.categoria}</span>` : ""}
+        ${inUscita ? `<span class="badge-stato-mezzo revisionare" style="margin:0;">Uscita</span>` : ""}
       </div>
       <div class="info">
         <div class="targa">${escapeHtml(a.selettiva)}</div>
@@ -1938,7 +1952,8 @@ function renderTlcGrid(){
         </div>
       </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   grid.querySelectorAll(".veicolo-card").forEach(el => {
     el.addEventListener("click", () => apriModalTlc(parseInt(el.dataset.id), livelloPermesso("tlc") !== "completo"));
@@ -2142,11 +2157,13 @@ async function renderMovimentazioniTlc(){
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
 
   content.innerHTML = `
-    <div class="toolbar" style="justify-content:flex-end;">
+    <div class="toolbar" style="justify-content:space-between;">
+      <button class="btn-cancel" id="btn-torna-apparati-tlc">← Torna agli apparati</button>
       <button class="btn-add" id="btn-nuova-movimentazione-tlc">+ Nuova movimentazione</button>
     </div>
     <div id="movimentazioni-tlc-list"></div>
   `;
+  document.getElementById("btn-torna-apparati-tlc").addEventListener("click", () => renderTlc());
   document.getElementById("btn-nuova-movimentazione-tlc").addEventListener("click", () => apriModalNuovaMovimentazioneTlc());
   renderTabellaMovimentazioniTlc(data);
 }
@@ -2218,6 +2235,8 @@ async function caricaBollaFirmata(input){
   renderMovimentazioniTlc();
 }
 
+const TESTO_RESPONSABILITA_TLC = "Il sottoscritto dichiara di aver ricevuto in consegna il materiale sopra indicato, impegnandosi a utilizzarlo esclusivamente per l'attività indicata e a restituirlo integralmente, al termine dell'utilizzo, nello stato in cui è stato consegnato. In caso di smarrimento o di guasto dovuto a incuria, il consegnatario si impegna a rimborsare alla Sede Nazionale le spese di ripristino.";
+
 async function apriModalNuovaMovimentazioneTlc(){
   const { data: apparatiLiberi } = await sb
     .from("tlc_apparati")
@@ -2232,6 +2251,8 @@ async function apriModalNuovaMovimentazioneTlc(){
   const idInUso = new Set((inUso||[]).map(r => r.apparato_id));
   const disponibili = apparatiLiberi.filter(a => !idInUso.has(a.id));
 
+  const haFirmaPersonale = !!state.profile.firma_personale_path;
+
   chiudiModal();
   const overlay = document.createElement("div");
   overlay.id = "modal-overlay";
@@ -2245,27 +2266,17 @@ async function apriModalNuovaMovimentazioneTlc(){
       <div class="modal-body">
         <form id="form-movimentazione-tlc">
           <div class="form-grid">
+            <div class="form-field full"><label>Consegnato da</label><input value="${escapeHtml(state.profile.nome)}" disabled></div>
             <div class="form-field"><label>Data uscita</label><input type="date" name="data_uscita" value="${new Date().toISOString().slice(0,10)}" required></div>
-            <div class="form-field"><label>Operatore (chi prende gli apparati) *</label><input name="operatore" required></div>
+            <div class="form-field"><label>Nome e cognome ricevente *</label><input name="operatore" required></div>
             <div class="form-field full">
-              <label>Sezione ANA *</label>
+              <label>Sezione ANA del ricevente *</label>
               <select name="sezione_ana" required>
                 <option value="">— Seleziona —</option>
                 ${SEZIONI_ANA.map(s => `<option value="${s}">${s}</option>`).join("")}
               </select>
             </div>
             <div class="form-field full"><label>Motivo</label><input name="motivo"></div>
-            <div class="form-field full">
-              <label>Tipo firma</label>
-              <div class="radio-group">
-                <label><input type="radio" name="tipo_firma" value="autografa" checked> Autografa (stampa e scansione)</label>
-                <label><input type="radio" name="tipo_firma" value="digitale"> Digitale (mouse/touch)</label>
-              </div>
-            </div>
-            <div class="form-field full" id="zona-firma-digitale" style="display:none;">
-              <label>Firma di consegna</label>
-              <div id="canvas-firma-consegna"></div>
-            </div>
             <div class="form-field full">
               <label>Apparati da assegnare * (${disponibili.length} disponibili)</label>
               <div style="max-height:200px;overflow-y:auto;border:1px solid var(--grigio-400);border-radius:8px;padding:8px;">
@@ -2278,6 +2289,26 @@ async function apriModalNuovaMovimentazioneTlc(){
               </div>
             </div>
             <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+
+            <div class="form-field full" style="background:var(--grigio-100);border-radius:8px;padding:12px;margin-top:6px;">
+              <p style="font-size:12px;color:var(--grigio-800);margin:0 0 10px;">${escapeHtml(TESTO_RESPONSABILITA_TLC)}</p>
+
+              <label>Tipo firma del ricevente</label>
+              <div class="radio-group">
+                <label><input type="radio" name="tipo_firma" value="autografa" checked> Autografa (stampa e scansione)</label>
+                <label><input type="radio" name="tipo_firma" value="digitale"> Digitale (mouse/touch)</label>
+              </div>
+            </div>
+            <div class="form-field full" id="zona-firma-digitale" style="display:none;">
+              <label>Firma del ricevente</label>
+              <div id="canvas-firma-consegna"></div>
+            </div>
+            <div class="form-field full">
+              <label>Firma di consegna (tua firma personale)</label>
+              ${haFirmaPersonale
+                ? `<p style="font-size:12px;color:var(--verde);margin:4px 0;">✓ Verrà usata automaticamente la tua firma personale salvata in Impostazioni.</p>`
+                : `<p style="font-size:12px;color:var(--rosso);margin:4px 0;">Non hai ancora una firma personale salvata. Vai in Impostazioni → "La mia firma personale" prima di continuare, oppure salva con firma autografa e firma a mano sul foglio stampato.</p>`}
+            </div>
           </div>
           <div class="form-actions">
             <button type="button" class="btn-cancel" id="btn-cancel-mov-tlc">Annulla</button>
@@ -2314,12 +2345,26 @@ async function apriModalNuovaMovimentazioneTlc(){
 
     if (apparatiSelezionati.length === 0){ alert("Seleziona almeno un apparato."); return; }
     if (tipoFirma === "digitale" && (!firmaConsegna || firmaConsegna.isEmpty())){
-      alert("Firma di consegna mancante. Firma nel riquadro prima di salvare.");
+      alert("Firma del ricevente mancante. Firma nel riquadro prima di salvare.");
       return;
     }
 
     const btn = e.target.querySelector(".btn-save");
     btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let firmaAppPng = null;
+    if (tipoFirma === "digitale" && haFirmaPersonale){
+      try{
+        const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
+        const resp = await fetch(u.publicUrl);
+        const blob = await resp.blob();
+        firmaAppPng = await new Promise((res) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result);
+          reader.readAsDataURL(blob);
+        });
+      }catch(err){ firmaAppPng = null; }
+    }
 
     const payload = {
       data_uscita: fd.get("data_uscita"),
@@ -2328,7 +2373,10 @@ async function apriModalNuovaMovimentazioneTlc(){
       motivo: fd.get("motivo") || null,
       note: fd.get("note") || null,
       tipo_firma: tipoFirma,
-      firma_consegna_png: tipoFirma === "digitale" ? firmaConsegna.toPng() : null,
+      consegnato_da: state.user.id,
+      consegnato_da_nome: state.profile.nome,
+      firma_ricezione_png: tipoFirma === "digitale" ? firmaConsegna.toPng() : null,
+      firma_consegna_app_png: tipoFirma === "digitale" ? firmaAppPng : null,
       created_by: state.user.id
     };
 
@@ -2378,6 +2426,7 @@ async function apriModalFirmaRientro(mov){
     .select("apparato_id, tlc_apparati(*)")
     .eq("movimentazione_id", mov.id);
   const apparati = (righe||[]).map(r => r.tlc_apparati).filter(Boolean);
+  const haFirmaPersonale = !!state.profile.firma_personale_path;
 
   chiudiModal();
   const overlay = document.createElement("div");
@@ -2393,9 +2442,21 @@ async function apriModalFirmaRientro(mov){
         <form id="form-rientro-tlc">
           <div class="form-grid">
             <div class="form-field full"><label>Data rientro</label><input type="date" name="data_rientro" value="${new Date().toISOString().slice(0,10)}" required></div>
+            <div class="form-field full"><label>Ripreso in carico da</label><input value="${escapeHtml(state.profile.nome)}" disabled></div>
+
+            <div class="form-field full" style="background:var(--grigio-100);border-radius:8px;padding:12px;">
+              <p style="font-size:12px;color:var(--grigio-800);margin:0;">${escapeHtml(TESTO_RESPONSABILITA_TLC)}</p>
+            </div>
+
             <div class="form-field full">
-              <label>Firma di rientro</label>
+              <label>Firma di restituzione (${escapeHtml(mov.operatore)})</label>
               <div id="canvas-firma-rientro"></div>
+            </div>
+            <div class="form-field full">
+              <label>Firma di ripresa in carico (tua firma personale)</label>
+              ${haFirmaPersonale
+                ? `<p style="font-size:12px;color:var(--verde);margin:4px 0;">✓ Verrà usata automaticamente la tua firma personale salvata in Impostazioni.</p>`
+                : `<p style="font-size:12px;color:var(--rosso);margin:4px 0;">Non hai una firma personale salvata. Vai in Impostazioni → "La mia firma personale" prima di continuare.</p>`}
             </div>
           </div>
           <div class="form-actions">
@@ -2415,16 +2476,35 @@ async function apriModalFirmaRientro(mov){
 
   document.getElementById("form-rientro-tlc").addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (firmaRientro.isEmpty()){ alert("Firma di rientro mancante."); return; }
+    if (firmaRientro.isEmpty()){ alert("Firma di restituzione mancante."); return; }
+    if (!haFirmaPersonale){ alert("Devi avere una firma personale salvata per riprendere in carico il materiale."); return; }
     const fd = new FormData(e.target);
+
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let firmaAppPng = null;
+    try{
+      const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
+      const resp = await fetch(u.publicUrl);
+      const blob = await resp.blob();
+      firmaAppPng = await new Promise((res) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    }catch(err){ firmaAppPng = null; }
 
     const aggiornato = {
       data_rientro: fd.get("data_rientro"),
       stato: "rientrato",
-      firma_rientro_png: firmaRientro.toPng()
+      firma_restituzione_png: firmaRientro.toPng(),
+      ripreso_da: state.user.id,
+      ripreso_da_nome: state.profile.nome,
+      firma_ripresa_app_png: firmaAppPng
     };
     const { data: movAggiornato, error } = await sb.from("movimentazioni_tlc").update(aggiornato).eq("id", mov.id).select().single();
-    if (error){ alert("Errore: " + error.message); return; }
+    if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Registra rientro"; return; }
 
     await generaEArchiviaBollaTlc(movAggiornato, apparati, { scarica: true });
 
@@ -2465,10 +2545,14 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   let y = 61;
   doc.setFontSize(10);
   doc.text(`Data uscita: ${formatDataIt(mov.data_uscita)}`, 14, y); y += 7;
-  doc.text(`Operatore: ${mov.operatore}`, 14, y); y += 7;
+  doc.text(`Consegnato da: ${mov.consegnato_da_nome || "—"}`, 14, y); y += 7;
+  doc.text(`Ricevente: ${mov.operatore}`, 14, y); y += 7;
   doc.text(`Sezione ANA: ${mov.sezione_ana}`, 14, y); y += 7;
   if (mov.motivo){ doc.text(`Motivo: ${mov.motivo}`, 14, y); y += 7; }
-  if (mov.data_rientro){ doc.text(`Data rientro: ${formatDataIt(mov.data_rientro)}`, 14, y); y += 7; }
+  if (mov.data_rientro){
+    doc.text(`Data rientro: ${formatDataIt(mov.data_rientro)}`, 14, y); y += 7;
+    doc.text(`Ripreso in carico da: ${mov.ripreso_da_nome || "—"}`, 14, y); y += 7;
+  }
   y += 4;
 
   doc.setFont(undefined, "bold");
@@ -2490,26 +2574,58 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
     y += 7;
   });
 
-  y += 10;
+  y += 8;
+  doc.setFontSize(7.5);
+  const testoResp = doc.splitTextToSize(TESTO_RESPONSABILITA_TLC, 182);
+  doc.text(testoResp, 14, y);
+  y += testoResp.length * 3.5 + 8;
+  doc.setFontSize(10);
+
+  // Riga 1: consegna (utente app) / ricezione (ricevente)
   doc.setFont(undefined, "bold");
-  doc.text("Firma di consegna", 14, y);
-  doc.text("Firma di rientro", 110, y);
+  doc.text("Firma di consegna (utente app)", 14, y);
+  doc.text("Firma di ricezione", 110, y);
   y += 4;
 
-  if (mov.firma_consegna_png){
-    try{ doc.addImage(mov.firma_consegna_png, "PNG", 14, y, 70, 28); }catch(e){}
+  if (mov.firma_consegna_app_png){
+    try{ doc.addImage(mov.firma_consegna_app_png, "PNG", 14, y, 70, 22); }catch(e){}
   }
-  if (mov.firma_rientro_png){
-    try{ doc.addImage(mov.firma_rientro_png, "PNG", 110, y, 70, 28); }catch(e){}
+  if (mov.firma_ricezione_png){
+    try{ doc.addImage(mov.firma_ricezione_png, "PNG", 110, y, 70, 22); }catch(e){}
   }
-
-  y += 32;
+  y += 26;
   doc.line(14, y, 90, y);
   doc.line(110, y, 186, y);
-  y += 6;
+  y += 5;
   doc.setFontSize(8);
-  doc.text(`Data: ${formatDataIt(mov.data_uscita)}`, 14, y);
-  doc.text(mov.data_rientro ? `Data: ${formatDataIt(mov.data_rientro)}` : "Data: ___________________", 110, y);
+  doc.setFont(undefined, "normal");
+  doc.text(mov.consegnato_da_nome || "", 14, y);
+  doc.text(mov.operatore || "", 110, y);
+  y += 12;
+
+  // Riga 2: restituzione (ricevente) / ripresa in carico (utente app) — solo se rientrato
+  if (mov.stato === "rientrato"){
+    doc.setFontSize(10);
+    doc.setFont(undefined, "bold");
+    doc.text("Firma di restituzione", 14, y);
+    doc.text("Firma di ripresa in carico (utente app)", 110, y);
+    y += 4;
+
+    if (mov.firma_restituzione_png){
+      try{ doc.addImage(mov.firma_restituzione_png, "PNG", 14, y, 70, 22); }catch(e){}
+    }
+    if (mov.firma_ripresa_app_png){
+      try{ doc.addImage(mov.firma_ripresa_app_png, "PNG", 110, y, 70, 22); }catch(e){}
+    }
+    y += 26;
+    doc.line(14, y, 90, y);
+    doc.line(110, y, 186, y);
+    y += 5;
+    doc.setFontSize(8);
+    doc.setFont(undefined, "normal");
+    doc.text(mov.operatore || "", 14, y);
+    doc.text(mov.ripreso_da_nome || "", 110, y);
+  }
 
   const blob = doc.output("blob");
   const tipo = mov.stato === "rientrato" ? "rientro" : "uscita";
@@ -3925,16 +4041,17 @@ async function renderImpostazioni(){
   const content = document.getElementById("page-content");
   const puoGestireTlc = livelloPermesso("tlc") === "completo";
 
-  if (!puoGestireTlc){
-    content.innerHTML = `<div class="placeholder-page"><h3>⚙️ Impostazioni</h3><p>Nessuna impostazione disponibile per il tuo utente.</p></div>`;
-    return;
-  }
-
-  let html = "";
+  let html = `
+    <div class="section-title">La mia firma personale</div>
+    <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
+      Questa firma è esclusiva del tuo account: verrà usata automaticamente quando consegni o riprendi in carico materiale TLC come utente app.
+    </p>
+    <div id="firma-personale-box"></div>
+  `;
 
   if (puoGestireTlc){
     html += `
-      <div class="section-title">Categorie apparati TLC</div>
+      <div class="section-title" style="margin-top:28px;">Categorie apparati TLC</div>
       <div id="tlc-categorie-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-categoria-tlc">+ Nuova categoria</button></div>
     `;
@@ -3945,10 +4062,67 @@ async function renderImpostazioni(){
 
   content.innerHTML = html;
 
+  await renderFirmaPersonaleBox();
+
   if (puoGestireTlc){
     await renderListaCategorieTlc();
     document.getElementById("btn-nuova-categoria-tlc").addEventListener("click", aggiungiCategoriaTlc);
   }
+}
+
+const STORAGE_BUCKET_FIRME_PERSONALI = "firme-personali";
+
+async function renderFirmaPersonaleBox(){
+  const box = document.getElementById("firma-personale-box");
+  if (!box) return;
+
+  const path = state.profile.firma_personale_path;
+  let urlFirma = null;
+  if (path){
+    const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(path);
+    urlFirma = u.publicUrl + "?t=" + Date.now();
+  }
+
+  box.innerHTML = `
+    <div class="stat-card" style="max-width:340px;">
+      ${urlFirma ? `<img src="${urlFirma}" alt="La tua firma" style="max-width:100%;height:80px;object-fit:contain;display:block;margin-bottom:10px;">` : `<p style="font-size:12.5px;color:var(--grigio-600);">Nessuna firma salvata.</p>`}
+      <button class="btn-add-mini" id="btn-disegna-firma-personale">${urlFirma ? "Rifai la firma" : "Crea la mia firma"}</button>
+    </div>
+    <div id="firma-personale-editor" style="margin-top:12px;"></div>
+  `;
+
+  document.getElementById("btn-disegna-firma-personale").addEventListener("click", () => {
+    const editorBox = document.getElementById("firma-personale-editor");
+    editorBox.innerHTML = `
+      <div id="canvas-firma-personale"></div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-annulla-firma-personale">Annulla</button>
+        <button type="button" class="btn-save" id="btn-salva-firma-personale">Salva firma</button>
+      </div>
+    `;
+    const firma = creaCanvasFirma(document.getElementById("canvas-firma-personale"));
+
+    document.getElementById("btn-annulla-firma-personale").addEventListener("click", () => { editorBox.innerHTML = ""; });
+    document.getElementById("btn-salva-firma-personale").addEventListener("click", async () => {
+      if (firma.isEmpty()){ alert("Disegna la firma prima di salvare."); return; }
+      const btn = document.getElementById("btn-salva-firma-personale");
+      btn.disabled = true; btn.textContent = "Salvataggio…";
+
+      const dataUrl = firma.toPng();
+      const blob = await (await fetch(dataUrl)).blob();
+      const nuovoPath = `${state.user.id}.png`;
+
+      const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).upload(nuovoPath, blob, { upsert:true, contentType:"image/png" });
+      if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Salva firma"; return; }
+
+      const { error } = await sb.from("app_users").update({ firma_personale_path: nuovoPath }).eq("id", state.user.id);
+      if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Salva firma"; return; }
+
+      state.profile.firma_personale_path = nuovoPath;
+      editorBox.innerHTML = "";
+      renderFirmaPersonaleBox();
+    });
+  });
 }
 
 async function renderListaCategorieTlc(){
