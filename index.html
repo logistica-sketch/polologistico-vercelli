@@ -2266,10 +2266,10 @@ async function apriModalNuovaMovimentazioneTlc(){
       <div class="modal-body">
         <form id="form-movimentazione-tlc">
           <div class="form-grid">
-            <div class="form-field full"><label>Consegnato da</label><input value="${escapeHtml(state.profile.nome)}" disabled></div>
+            <div class="form-field"><label>Consegnato da</label><input value="${escapeHtml(state.profile.nome)}" disabled></div>
             <div class="form-field"><label>Data uscita</label><input type="date" name="data_uscita" value="${new Date().toISOString().slice(0,10)}" required></div>
             <div class="form-field"><label>Nome e cognome ricevente *</label><input name="operatore" required></div>
-            <div class="form-field full">
+            <div class="form-field">
               <label>Sezione ANA del ricevente *</label>
               <select name="sezione_ana" required>
                 <option value="">— Seleziona —</option>
@@ -2348,23 +2348,25 @@ async function apriModalNuovaMovimentazioneTlc(){
       alert("Firma del ricevente mancante. Firma nel riquadro prima di salvare.");
       return;
     }
+    if (!haFirmaPersonale){
+      alert("Devi avere una firma personale salvata (Impostazioni → La mia firma personale) per registrare una consegna.");
+      return;
+    }
 
     const btn = e.target.querySelector(".btn-save");
     btn.disabled = true; btn.textContent = "Salvataggio…";
 
     let firmaAppPng = null;
-    if (tipoFirma === "digitale" && haFirmaPersonale){
-      try{
-        const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
-        const resp = await fetch(u.publicUrl);
-        const blob = await resp.blob();
-        firmaAppPng = await new Promise((res) => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result);
-          reader.readAsDataURL(blob);
-        });
-      }catch(err){ firmaAppPng = null; }
-    }
+    try{
+      const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
+      const resp = await fetch(u.publicUrl);
+      const blob = await resp.blob();
+      firmaAppPng = await new Promise((res) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    }catch(err){ firmaAppPng = null; }
 
     const payload = {
       data_uscita: fd.get("data_uscita"),
@@ -2376,7 +2378,7 @@ async function apriModalNuovaMovimentazioneTlc(){
       consegnato_da: state.user.id,
       consegnato_da_nome: state.profile.nome,
       firma_ricezione_png: tipoFirma === "digitale" ? firmaConsegna.toPng() : null,
-      firma_consegna_app_png: tipoFirma === "digitale" ? firmaAppPng : null,
+      firma_consegna_app_png: firmaAppPng,
       created_by: state.user.id
     };
 
@@ -2403,13 +2405,37 @@ async function registraRientroTlc(movId){
     return;
   }
 
-  // autografa: chiede solo la data, la scansione si carica dopo con "Carica firmata"
+  if (!state.profile.firma_personale_path){
+    alert("Devi avere una firma personale salvata (Impostazioni → La mia firma personale) per riprendere in carico il materiale.");
+    return;
+  }
+
+  // autografa: chiede solo la data, la scansione del ricevente si carica dopo con "Carica firmata".
+  // La firma app (chi riprende in carico) è invece sempre quella personale automatica.
   const dataRientro = prompt("Data di rientro (GG/MM/AAAA):", new Date().toLocaleDateString("it-IT"));
   if (!dataRientro) return;
   const iso = parseDataItInput(dataRientro);
   if (!iso){ alert("Formato data non valido."); return; }
 
-  const { error } = await sb.from("movimentazioni_tlc").update({ data_rientro: iso, stato: "rientrato" }).eq("id", movId);
+  let firmaAppPng = null;
+  try{
+    const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
+    const resp = await fetch(u.publicUrl);
+    const blob = await resp.blob();
+    firmaAppPng = await new Promise((res) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  }catch(err){ firmaAppPng = null; }
+
+  const { error } = await sb.from("movimentazioni_tlc").update({
+    data_rientro: iso,
+    stato: "rientrato",
+    ripreso_da: state.user.id,
+    ripreso_da_nome: state.profile.nome,
+    firma_ripresa_app_png: firmaAppPng
+  }).eq("id", movId);
   if (error){ alert("Errore: " + error.message); return; }
   renderMovimentazioniTlc();
 }
@@ -2441,8 +2467,8 @@ async function apriModalFirmaRientro(mov){
       <div class="modal-body">
         <form id="form-rientro-tlc">
           <div class="form-grid">
-            <div class="form-field full"><label>Data rientro</label><input type="date" name="data_rientro" value="${new Date().toISOString().slice(0,10)}" required></div>
-            <div class="form-field full"><label>Ripreso in carico da</label><input value="${escapeHtml(state.profile.nome)}" disabled></div>
+            <div class="form-field"><label>Data rientro</label><input type="date" name="data_rientro" value="${new Date().toISOString().slice(0,10)}" required></div>
+            <div class="form-field"><label>Ripreso in carico da</label><input value="${escapeHtml(state.profile.nome)}" disabled></div>
 
             <div class="form-field full" style="background:var(--grigio-100);border-radius:8px;padding:12px;">
               <p style="font-size:12px;color:var(--grigio-800);margin:0;">${escapeHtml(TESTO_RESPONSABILITA_TLC)}</p>
@@ -2543,17 +2569,25 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   doc.text(`N. movimentazione: ${mov.id}`, 14, 50);
 
   let y = 61;
+  const yStart = y;
   doc.setFontSize(10);
-  doc.text(`Data uscita: ${formatDataIt(mov.data_uscita)}`, 14, y); y += 7;
-  doc.text(`Consegnato da: ${mov.consegnato_da_nome || "—"}`, 14, y); y += 7;
-  doc.text(`Ricevente: ${mov.operatore}`, 14, y); y += 7;
-  doc.text(`Sezione ANA: ${mov.sezione_ana}`, 14, y); y += 7;
-  if (mov.motivo){ doc.text(`Motivo: ${mov.motivo}`, 14, y); y += 7; }
+
+  // Colonna sinistra: dati di movimento (date, utenti app)
+  let yL = yStart;
+  doc.text(`Data uscita: ${formatDataIt(mov.data_uscita)}`, 14, yL); yL += 7;
+  doc.text(`Consegnato da: ${mov.consegnato_da_nome || "—"}`, 14, yL); yL += 7;
   if (mov.data_rientro){
-    doc.text(`Data rientro: ${formatDataIt(mov.data_rientro)}`, 14, y); y += 7;
-    doc.text(`Ripreso in carico da: ${mov.ripreso_da_nome || "—"}`, 14, y); y += 7;
+    doc.text(`Data rientro: ${formatDataIt(mov.data_rientro)}`, 14, yL); yL += 7;
+    doc.text(`Ripreso in carico da: ${mov.ripreso_da_nome || "—"}`, 14, yL); yL += 7;
   }
-  y += 4;
+
+  // Colonna destra: dati del ricevente
+  let yR = yStart;
+  doc.text(`Ricevente: ${mov.operatore}`, 110, yR); yR += 7;
+  doc.text(`Sezione ANA: ${mov.sezione_ana}`, 110, yR); yR += 7;
+  if (mov.motivo){ doc.text(`Motivo: ${mov.motivo}`, 110, yR); yR += 7; }
+
+  y = Math.max(yL, yR) + 4;
 
   doc.setFont(undefined, "bold");
   doc.text("Apparati assegnati", 14, y); y += 6;
@@ -2574,57 +2608,59 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
     y += 7;
   });
 
-  y += 8;
-  doc.setFontSize(7.5);
-  const testoResp = doc.splitTextToSize(TESTO_RESPONSABILITA_TLC, 182);
-  doc.text(testoResp, 14, y);
-  y += testoResp.length * 3.5 + 8;
-  doc.setFontSize(10);
+  // Blocco firme ancorato in fondo alla pagina, con testo responsabilità appena sopra
+  const PAGE_HEIGHT = 297; // A4 in mm
+  let yFirme = PAGE_HEIGHT - (mov.stato === "rientrato" ? 62 : 38);
 
-  // Riga 1: consegna (utente app) / ricezione (ricevente)
+  doc.setFontSize(8.5);
+  const testoResp = doc.splitTextToSize(TESTO_RESPONSABILITA_TLC, 182);
+  const altezzaTesto = testoResp.length * 4;
+  doc.text(testoResp, 14, yFirme - altezzaTesto - 6);
+
+  doc.setFontSize(10);
   doc.setFont(undefined, "bold");
-  doc.text("Firma di consegna (utente app)", 14, y);
-  doc.text("Firma di ricezione", 110, y);
-  y += 4;
+  doc.text("Firma di consegna", 14, yFirme);
+  doc.text("Firma di ricezione", 110, yFirme);
+  yFirme += 4;
 
   if (mov.firma_consegna_app_png){
-    try{ doc.addImage(mov.firma_consegna_app_png, "PNG", 14, y, 70, 22); }catch(e){}
+    try{ doc.addImage(mov.firma_consegna_app_png, "PNG", 14, yFirme, 70, 14); }catch(e){}
   }
   if (mov.firma_ricezione_png){
-    try{ doc.addImage(mov.firma_ricezione_png, "PNG", 110, y, 70, 22); }catch(e){}
+    try{ doc.addImage(mov.firma_ricezione_png, "PNG", 110, yFirme, 70, 14); }catch(e){}
   }
-  y += 26;
-  doc.line(14, y, 90, y);
-  doc.line(110, y, 186, y);
-  y += 5;
+  yFirme += 16;
+  doc.line(14, yFirme, 90, yFirme);
+  doc.line(110, yFirme, 186, yFirme);
+  yFirme += 5;
   doc.setFontSize(8);
   doc.setFont(undefined, "normal");
-  doc.text(mov.consegnato_da_nome || "", 14, y);
-  doc.text(mov.operatore || "", 110, y);
-  y += 12;
+  doc.text(mov.consegnato_da_nome || "", 14, yFirme);
+  doc.text(mov.operatore || "", 110, yFirme);
+  yFirme += 8;
 
   // Riga 2: restituzione (ricevente) / ripresa in carico (utente app) — solo se rientrato
   if (mov.stato === "rientrato"){
     doc.setFontSize(10);
     doc.setFont(undefined, "bold");
-    doc.text("Firma di restituzione", 14, y);
-    doc.text("Firma di ripresa in carico (utente app)", 110, y);
-    y += 4;
+    doc.text("Firma di restituzione", 14, yFirme);
+    doc.text("Firma di ripresa in carico", 110, yFirme);
+    yFirme += 4;
 
     if (mov.firma_restituzione_png){
-      try{ doc.addImage(mov.firma_restituzione_png, "PNG", 14, y, 70, 22); }catch(e){}
+      try{ doc.addImage(mov.firma_restituzione_png, "PNG", 14, yFirme, 70, 14); }catch(e){}
     }
     if (mov.firma_ripresa_app_png){
-      try{ doc.addImage(mov.firma_ripresa_app_png, "PNG", 110, y, 70, 22); }catch(e){}
+      try{ doc.addImage(mov.firma_ripresa_app_png, "PNG", 110, yFirme, 70, 14); }catch(e){}
     }
-    y += 26;
-    doc.line(14, y, 90, y);
-    doc.line(110, y, 186, y);
-    y += 5;
+    yFirme += 16;
+    doc.line(14, yFirme, 90, yFirme);
+    doc.line(110, yFirme, 186, yFirme);
+    yFirme += 5;
     doc.setFontSize(8);
     doc.setFont(undefined, "normal");
-    doc.text(mov.operatore || "", 14, y);
-    doc.text(mov.ripreso_da_nome || "", 110, y);
+    doc.text(mov.operatore || "", 14, yFirme);
+    doc.text(mov.ripreso_da_nome || "", 110, yFirme);
   }
 
   const blob = doc.output("blob");
