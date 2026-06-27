@@ -1873,11 +1873,17 @@ async function caricaApparatiInUsoTlc(){
   _idApparatiInUsoTlc = new Set((data||[]).map(r => r.apparato_id));
 }
 let _tlcCategorie = [];
+let _tlcMarche = [];
 let _tlcFiltro = { search:"", categoria:"", marca:"" };
 
 async function caricaCategorieTlc(){
   const { data } = await sb.from("tlc_categorie").select("*").order("nome");
   _tlcCategorie = (data || []).map(c => c.nome);
+}
+
+async function caricaMarcheTlc(){
+  const { data } = await sb.from("tlc_marche").select("*").order("nome");
+  _tlcMarche = (data || []).map(m => m.nome);
 }
 
 async function renderTlc(){
@@ -1886,13 +1892,14 @@ async function renderTlc(){
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _tlcCache = data;
   await caricaCategorieTlc();
+  await caricaMarcheTlc();
   await caricaApparatiInUsoTlc();
   const livello = livelloPermesso("tlc");
   const soloLettura = livello !== "completo";
 
   content.innerHTML = `
     <div class="toolbar">
-      <input type="search" id="tlc-search" placeholder="Cerca per selettiva…" value="${escapeHtml(_tlcFiltro.search)}">
+      <input type="search" id="tlc-search" placeholder="Cerca per codice ANA…" value="${escapeHtml(_tlcFiltro.search)}">
       <select id="tlc-filtro-categoria">
         <option value="">Tutte le categorie</option>
         ${_tlcCategorie.map(c =>
@@ -1900,7 +1907,7 @@ async function renderTlc(){
       </select>
       <select id="tlc-filtro-marca">
         <option value="">Tutte le marche</option>
-        ${["MOTOROLA","HYTERA","UNIWA"].map(c =>
+        ${_tlcMarche.map(c =>
           `<option value="${c}" ${_tlcFiltro.marca===c?"selected":""}>${c}</option>`).join("")}
       </select>
       ${soloLettura ? "" : `<button class="btn-add" id="tlc-btn-nuovo">+ Nuovo apparato</button>`}
@@ -1922,7 +1929,7 @@ async function renderTlc(){
 function renderTlcGrid(){
   const f = _tlcFiltro;
   const filtrati = _tlcCache.filter(a => {
-    if (f.search && !a.selettiva.toLowerCase().includes(f.search.toLowerCase())) return false;
+    if (f.search && !(a.codice_ana||"").toLowerCase().includes(f.search.toLowerCase())) return false;
     if (f.categoria && a.categoria !== f.categoria) return false;
     if (f.marca && a.marca !== f.marca) return false;
     return true;
@@ -1945,7 +1952,7 @@ function renderTlcGrid(){
         ${inUscita ? `<span class="badge-stato-mezzo revisionare" style="margin:0;">Uscita</span>` : ""}
       </div>
       <div class="info">
-        <div class="targa">${escapeHtml(a.selettiva)}</div>
+        <div class="targa">${escapeHtml(a.codice_ana)}</div>
         <div class="modello">${escapeHtml(a.marca || "")} ${escapeHtml(a.modello || "")}</div>
         <div class="meta">
           ${a.assegnato_a ? `<span>${escapeHtml(a.assegnato_a)}</span>` : `<span>Non assegnato</span>`}
@@ -1984,7 +1991,11 @@ function renderModalTlc(){
   overlay.innerHTML = `
     <div class="modal-box">
       <div class="modal-head">
-        <h3>${isNuovo ? "Nuovo apparato" : escapeHtml(a.selettiva)}</h3>
+        <h3 style="display:flex;align-items:center;gap:8px;flex:1;">
+          ${isNuovo
+            ? `Nuovo apparato`
+            : `<input id="input-codice-ana-header" value="${escapeHtml(a.codice_ana||"")}" ${_modalTlcSoloLettura?"disabled":""} style="font-size:16px;font-weight:700;color:var(--blu-900);font-family:monospace;border:1px solid var(--grigio-400);border-radius:6px;padding:4px 8px;width:160px;">`}
+        </h3>
         <button class="modal-close" id="modal-close-btn">✕</button>
       </div>
       ${isNuovo ? "" : ""}
@@ -2002,22 +2013,38 @@ function renderModalTlc(){
   renderTabDatiTlc();
 }
 
+async function generaProssimoCodiceAna(){
+  const { data } = await sb
+    .from("tlc_apparati")
+    .select("codice_ana")
+    .ilike("codice_ana", "TLC%")
+    .order("codice_ana", { ascending: false });
+
+  let max = 0;
+  (data || []).forEach(r => {
+    const m = (r.codice_ana || "").match(/^TLC(\d+)$/);
+    if (m){
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+  });
+  return "TLC" + String(max + 1).padStart(4, "0");
+}
+
 function renderTabDatiTlc(){
   const a = _modalTlcCorrente || {};
   const ro = _modalTlcSoloLettura ? "disabled" : "";
+  const isNuovo = !a.id;
   const body = document.getElementById("modal-body");
   body.innerHTML = `
     <form id="form-tlc">
       ${_modalTlcSoloLettura ? `<p style="font-size:12px;color:var(--grigio-600);margin-top:0;">Visualizzazione in sola lettura. Il tuo livello di accesso TLC non permette modifiche agli apparati.</p>` : ""}
       <div class="form-grid">
-        <div class="form-field"><label>Selettiva *</label><input name="selettiva" required value="${escapeHtml(a.selettiva||"")}" ${ro}></div>
-        <div class="form-field">
-          <label>Marca</label>
-          <select name="marca" ${ro}>
-            <option value="">—</option>
-            ${["MOTOROLA","HYTERA","UNIWA"].map(m => `<option value="${m}" ${a.marca===m?"selected":""}>${m}</option>`).join("")}
-          </select>
-        </div>
+        ${isNuovo ? `
+        <div class="form-field full">
+          <label>Codice ANA</label>
+          <input name="codice_ana" placeholder="Lascia vuoto per generazione automatica (es. TLC0008)">
+        </div>` : ""}
         <div class="form-field">
           <label>Categoria</label>
           <select name="categoria" ${ro}>
@@ -2025,9 +2052,17 @@ function renderTabDatiTlc(){
             ${_tlcCategorie.map(c => `<option value="${c}" ${a.categoria===c?"selected":""}>${c}</option>`).join("")}
           </select>
         </div>
+        <div class="form-field">
+          <label>Marca</label>
+          <select name="marca" ${ro}>
+            <option value="">—</option>
+            ${_tlcMarche.map(m => `<option value="${m}" ${a.marca===m?"selected":""}>${m}</option>`).join("")}
+          </select>
+        </div>
         <div class="form-field"><label>Modello</label><input name="modello" value="${escapeHtml(a.modello||"")}" ${ro}></div>
         <div class="form-field"><label>Matricola</label><input name="matricola" value="${escapeHtml(a.matricola||"")}" ${ro}></div>
         <div class="form-field"><label>Assegnato a</label><input name="assegnato_a" value="${escapeHtml(a.assegnato_a||"")}" ${ro}></div>
+        <div class="form-field"><label>Selettiva</label><input name="selettiva" value="${escapeHtml(a.selettiva||"")}" ${ro}></div>
         <div class="form-field full"><label>Descrizione</label><input name="descrizione" value="${escapeHtml(a.descrizione||"")}" ${ro}></div>
         <div class="form-field full"><label>Note</label><textarea name="note" ${ro}>${escapeHtml(a.note||"")}</textarea></div>
       </div>
@@ -2046,8 +2081,20 @@ function renderTabDatiTlc(){
   document.getElementById("form-tlc").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+
+    let codiceAna = a.codice_ana;
+    if (isNuovo){
+      codiceAna = (fd.get("codice_ana") || "").trim().toUpperCase();
+      if (!codiceAna){
+        codiceAna = await generaProssimoCodiceAna();
+      }
+    } else if (document.getElementById("input-codice-ana-header")){
+      codiceAna = document.getElementById("input-codice-ana-header").value.trim().toUpperCase();
+    }
+
     const payload = {
-      selettiva: fd.get("selettiva").trim().toUpperCase(),
+      codice_ana: codiceAna,
+      selettiva: fd.get("selettiva") ? fd.get("selettiva").trim().toUpperCase() : null,
       marca: fd.get("marca") || null,
       categoria: fd.get("categoria") || null,
       modello: fd.get("modello") || null,
@@ -2104,20 +2151,48 @@ function creaCanvasFirma(containerEl){
     <div class="firma-actions"><button type="button" class="firma-clear">Cancella firma</button></div>`;
   const canvas = containerEl.querySelector("canvas");
   const ctx = canvas.getContext("2d");
-  const ratio = window.devicePixelRatio || 1;
+  let hasDrawn = false;
 
   function resize(){
     const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return; // contenitore non ancora visibile
+    const ratio = window.devicePixelRatio || 1;
+
+    // Salva il disegno corrente (se c'è) per ridisegnarlo dopo il resize
+    let immagine = null;
+    if (hasDrawn && canvas.width > 0 && canvas.height > 0){
+      immagine = canvas.toDataURL("image/png");
+    }
+
     canvas.width = rect.width * ratio;
     canvas.height = rect.height * ratio;
     ctx.scale(ratio, ratio);
     ctx.lineWidth = 2;
     ctx.lineCap = "round";
     ctx.strokeStyle = "#0b2545";
+
+    if (immagine){
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, 0, 0, rect.width, rect.height); };
+      img.src = immagine;
+    }
   }
   resize();
 
-  let drawing = false, hasDrawn = false;
+  // Ridisegna se cambia dimensione/orientamento del contenitore (es. rotazione telefono)
+  let resizeTimeout = null;
+  const onResize = () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(resize, 150);
+  };
+  window.addEventListener("resize", onResize);
+  window.addEventListener("orientationchange", onResize);
+  if (window.ResizeObserver){
+    const ro = new ResizeObserver(onResize);
+    ro.observe(containerEl);
+  }
+
+  let drawing = false;
   function pos(e){
     const rect = canvas.getBoundingClientRect();
     const p = e.touches ? e.touches[0] : e;
@@ -4090,6 +4165,10 @@ async function renderImpostazioni(){
       <div class="section-title" style="margin-top:28px;">Categorie apparati TLC</div>
       <div id="tlc-categorie-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-categoria-tlc">+ Nuova categoria</button></div>
+
+      <div class="section-title" style="margin-top:28px;">Marche apparati TLC</div>
+      <div id="tlc-marche-list"></div>
+      <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-marca-tlc">+ Nuova marca</button></div>
     `;
   }
 
@@ -4103,6 +4182,8 @@ async function renderImpostazioni(){
   if (puoGestireTlc){
     await renderListaCategorieTlc();
     document.getElementById("btn-nuova-categoria-tlc").addEventListener("click", aggiungiCategoriaTlc);
+    await renderListaMarcheTlc();
+    document.getElementById("btn-nuova-marca-tlc").addEventListener("click", aggiungiMarcaTlc);
   }
 }
 
@@ -4122,10 +4203,32 @@ async function renderFirmaPersonaleBox(){
   box.innerHTML = `
     <div class="stat-card" style="max-width:340px;">
       ${urlFirma ? `<img src="${urlFirma}" alt="La tua firma" style="max-width:100%;height:80px;object-fit:contain;display:block;margin-bottom:10px;">` : `<p style="font-size:12.5px;color:var(--grigio-600);">Nessuna firma salvata.</p>`}
-      <button class="btn-add-mini" id="btn-disegna-firma-personale">${urlFirma ? "Rifai la firma" : "Crea la mia firma"}</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-add-mini" id="btn-disegna-firma-personale">${urlFirma ? "Rifai la firma" : "Crea la mia firma"}</button>
+        <label class="btn-add-mini" style="cursor:pointer;">
+          Carica immagine PNG
+          <input type="file" id="input-carica-firma-png" accept="image/png" style="display:none;">
+        </label>
+      </div>
     </div>
     <div id="firma-personale-editor" style="margin-top:12px;"></div>
   `;
+
+  document.getElementById("input-carica-firma-png").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    ev.target.value = "";
+
+    const nuovoPath = `${state.user.id}.png`;
+    const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).upload(nuovoPath, file, { upsert:true, contentType:"image/png" });
+    if (upErr){ alert("Errore upload: " + upErr.message); return; }
+
+    const { error } = await sb.from("app_users").update({ firma_personale_path: nuovoPath }).eq("id", state.user.id);
+    if (error){ alert("Errore: " + error.message); return; }
+
+    state.profile.firma_personale_path = nuovoPath;
+    renderFirmaPersonaleBox();
+  });
 
   document.getElementById("btn-disegna-firma-personale").addEventListener("click", () => {
     const editorBox = document.getElementById("firma-personale-editor");
@@ -4196,6 +4299,43 @@ async function aggiungiCategoriaTlc(){
   const { error } = await sb.from("tlc_categorie").insert({ nome: nome.trim().toUpperCase() });
   if (error){ alert("Errore: " + error.message); return; }
   renderListaCategorieTlc();
+}
+
+async function renderListaMarcheTlc(){
+  const { data, error } = await sb.from("tlc_marche").select("*").order("nome");
+  const wrap = document.getElementById("tlc-marche-list");
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+
+  if (!data || data.length === 0){
+    wrap.innerHTML = `<div class="storico-empty">Nessuna marca definita.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Nome marca</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(c => `
+          <tr>
+            <td>${escapeHtml(c.nome)}</td>
+            <td><button class="row-del" data-id="${c.id}">Elimina</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questa marca? Gli apparati che la usano non verranno modificati.")) return;
+    await sb.from("tlc_marche").delete().eq("id", parseInt(b.dataset.id));
+    renderListaMarcheTlc();
+  }));
+}
+
+async function aggiungiMarcaTlc(){
+  const nome = prompt("Nome nuova marca (es. MOTOROLA, HYTERA…):");
+  if (!nome || !nome.trim()) return;
+  const { error } = await sb.from("tlc_marche").insert({ nome: nome.trim().toUpperCase() });
+  if (error){ alert("Errore: " + error.message); return; }
+  renderListaMarcheTlc();
 }
 
 async function renderGestioneUtenti(){
