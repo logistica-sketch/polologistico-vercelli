@@ -2490,13 +2490,18 @@ async function apriModalNuovaMovimentazioneTlc(){
             <span style="color:var(--grigio-600);">${aperto ? "▴" : "▾"}</span>
           </button>
           <div class="mov-gruppo-body" style="display:${aperto?"block":"none"};padding-bottom:6px;">
-            ${apparatiGruppo.map(a => `
-              <label style="display:flex;align-items:center;gap:6px;padding:7px 8px;font-size:12.5px;border-radius:6px;${selezionati.has(a.id)?"background:var(--grigio-100);":""}max-width:100%;box-sizing:border-box;">
-                <input type="checkbox" data-apparato-id="${a.id}" ${selezionati.has(a.id)?"checked":""} style="flex:0 0 auto;">
-                <span style="font-family:monospace;font-weight:700;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:35%;">${escapeHtml(a.codice_ana)}</span>
-                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--grigio-800);flex:1 1 auto;min-width:0;">${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")}${a.selettiva ? ` · ${escapeHtml(a.selettiva)}` : ""}${a.sottocategoria_radio ? ` · ${a.sottocategoria_radio}` : ""}</span>
-              </label>
-            `).join("")}
+            <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+              <colgroup><col style="width:30px;"><col style="width:85px;"><col></colgroup>
+              <tbody>
+                ${apparatiGruppo.map(a => `
+                  <tr class="riga-apparato-mov" data-apparato-id="${a.id}" style="cursor:pointer;${selezionati.has(a.id)?"background:var(--grigio-100);":""}">
+                    <td style="padding:6px 4px;vertical-align:middle;"><input type="checkbox" data-apparato-id="${a.id}" ${selezionati.has(a.id)?"checked":""}></td>
+                    <td style="padding:6px 4px;vertical-align:middle;font-family:monospace;font-weight:700;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.codice_ana)}</td>
+                    <td style="padding:6px 4px;vertical-align:middle;font-size:12.5px;color:var(--grigio-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")}${a.selettiva ? ` · ${escapeHtml(a.selettiva)}` : ""}${a.sottocategoria_radio ? ` · ${a.sottocategoria_radio}` : ""}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
           </div>
         </div>
       `;
@@ -2510,12 +2515,21 @@ async function apriModalNuovaMovimentazioneTlc(){
       });
     });
 
-    wrap.querySelectorAll("[data-apparato-id]").forEach(chk => {
+    wrap.querySelectorAll('input[type="checkbox"][data-apparato-id]').forEach(chk => {
       chk.addEventListener("change", (e) => {
         const id = parseInt(e.target.dataset.apparatoId);
         if (e.target.checked) selezionati.add(id); else selezionati.delete(id);
         aggiornaContatoreApparati();
         renderListaApparatiMov(); // aggiorna badge contatore per gruppo e sfondo riga selezionata
+      });
+    });
+
+    wrap.querySelectorAll('tr.riga-apparato-mov').forEach(tr => {
+      tr.addEventListener("click", (e) => {
+        if (e.target.tagName === "INPUT") return; // il checkbox gestisce già il suo click
+        const chk = tr.querySelector('input[type="checkbox"]');
+        chk.checked = !chk.checked;
+        chk.dispatchEvent(new Event("change"));
       });
     });
   }
