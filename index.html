@@ -641,6 +641,7 @@ const MENU = [
   { route: "tlc",          label: "TLC / Radio",   icon: "📻", permesso: "tlc" },
   { route: "formazione",   label: "Formazione",    icon: "🎓", permesso: "formazione" },
   { route: "firma",        label: "Firma Documenti", icon: "✍️", permesso: "firma_documenti" },
+  { route: "libromatricola", label: "Libro Matricola", icon: "📘", permesso: "libro_matricola" },
   { route: "utenti",       label: "Gestione Utenti", icon: "👥", permesso: "_solo_it_admin" },
   { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "_almeno_una_sezione" },
 ];
@@ -898,6 +899,7 @@ const PAGE_TITLES = {
   tlc: ["TLC / Radio", "Apparati e movimentazioni"],
   formazione: ["Formazione", "Corsi e volontari"],
   firma: ["Firma Documenti", "Carica PDF, apponi la firma e scarica"],
+  libromatricola: ["Libro Matricola", "Mezzi assicurati e polizze"],
   utenti: ["Gestione Utenti", "Utenti abilitati e relativi permessi"],
   impostazioni: ["Impostazioni", "Configurazioni per modulo"]
 };
@@ -926,6 +928,7 @@ function router(){
   else if (route === "tlc") renderTlc();
   else if (route === "formazione") renderFormazione();
   else if (route === "firma") renderFirmaDocumenti();
+  else if (route === "libromatricola") renderLibroMatricola();
   else if (route === "utenti") renderGestioneUtenti();
   else if (route === "impostazioni") renderImpostazioni();
 }
@@ -2908,6 +2911,7 @@ const PAGINE_PERMESSO = [
   { key:"tlc", label:"TLC / Radio", livelli:true },
   { key:"formazione", label:"Formazione" },
   { key:"firma_documenti", label:"Firma Documenti" },
+  { key:"libro_matricola", label:"Libro Matricola" },
   { key:"impostazioni", label:"Impostazioni" }
 ];
 
@@ -4285,6 +4289,494 @@ async function generaPdfFirmato(){
   }
 
   btn.disabled = false; btn.textContent = "⬇️ Scarica PDF firmato";
+}
+
+
+/* ============================================================
+   MODULO LIBRO MATRICOLA
+   ============================================================ */
+const STORAGE_BUCKET_DOC_LIBRO_MATRICOLA = "libro-matricola-documenti";
+let _libroMatricolaCache = [];
+let _libroMatricolaFiltro = { search:"", sezione:"", tipo:"" };
+
+async function renderLibroMatricola(){
+  const content = document.getElementById("page-content");
+  const { data, error } = await sb.from("libro_matricola").select("*").order("sezione").order("targa_telaio");
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  _libroMatricolaCache = data;
+
+  const sezioni = [...new Set(data.map(r => r.sezione).filter(Boolean))].sort();
+  const tipi = [...new Set(data.map(r => r.veicolo_tipo).filter(Boolean))].sort();
+
+  content.innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="lm-search" placeholder="Cerca per targa, descrizione…" value="${escapeHtml(_libroMatricolaFiltro.search)}">
+      <select id="lm-filtro-sezione">
+        <option value="">Tutte le sezioni</option>
+        ${sezioni.map(s => `<option value="${s}" ${_libroMatricolaFiltro.sezione===s?"selected":""}>${s}</option>`).join("")}
+      </select>
+      <select id="lm-filtro-tipo">
+        <option value="">Tutti i tipi</option>
+        ${tipi.map(t => `<option value="${t}" ${_libroMatricolaFiltro.tipo===t?"selected":""}>${t}</option>`).join("")}
+      </select>
+      <button class="btn-add" id="lm-btn-nuovo">+ Nuovo mezzo</button>
+    </div>
+    <div class="toolbar" style="justify-content:flex-end;margin-top:-6px;">
+      <button class="btn-add" id="lm-btn-export-excel-tutto" style="background:var(--verde);">📊 Esporta tutto (Excel)</button>
+      <button class="btn-add" id="lm-btn-export-pdf-tutto" style="background:var(--blu-700);">📄 Esporta tutto (PDF)</button>
+      <button class="btn-add" id="lm-btn-export-sezione" style="background:var(--grigio-800);">📁 Esporta per sezione</button>
+    </div>
+    <div class="results-count" id="lm-results-count"></div>
+    <div id="lm-table-wrap"></div>
+  `;
+
+  document.getElementById("lm-search").addEventListener("input", e => { _libroMatricolaFiltro.search = e.target.value; renderLibroMatricolaTable(); });
+  document.getElementById("lm-filtro-sezione").addEventListener("change", e => { _libroMatricolaFiltro.sezione = e.target.value; renderLibroMatricolaTable(); });
+  document.getElementById("lm-filtro-tipo").addEventListener("change", e => { _libroMatricolaFiltro.tipo = e.target.value; renderLibroMatricolaTable(); });
+  document.getElementById("lm-btn-nuovo").addEventListener("click", () => apriModalMezzoLibroMatricola(null));
+  document.getElementById("lm-btn-export-excel-tutto").addEventListener("click", () => esportaLibroMatricolaExcel(_libroMatricolaCache.filter(r => r.stato==="attivo"), "Libro_Matricola_completo"));
+  document.getElementById("lm-btn-export-pdf-tutto").addEventListener("click", () => esportaLibroMatricolaPdf(_libroMatricolaCache.filter(r => r.stato==="attivo"), "Libro Matricola completo"));
+  document.getElementById("lm-btn-export-sezione").addEventListener("click", () => apriModalExportPerSezione(sezioni));
+
+  renderLibroMatricolaTable();
+}
+
+function renderLibroMatricolaTable(){
+  const f = _libroMatricolaFiltro;
+  const filtrati = _libroMatricolaCache.filter(r => {
+    if (f.search){
+      const q = f.search.toLowerCase();
+      const campi = [r.targa_telaio, r.descrizione_bene, r.sezione];
+      if (!campi.some(c => (c||"").toLowerCase().includes(q))) return false;
+    }
+    if (f.sezione && r.sezione !== f.sezione) return false;
+    if (f.tipo && r.veicolo_tipo !== f.tipo) return false;
+    return true;
+  });
+
+  const attivi = filtrati.filter(r => r.stato !== "dismesso");
+  const dismessi = filtrati.filter(r => r.stato === "dismesso");
+
+  document.getElementById("lm-results-count").textContent = `${attivi.length} di ${_libroMatricolaCache.filter(r=>r.stato!=="dismesso").length} mezzi attivi`;
+
+  const wrap = document.getElementById("lm-table-wrap");
+  wrap.innerHTML = renderTabellaLibroMatricola(attivi, "lm-tabella-attivi");
+
+  // Sezione dismessi collassabile
+  let sezioneDismessi = document.getElementById("lm-sezione-dismessi");
+  if (!sezioneDismessi){
+    sezioneDismessi = document.createElement("div");
+    sezioneDismessi.id = "lm-sezione-dismessi";
+    sezioneDismessi.className = "collapse-block";
+    sezioneDismessi.style.marginTop = "20px";
+    wrap.appendChild(sezioneDismessi);
+  } else {
+    wrap.appendChild(sezioneDismessi);
+  }
+  if (dismessi.length === 0){
+    sezioneDismessi.style.display = "none";
+  } else {
+    sezioneDismessi.style.display = "block";
+    sezioneDismessi.innerHTML = `
+      <button class="collapse-head" id="lm-toggle-dismessi">
+        <span>🗑️ Mezzi dismessi</span>
+        <span class="collapse-badge" style="display:inline-block;background:var(--grigio-600);">${dismessi.length}</span>
+        <span class="collapse-arrow">▾</span>
+      </button>
+      <div class="collapse-body" id="lm-body-dismessi">${renderTabellaLibroMatricola(dismessi, "lm-tabella-dismessi")}</div>
+    `;
+    const toggle = document.getElementById("lm-toggle-dismessi");
+    const body = document.getElementById("lm-body-dismessi");
+    toggle.addEventListener("click", () => {
+      const apri = body.style.display !== "block";
+      body.style.display = apri ? "block" : "none";
+      toggle.querySelector(".collapse-arrow").textContent = apri ? "▴" : "▾";
+    });
+  }
+
+  document.querySelectorAll(".lm-riga[data-id]").forEach(tr => {
+    tr.addEventListener("click", () => apriModalMezzoLibroMatricola(parseInt(tr.dataset.id)));
+  });
+}
+
+function renderTabellaLibroMatricola(righe, idTabella){
+  if (righe.length === 0){
+    return `<div class="empty-state"><div class="ic">📘</div>Nessun mezzo corrisponde ai filtri.</div>`;
+  }
+  return `
+    <div style="overflow-x:auto;">
+    <table class="storico-table" id="${idTabella}">
+      <thead><tr>
+        <th>Targa/Telaio</th><th>Descrizione</th><th>Sezione</th><th>Tipo</th>
+        <th>Premio RC</th><th>Premio TL</th><th>Data incl.</th>
+      </tr></thead>
+      <tbody>
+        ${righe.map(r => `
+          <tr class="lm-riga" data-id="${r.id}" style="cursor:pointer;">
+            <td style="font-family:monospace;font-weight:700;">${escapeHtml(r.targa_telaio)}</td>
+            <td>${escapeHtml(r.descrizione_bene||"—")}</td>
+            <td>${escapeHtml(r.sezione||"—")}</td>
+            <td>${escapeHtml(r.veicolo_tipo||"—")}</td>
+            <td>${r.premio_annuo_rc!=null ? "€ "+Number(r.premio_annuo_rc).toFixed(2) : "—"}</td>
+            <td>${r.premio_annuo_tutela_legale!=null ? "€ "+Number(r.premio_annuo_tutela_legale).toFixed(2) : "—"}</td>
+            <td>${r.data_inclusione ? formatDataIt(r.data_inclusione) : "—"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
+/* ---------- MODAL MEZZO LIBRO MATRICOLA ---------- */
+let _modalLibroMatricolaCorrente = null;
+let _modalLibroMatricolaTab = "dati";
+
+function apriModalMezzoLibroMatricola(id){
+  _modalLibroMatricolaCorrente = id ? _libroMatricolaCache.find(r => r.id === id) : null;
+  _modalLibroMatricolaTab = "dati";
+  renderModalLibroMatricola();
+}
+
+function renderModalLibroMatricola(){
+  chiudiModal();
+  const r = _modalLibroMatricolaCorrente;
+  const isNuovo = !r;
+
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${isNuovo ? "Nuovo mezzo" : escapeHtml(r.targa_telaio)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      ${isNuovo ? "" : `
+        <div class="modal-tabs">
+          <div class="modal-tab ${_modalLibroMatricolaTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
+          <div class="modal-tab ${_modalLibroMatricolaTab==="documenti"?"active":""}" data-tab="documenti">Documenti</div>
+        </div>
+      `}
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+  overlay.querySelectorAll(".modal-tab").forEach(tab => {
+    tab.addEventListener("click", () => { _modalLibroMatricolaTab = tab.dataset.tab; renderModalLibroMatricola(); });
+  });
+
+  if (isNuovo || _modalLibroMatricolaTab === "dati") renderTabDatiLibroMatricola();
+  else if (_modalLibroMatricolaTab === "documenti") renderTabDocumentiLibroMatricola();
+}
+
+function renderTabDatiLibroMatricola(){
+  const r = _modalLibroMatricolaCorrente || {};
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <form id="form-libro-matricola">
+      <div class="form-grid">
+        <div class="form-field"><label>Targa/Telaio *</label><input name="targa_telaio" required value="${escapeHtml(r.targa_telaio||"")}"></div>
+        <div class="form-field"><label>N. Applicazione</label><input name="numero_applicazione" value="${escapeHtml(r.numero_applicazione||"")}"></div>
+        <div class="form-field full"><label>Descrizione bene</label><input name="descrizione_bene" value="${escapeHtml(r.descrizione_bene||"")}"></div>
+        <div class="form-field"><label>Sezione</label><input name="sezione" value="${escapeHtml(r.sezione||"")}"></div>
+        <div class="form-field"><label>Provincia</label><input name="provincia" value="${escapeHtml(r.provincia||"")}"></div>
+        <div class="form-field"><label>Costo a carico di</label><input name="costo_a_carico_di" value="${escapeHtml(r.costo_a_carico_di||"")}"></div>
+        <div class="form-field"><label>Tipo veicolo</label><input name="veicolo_tipo" value="${escapeHtml(r.veicolo_tipo||"")}"></div>
+        <div class="form-field"><label>Data inclusione</label><input type="date" name="data_inclusione" value="${r.data_inclusione||""}"></div>
+        <div class="form-field"><label>Data esclusione</label><input type="date" name="data_esclusione" value="${r.data_esclusione||""}"></div>
+        <div class="form-field"><label>Premio annuo RC (€)</label><input type="number" step="0.01" name="premio_annuo_rc" value="${r.premio_annuo_rc??""}"></div>
+        <div class="form-field"><label>Premio annuo Tutela Legale (€)</label><input type="number" step="0.01" name="premio_annuo_tutela_legale" value="${r.premio_annuo_tutela_legale??""}"></div>
+        <div class="form-field"><label>Conguaglio RC</label><input name="conguaglio_rc" value="${escapeHtml(r.conguaglio_rc||"")}"></div>
+        <div class="form-field"><label>Conguaglio Tutela Legale</label><input name="conguaglio_tutela_legale" value="${escapeHtml(r.conguaglio_tutela_legale||"")}"></div>
+        <div class="form-field">
+          <label>Stato</label>
+          <select name="stato">
+            <option value="attivo" ${r.stato==="attivo"||!r.stato?"selected":""}>Attivo</option>
+            <option value="dismesso" ${r.stato==="dismesso"?"selected":""}>Dismesso</option>
+          </select>
+        </div>
+        <div class="form-field full"><label>Note</label><textarea name="note">${escapeHtml(r.note||"")}</textarea></div>
+      </div>
+      <div class="form-actions">
+        ${r.id ? `<button type="button" class="btn-danger" id="btn-elimina-lm">Elimina mezzo</button>` : ""}
+        <button type="button" class="btn-cancel" id="btn-cancel-lm">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("btn-cancel-lm").addEventListener("click", chiudiModal);
+  if (r.id) document.getElementById("btn-elimina-lm").addEventListener("click", () => eliminaLibroMatricola(r.id));
+
+  document.getElementById("form-libro-matricola").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      targa_telaio: fd.get("targa_telaio").trim().toUpperCase(),
+      numero_applicazione: fd.get("numero_applicazione") || null,
+      descrizione_bene: fd.get("descrizione_bene") || null,
+      sezione: fd.get("sezione") || null,
+      provincia: fd.get("provincia") || null,
+      costo_a_carico_di: fd.get("costo_a_carico_di") || null,
+      veicolo_tipo: fd.get("veicolo_tipo") || null,
+      data_inclusione: fd.get("data_inclusione") || null,
+      data_esclusione: fd.get("data_esclusione") || null,
+      premio_annuo_rc: fd.get("premio_annuo_rc") ? parseFloat(fd.get("premio_annuo_rc")) : null,
+      premio_annuo_tutela_legale: fd.get("premio_annuo_tutela_legale") ? parseFloat(fd.get("premio_annuo_tutela_legale")) : null,
+      conguaglio_rc: fd.get("conguaglio_rc") || null,
+      conguaglio_tutela_legale: fd.get("conguaglio_tutela_legale") || null,
+      stato: fd.get("stato"),
+      note: fd.get("note") || null
+    };
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let result;
+    if (r.id){
+      result = await sb.from("libro_matricola").update(payload).eq("id", r.id).select().single();
+    } else {
+      result = await sb.from("libro_matricola").insert(payload).select().single();
+    }
+    if (result.error){ alert("Errore: " + result.error.message); btn.disabled=false; btn.textContent="Salva"; return; }
+
+    chiudiModal();
+    renderLibroMatricola();
+  });
+}
+
+async function eliminaLibroMatricola(id){
+  if (!confirm("Eliminare definitivamente questo mezzo dal libro matricola?")) return;
+  const { error } = await sb.from("libro_matricola").delete().eq("id", id);
+  if (error){ alert("Errore: " + error.message); return; }
+  chiudiModal();
+  renderLibroMatricola();
+}
+
+function renderTabDocumentiLibroMatricola(){
+  const r = _modalLibroMatricolaCorrente;
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `
+    <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-documento-lm">+ Carica documento</button></div>
+    <div id="documenti-lm-list"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("btn-nuovo-documento-lm").addEventListener("click", () => mostraFormDocumentoLm());
+  caricaDocumentiLm();
+}
+
+async function caricaDocumentiLm(){
+  const r = _modalLibroMatricolaCorrente;
+  const { data, error } = await sb.from("documenti_libro_matricola").select("*").eq("libro_matricola_id", r.id).order("created_at", { ascending:false });
+  const wrap = document.getElementById("documenti-lm-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun documento caricato.</div>`; return; }
+
+  const tipiLabel = { polizza:"Polizza", cai:"CAI", altro:"Altro" };
+
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Tipo</th><th>Anno</th><th>File</th><th></th><th></th></tr></thead>
+      <tbody>
+        ${data.map(d => {
+          const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).getPublicUrl(d.storage_path);
+          return `
+            <tr>
+              <td>${tipiLabel[d.tipo]||d.tipo}</td>
+              <td>${d.anno||"—"}</td>
+              <td>${escapeHtml(d.nome_file)}</td>
+              <td><a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a></td>
+              <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questo documento?")) return;
+    await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).remove([b.dataset.path]);
+    await sb.from("documenti_libro_matricola").delete().eq("id", parseInt(b.dataset.id));
+    caricaDocumentiLm();
+  }));
+}
+
+function mostraFormDocumentoLm(){
+  const r = _modalLibroMatricolaCorrente;
+  const wrap = document.getElementById("documenti-lm-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.innerHTML = `
+    <form id="form-documento-lm">
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Tipo</label>
+          <select name="tipo">
+            <option value="polizza">Polizza</option>
+            <option value="cai">CAI</option>
+            <option value="altro">Altro</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Anno</label><input type="number" name="anno" value="${new Date().getFullYear()}"></div>
+        <div class="form-field full"><label>File (PDF)</label><input type="file" name="file" accept=".pdf" required></div>
+        <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-documento-lm">Annulla</button>
+        <button type="submit" class="btn-save">Carica</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-documento-lm").addEventListener("click", () => form.remove());
+  document.getElementById("form-documento-lm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const file = fd.get("file");
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Caricamento…";
+
+    const path = `${r.targa_telaio}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+    const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).upload(path, file);
+    if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Carica"; return; }
+
+    const { error } = await sb.from("documenti_libro_matricola").insert({
+      libro_matricola_id: r.id,
+      tipo: fd.get("tipo"),
+      anno: fd.get("anno") ? parseInt(fd.get("anno")) : null,
+      nome_file: file.name,
+      storage_path: path,
+      note: fd.get("note") || null,
+      created_by: state.user.id
+    });
+    if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Carica"; return; }
+
+    form.remove();
+    caricaDocumentiLm();
+  });
+}
+
+/* ---------- EXPORT EXCEL ---------- */
+function esportaLibroMatricolaExcel(righe, nomeFile){
+  const dati = righe.map(r => ({
+    "N. Appl.": r.numero_applicazione || "",
+    "Targa/Telaio": r.targa_telaio,
+    "Descrizione Bene": r.descrizione_bene || "",
+    "Data Incl.": r.data_inclusione ? formatDataIt(r.data_inclusione) : "",
+    "Data Escl.": r.data_esclusione ? formatDataIt(r.data_esclusione) : "",
+    "Provincia": r.provincia || "",
+    "Costo a carico di": r.costo_a_carico_di || "",
+    "Sezione": r.sezione || "",
+    "Premio annuo RC": r.premio_annuo_rc ?? "",
+    "Premio annuo Tutela Legale": r.premio_annuo_tutela_legale ?? "",
+    "Conguaglio RC": r.conguaglio_rc || "",
+    "Conguaglio Tutela Legale": r.conguaglio_tutela_legale || "",
+    "Veicolo tipo": r.veicolo_tipo || ""
+  }));
+  const ws = XLSX.utils.json_to_sheet(dati);
+  ws["!cols"] = Object.keys(dati[0]||{}).map(() => ({ wch: 18 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Libro Matricola");
+  XLSX.writeFile(wb, `${nomeFile}.xlsx`);
+}
+
+/* ---------- EXPORT PDF ---------- */
+function esportaLibroMatricolaPdf(righe, titolo){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape" });
+
+  doc.setFontSize(13);
+  doc.text(titolo, 14, 14);
+  doc.setFontSize(8.5);
+  doc.text(`Generato il ${formatDataIt(new Date().toISOString().slice(0,10))} — ${righe.length} mezzi`, 14, 20);
+
+  let y = 30;
+  const colonne = [
+    { label:"Targa/Telaio", w:28 },
+    { label:"Descrizione", w:55 },
+    { label:"Sezione", w:30 },
+    { label:"Tipo veicolo", w:48 },
+    { label:"Premio RC", w:22 },
+    { label:"Premio TL", w:22 },
+    { label:"Data incl.", w:24 }
+  ];
+  function intestazione(yPos){
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(8);
+    let x = 14;
+    colonne.forEach(c => { doc.text(c.label, x, yPos); x += c.w; });
+    doc.setFont(undefined, "normal");
+    doc.line(14, yPos+2, 280, yPos+2);
+  }
+  intestazione(y);
+  y += 7;
+
+  righe.forEach(r => {
+    if (y > 195){ doc.addPage(); y = 18; intestazione(y); y += 7; }
+    let x = 14;
+    const valori = [
+      r.targa_telaio,
+      (r.descrizione_bene||"—").slice(0,32),
+      (r.sezione||"—").slice(0,18),
+      (r.veicolo_tipo||"—").slice(0,28),
+      r.premio_annuo_rc!=null ? Number(r.premio_annuo_rc).toFixed(2) : "—",
+      r.premio_annuo_tutela_legale!=null ? Number(r.premio_annuo_tutela_legale).toFixed(2) : "—",
+      r.data_inclusione ? formatDataIt(r.data_inclusione) : "—"
+    ];
+    valori.forEach((v, i) => { doc.text(String(v), x, y); x += colonne[i].w; });
+    y += 6;
+  });
+
+  doc.save(`${titolo.replace(/\s+/g,"_")}.pdf`);
+}
+
+/* ---------- EXPORT PER SEZIONE ---------- */
+function apriModalExportPerSezione(sezioni){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Esporta per sezione</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12.5px;color:var(--grigio-600);margin-top:0;">Seleziona la sezione: il file (PDF ed Excel) verrà generato e scaricato.</p>
+        <div class="form-field full">
+          <select id="select-sezione-export">
+            <option value="">— Seleziona sezione —</option>
+            ${sezioni.map(s => `<option value="${s}">${s}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" id="btn-cancel-export-sezione">Chiudi</button>
+          <button type="button" class="btn-save" id="btn-genera-excel-sezione">📊 Scarica Excel</button>
+          <button type="button" class="btn-save" id="btn-genera-pdf-sezione">📄 Scarica PDF</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  document.getElementById("btn-cancel-export-sezione").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+
+  document.getElementById("btn-genera-excel-sezione").addEventListener("click", () => {
+    const sez = document.getElementById("select-sezione-export").value;
+    if (!sez){ alert("Seleziona una sezione."); return; }
+    const righe = _libroMatricolaCache.filter(r => r.sezione === sez && r.stato !== "dismesso");
+    esportaLibroMatricolaExcel(righe, `Libro_Matricola_${sez.replace(/\s+/g,"_")}`);
+  });
+  document.getElementById("btn-genera-pdf-sezione").addEventListener("click", () => {
+    const sez = document.getElementById("select-sezione-export").value;
+    if (!sez){ alert("Seleziona una sezione."); return; }
+    const righe = _libroMatricolaCache.filter(r => r.sezione === sez && r.stato !== "dismesso");
+    esportaLibroMatricolaPdf(righe, `Libro Matricola — ${sez}`);
+  });
 }
 
 
