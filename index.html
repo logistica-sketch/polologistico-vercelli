@@ -4577,7 +4577,7 @@ async function caricaDocumentiLm(){
   if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
   if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun documento caricato.</div>`; return; }
 
-  const tipiLabel = { polizza:"Polizza", cai:"CAI", altro:"Altro" };
+  const tipiLabel = { polizza:"Polizza", cai:"CAI", libretto:"Libretto", altro:"Altro" };
 
   wrap.innerHTML = `
     <table class="storico-table">
@@ -4619,6 +4619,7 @@ function mostraFormDocumentoLm(){
           <select name="tipo">
             <option value="polizza">Polizza</option>
             <option value="cai">CAI</option>
+            <option value="libretto">Libretto</option>
             <option value="altro">Altro</option>
           </select>
         </div>
