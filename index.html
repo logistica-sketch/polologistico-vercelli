@@ -4293,7 +4293,14 @@ async function renderImpostazioni(){
   const puoGestireTlc = livelloPermesso("tlc") === "completo";
 
   let html = `
-    <div class="section-title">La mia firma personale</div>
+    <div class="section-title">Account</div>
+    <div class="stat-card" style="max-width:340px;margin-bottom:10px;">
+      <p style="font-size:12.5px;color:var(--grigio-600);margin:0 0 10px;">Cambia la password del tuo account.</p>
+      <button class="btn-add-mini" id="btn-apri-cambio-password">Cambia password</button>
+      <div id="cambio-password-form" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="section-title" style="margin-top:28px;">La mia firma personale</div>
     <p style="font-size:12.5px;color:var(--grigio-600);margin-top:-6px;">
       Questa firma è esclusiva del tuo account: verrà usata automaticamente quando consegni o riprendi in carico materiale TLC come utente app.
     </p>
@@ -4322,6 +4329,8 @@ async function renderImpostazioni(){
 
   content.innerHTML = html;
 
+  document.getElementById("btn-apri-cambio-password").addEventListener("click", () => apriFormCambioPassword());
+
   await renderFirmaPersonaleBox();
 
   if (puoGestireTlc){
@@ -4335,6 +4344,56 @@ async function renderImpostazioni(){
 }
 
 const STORAGE_BUCKET_FIRME_PERSONALI = "firme-personali";
+
+function apriFormCambioPassword(){
+  const box = document.getElementById("cambio-password-form");
+  box.innerHTML = `
+    <form id="form-cambia-password">
+      <div class="form-field" style="margin-bottom:8px;">
+        <label>Nuova password</label>
+        <input type="password" name="nuova_password" required minlength="6">
+      </div>
+      <div class="form-field" style="margin-bottom:8px;">
+        <label>Conferma nuova password</label>
+        <input type="password" name="conferma_password" required minlength="6">
+      </div>
+      <div id="errore-cambio-password" style="color:var(--rosso);font-size:12px;margin-bottom:8px;display:none;"></div>
+      <div class="form-actions" style="border-top:none;padding-top:0;">
+        <button type="button" class="btn-cancel" id="btn-annulla-cambio-password">Annulla</button>
+        <button type="submit" class="btn-save">Salva password</button>
+      </div>
+    </form>
+  `;
+  document.getElementById("btn-annulla-cambio-password").addEventListener("click", () => { box.innerHTML = ""; });
+  document.getElementById("form-cambia-password").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const nuova = fd.get("nuova_password");
+    const conferma = fd.get("conferma_password");
+    const errBox = document.getElementById("errore-cambio-password");
+    errBox.style.display = "none";
+
+    if (nuova !== conferma){
+      errBox.textContent = "Le due password non coincidono.";
+      errBox.style.display = "block";
+      return;
+    }
+
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    const { error } = await sb.auth.updateUser({ password: nuova });
+
+    if (error){
+      errBox.textContent = "Errore: " + error.message;
+      errBox.style.display = "block";
+      btn.disabled = false; btn.textContent = "Salva password";
+      return;
+    }
+
+    box.innerHTML = `<p style="font-size:12.5px;color:var(--verde);">Password aggiornata con successo.</p>`;
+  });
+}
 
 async function renderFirmaPersonaleBox(){
   const box = document.getElementById("firma-personale-box");
@@ -4646,6 +4705,7 @@ function renderListaUtenti(utenti){
           </div>
         </div>
         <div class="form-actions">
+          <button class="btn-cancel" data-reset-password="${u.id}" data-email="${escapeHtml(u.email)}">Resetta password</button>
           <button class="btn-save" data-save="${u.id}">Salva</button>
         </div>
       </div>
@@ -4663,6 +4723,16 @@ function renderListaUtenti(utenti){
   wrap.querySelectorAll('[data-save]').forEach(btn => {
     btn.addEventListener("click", () => salvaUtente(btn.dataset.save, utenti));
   });
+  wrap.querySelectorAll('[data-reset-password]').forEach(btn => {
+    btn.addEventListener("click", () => resettaPasswordUtente(btn.dataset.email));
+  });
+}
+
+async function resettaPasswordUtente(email){
+  if (!confirm(`Inviare a ${email} un'email per reimpostare la password?`)) return;
+  const { error } = await sb.auth.resetPasswordForEmail(email);
+  if (error){ alert("Errore: " + error.message); return; }
+  alert("Email di reset password inviata.");
 }
 
 async function salvaUtente(id, utenti){
