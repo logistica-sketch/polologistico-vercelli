@@ -2436,6 +2436,8 @@ async function apriModalNuovaMovimentazioneTlc(){
     if (el) el.textContent = `(${selezionati.size} selezionati)`;
   }
 
+  let gruppiApertiMov = new Set(); // categorie aperte, persiste tra re-render
+
   function renderListaApparatiMov(){
     const q = (document.getElementById("mov-search-apparati").value || "").toLowerCase();
     const cat = document.getElementById("mov-filtro-categoria-apparati").value;
@@ -2467,25 +2469,55 @@ async function apriModalNuovaMovimentazioneTlc(){
       gruppi[k].push(a);
     });
 
-    wrap.innerHTML = Object.keys(gruppi).sort().map(cat => `
-      <div style="margin-bottom:8px;">
-        <div style="font-size:11px;font-weight:700;color:var(--grigio-600);text-transform:uppercase;letter-spacing:.3px;padding:4px 4px 2px;">${escapeHtml(cat)} (${gruppi[cat].length})</div>
-        ${gruppi[cat].map(a => `
-          <label style="display:flex;align-items:center;gap:8px;padding:5px 4px;font-size:13px;">
-            <input type="checkbox" data-apparato-id="${a.id}" ${selezionati.has(a.id)?"checked":""}>
-            <strong style="font-family:monospace;">${escapeHtml(a.codice_ana)}</strong>
-            ${a.sottocategoria_radio ? `<span style="font-size:11px;color:var(--grigio-600);">(${a.sottocategoria_radio})</span>` : ""}
-            — ${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")}${a.selettiva ? ` · ${escapeHtml(a.selettiva)}` : ""}
-          </label>
-        `).join("")}
-      </div>
-    `).join("");
+    // Se c'è una ricerca attiva, apro automaticamente i gruppi che contengono risultati
+    if (q){
+      Object.keys(gruppi).forEach(k => gruppiApertiMov.add(k));
+    }
+    // Se c'è un filtro categoria singolo, apro sempre quel gruppo
+    if (cat) gruppiApertiMov.add(cat);
+
+    wrap.innerHTML = Object.keys(gruppi).sort().map(catKey => {
+      const apparatiGruppo = gruppi[catKey];
+      const selezionatiNelGruppo = apparatiGruppo.filter(a => selezionati.has(a.id)).length;
+      const aperto = gruppiApertiMov.has(catKey);
+      return `
+        <div class="mov-gruppo-cat" style="border-bottom:1px solid var(--grigio-200);">
+          <button type="button" class="mov-gruppo-toggle" data-gruppo="${escapeHtml(catKey)}" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:none;border:none;padding:8px 4px;cursor:pointer;text-align:left;">
+            <span style="font-size:12px;font-weight:700;color:var(--blu-900);text-transform:uppercase;letter-spacing:.3px;">
+              ${escapeHtml(catKey)} <span style="color:var(--grigio-600);font-weight:500;">(${apparatiGruppo.length})</span>
+              ${selezionatiNelGruppo > 0 ? `<span class="collapse-badge" style="display:inline-block;margin-left:6px;">${selezionatiNelGruppo}</span>` : ""}
+            </span>
+            <span style="color:var(--grigio-600);">${aperto ? "▴" : "▾"}</span>
+          </button>
+          <div class="mov-gruppo-body" style="display:${aperto?"block":"none"};padding-bottom:6px;">
+            ${apparatiGruppo.map(a => `
+              <label style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;font-size:13px;border-radius:6px;${selezionati.has(a.id)?"background:var(--grigio-100);":""}">
+                <input type="checkbox" data-apparato-id="${a.id}" ${selezionati.has(a.id)?"checked":""} style="margin-top:3px;flex-shrink:0;">
+                <span style="min-width:0;">
+                  <strong style="font-family:monospace;display:block;">${escapeHtml(a.codice_ana)}${a.sottocategoria_radio ? ` <span style="font-weight:400;color:var(--grigio-600);font-size:11px;">(${a.sottocategoria_radio})</span>` : ""}</strong>
+                  <span style="color:var(--grigio-700);font-size:12px;">${escapeHtml(a.marca||"")} ${escapeHtml(a.modello||"")}${a.selettiva ? ` · ${escapeHtml(a.selettiva)}` : ""}</span>
+                </span>
+              </label>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    wrap.querySelectorAll(".mov-gruppo-toggle").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const g = btn.dataset.gruppo;
+        if (gruppiApertiMov.has(g)) gruppiApertiMov.delete(g); else gruppiApertiMov.add(g);
+        renderListaApparatiMov();
+      });
+    });
 
     wrap.querySelectorAll("[data-apparato-id]").forEach(chk => {
       chk.addEventListener("change", (e) => {
         const id = parseInt(e.target.dataset.apparatoId);
         if (e.target.checked) selezionati.add(id); else selezionati.delete(id);
         aggiornaContatoreApparati();
+        renderListaApparatiMov(); // aggiorna badge contatore per gruppo e sfondo riga selezionata
       });
     });
   }
