@@ -4761,87 +4761,119 @@ async function generaPdfConvocazione(conv){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
 
-  try{ doc.addImage(LOGO_ANA_V2_BASE64, "PNG", 14, 10, 22, 22); }catch(e){}
+  // Intestazione: logo ANA a sinistra, logo Volontariato a destra, testo centrato tra i due
+  try{ doc.addImage(LOGO_ANA_V2_BASE64, "PNG", 14, 8, 24, 24); }catch(e){}
+  try{ doc.addImage(LOGO_VOLONTARIATO_V2_BASE64, "PNG", 172, 8, 24, 24); }catch(e){}
 
-  doc.setFontSize(11);
+  doc.setFontSize(12);
   doc.setFont(undefined, "bold");
-  doc.text("COORDINAMENTO DELLE SEZIONI PIEMONTESI", 105, 14, { align:"center" });
-  doc.text("DELL'ASSOCIAZIONE NAZIONALE ALPINI", 105, 20, { align:"center" });
-  doc.setFontSize(9);
-  doc.text("PROTEZIONE CIVILE", 105, 26, { align:"center" });
+  doc.setTextColor(46, 125, 50);
+  doc.text("COORDINAMENTO DELLE SEZIONI PIEMONTESI", 105, 13, { align:"center" });
+  doc.text("DELL'ASSOCIAZIONE NAZIONALE ALPINI", 105, 19, { align:"center" });
+  doc.setFontSize(10);
+  doc.text("PROTEZIONE CIVILE", 105, 25, { align:"center" });
+  doc.setTextColor(0, 0, 0);
   doc.setFont(undefined, "normal");
-  doc.setFontSize(7.5);
-  doc.text("Sede Legale: Corso Marche 79 - 10146 Torino (TO)", 105, 32, { align:"center" });
-  doc.text("Mail: info@coordanapiemonte.it - PEC: coordanapiemonte@pec.it", 105, 36, { align:"center" });
-  doc.text("Iscrizione Regione Piemonte: D.P.G.R. n° 940 del 06/04/2011", 105, 40, { align:"center" });
-  doc.text("Iscrizione nelle OO.VV. del DPC – DPR 194/01: n° DPC 8597 del 07/02/2011", 105, 44, { align:"center" });
-  doc.line(14, 48, 196, 48);
+  doc.setFontSize(8);
+  doc.text("Sede Legale: Corso Marche 79 - 10146 Torino (TO)", 105, 31, { align:"center" });
+  doc.text("Mail: info@coordanapiemonte.it - PEC: coordanapiemonte@pec.it", 105, 35, { align:"center" });
+  doc.text("Iscrizione Regione Piemonte: D.P.G.R. n° 940 del 06/04/2011", 105, 39, { align:"center" });
+  doc.text("Iscrizione nelle OO.VV. del DPC – DPR 194/01: n° DPC 8597 del 07/02/2011", 105, 43, { align:"center" });
+
+  // Striscia tricolore sotto l'intestazione
+  const yStriscia = 47;
+  doc.setDrawColor(0, 0, 0);
+  doc.setFillColor(46, 125, 50); doc.rect(14, yStriscia, 60.7, 2.5, "FD");
+  doc.setFillColor(255, 255, 255); doc.rect(74.7, yStriscia, 60.6, 2.5, "FD");
+  doc.setFillColor(192, 57, 43); doc.rect(135.3, yStriscia, 60.7, 2.5, "FD");
 
   let y = 58;
   doc.setFontSize(10);
+  doc.setTextColor(0, 0, 0);
   doc.text(`${conv.luogo_data} ${formatDataIt(conv.data_documento)}`, 14, y); y += 9;
 
-  doc.text("Dal Presidente a:", 14, y); y += 6;
+  doc.text("Dal Presidente a:", 196, y, { align: "right" }); y += 6;
   doc.setFont(undefined, "bold");
   conv.destinatari.split("\n").forEach(riga => {
-    if (riga.trim()){ doc.text(riga.trim(), 14, y); y += 5.5; }
+    if (riga.trim()){ doc.text(riga.trim(), 196, y, { align: "right" }); y += 5.5; }
   });
   doc.setFont(undefined, "normal");
 
   if (conv.destinatari_pc && conv.destinatari_pc.trim()){
-    y += 2;
-    doc.text("e, p.c", 14, y); y += 6;
+    y += 4;
+    doc.text("e, p.c", 196, y, { align: "right" }); y += 6;
     doc.setFont(undefined, "bold");
     conv.destinatari_pc.split("\n").forEach(riga => {
-      if (riga.trim()){ doc.text(riga.trim(), 14, y); y += 5.5; }
+      if (riga.trim()){ doc.text(riga.trim(), 196, y, { align: "right" }); y += 5.5; }
     });
     doc.setFont(undefined, "normal");
   }
 
   y += 6;
-  doc.setFont(undefined, "bold");
   doc.text(`Oggetto: ${conv.oggetto}`, 14, y, { maxWidth: 182 });
-  doc.setFont(undefined, "normal");
-  y += 10;
+  y += 12;
 
-  let testoRiunione = `Carissimo, è convocata la riunione per `;
+  doc.setFontSize(11);
+  doc.text("Carissimo, è convocata la riunione per", 105, y, { align: "center" });
+  y += 8;
+
+  doc.setFont(undefined, "bold");
+  doc.setFontSize(13);
   if (conv.data_riunione_1){
-    testoRiunione += `${formatDataIt(conv.data_riunione_1)}${conv.ora_riunione_1 ? " alle ore " + conv.ora_riunione_1 : ""}`;
+    const rigaData1 = `${formatDataIt(conv.data_riunione_1)}${conv.ora_riunione_1 ? " alle ore " + conv.ora_riunione_1 : ""}` + (conv.data_riunione_2 ? " in prima convocazione" : "");
+    doc.text(rigaData1, 105, y, { align: "center" });
+    y += 7;
   }
   if (conv.data_riunione_2){
-    testoRiunione += ` in prima convocazione e per ${formatDataIt(conv.data_riunione_2)}${conv.ora_riunione_2 ? " alle ore " + conv.ora_riunione_2 : ""} in seconda convocazione`;
+    const rigaData2 = `e per ${formatDataIt(conv.data_riunione_2)}${conv.ora_riunione_2 ? " alle ore " + conv.ora_riunione_2 : ""} in seconda convocazione`;
+    doc.text(rigaData2, 105, y, { align: "center" });
+    y += 7;
   }
   if (conv.luogo_riunione){
-    testoRiunione += `, ${conv.luogo_riunione}.`;
-  } else {
-    testoRiunione += ".";
+    const righeLuogo = doc.splitTextToSize(conv.luogo_riunione, 170);
+    doc.text(righeLuogo, 105, y, { align: "center" });
+    y += righeLuogo.length * 6.5;
   }
-  const righeTesto = doc.splitTextToSize(testoRiunione, 182);
-  doc.text(righeTesto, 14, y);
-  y += righeTesto.length * 5.5 + 8;
+  doc.setFont(undefined, "normal");
+  doc.setFontSize(10);
+  y += 8;
 
+  doc.setFontSize(10);
   doc.setFont(undefined, "bold");
-  doc.text("ORDINE DEL GIORNO", 14, y); y += 7;
+  doc.text("ORDINE DEL GIORNO", 14, y); y += 9;
   doc.setFont(undefined, "normal");
   conv.ordine_del_giorno.split("\n").filter(r => r.trim()).forEach((riga, i) => {
-    if (y > 260){ doc.addPage(); y = 20; }
+    if (y > 250){ doc.addPage(); y = 20; }
     const righeOdg = doc.splitTextToSize(`${i+1}) ${riga.trim()}`, 182);
     doc.text(righeOdg, 14, y);
-    y += righeOdg.length * 5.5 + 1;
+    y += righeOdg.length * 5.5;
   });
-  y += 4;
+  y += 6;
 
   if (conv.testo_aggiuntivo && conv.testo_aggiuntivo.trim()){
     const righeAgg = doc.splitTextToSize(conv.testo_aggiuntivo.trim(), 182);
     doc.text(righeAgg, 14, y);
-    y += righeAgg.length * 5.5 + 6;
+    y += righeAgg.length * 5.5 + 8;
   }
 
   const righeChiusura = doc.splitTextToSize(conv.testo_chiusura, 182);
   doc.text(righeChiusura, 14, y);
-  y += righeChiusura.length * 5.5 + 16;
+  y += righeChiusura.length * 5.5 + 14;
 
-  if (y > 250){ doc.addPage(); y = 30; }
+  // Firma e footer sempre ancorati in fondo pagina, indipendentemente
+  // da quanto testo precede (evita di generare una seconda pagina quasi vuota).
+  // Se il contenuto arriva già oltre lo spazio utile, si passa a una nuova pagina.
+  let yFirma;
+  if (y > 250){
+    doc.addPage();
+    yFirma = 230;
+  } else {
+    yFirma = Math.max(y, 230);
+  }
+
+  doc.setFontSize(10);
+  doc.text(conv.firmatario_ruolo, 196, yFirma, { align: "right" });
+  yFirma += 14;
 
   if (conv.firma_path){
     try{
@@ -4853,14 +4885,34 @@ async function generaPdfConvocazione(conv){
         reader.onload = () => res(reader.result);
         reader.readAsDataURL(blob);
       });
-      doc.addImage(dataUrl, "PNG", 130, y, 60, 22);
-      y += 22;
+      doc.addImage(dataUrl, "PNG", 141, yFirma - 16, 55, 18);
     }catch(err){ /* nessuna firma, procedo senza */ }
   }
 
-  doc.setFontSize(10);
-  doc.text(conv.firmatario_ruolo, 196, y, { align: "right" }); y += 5.5;
-  doc.text(conv.firmatario_nome, 196, y, { align: "right" });
+  doc.text(conv.firmatario_nome.toUpperCase(), 196, yFirma, { align: "right" });
+
+  // Footer contatti, ancorato in fondo pagina con striscia blu/bianco/giallo
+  const yFooter = 270;
+  doc.setDrawColor(0, 0, 0);
+  doc.setFillColor(29, 78, 137); doc.rect(14, yFooter, 91, 2.5, "FD");
+  doc.setFillColor(255, 213, 0); doc.rect(105, yFooter, 91, 2.5, "FD");
+
+  const contatti = [
+    ["PRESIDENTE", "Alessandro Trovant", "3356310912", "presidente@coordanapiemonte.it"],
+    ["VICEPRESIDENTE", "Andrea Ribotta", "3393553559", "andrea.ribotta@gmail.com"],
+    ["SEGRETARIO", "Federico Bechis", "3382479991", "segretario@coordanapiemonte.it"],
+    ["TESORIERE", "Marco Sacchetto", "3333879696", "tesoriere@coordanapiemonte.it"]
+  ];
+  let yC = yFooter + 7;
+  doc.setFontSize(7.5);
+  doc.setFont(undefined, "normal");
+  contatti.forEach(riga => {
+    doc.text(riga[0], 14, yC);
+    doc.text(riga[1], 60, yC);
+    doc.text(riga[2], 110, yC);
+    doc.text(riga[3], 140, yC);
+    yC += 5;
+  });
 
   doc.save(`${conv.oggetto.replace(/[^a-zA-Z0-9]/g,"_").slice(0,60)}.pdf`);
 }
