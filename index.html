@@ -120,6 +120,7 @@ const MENU = [
   { route: "formazione",   label: "Formazione",    icon: "ti-school",      permesso: "formazione" },
   { route: "firma",        label: "Firma Documenti", icon: "ti-signature", permesso: "firma_documenti" },
   { route: "libromatricola", label: "Libro Matricola", icon: "ti-book",    permesso: "libro_matricola" },
+  { route: "convocazioni",  label: "Convocazioni",  icon: "ti-mail",       permesso: "convocazioni" },
   { route: "utenti",       label: "Gestione Utenti", icon: "ti-users",     permesso: "_solo_it_admin" },
   { route: "impostazioni", label: "Impostazioni",  icon: "ti-settings",    permesso: "_almeno_una_sezione" },
 ];
@@ -378,6 +379,7 @@ const PAGE_TITLES = {
   formazione: ["Formazione", "Corsi e volontari"],
   firma: ["Firma Documenti", "Carica PDF, apponi la firma e scarica"],
   libromatricola: ["Libro Matricola", "Mezzi assicurati e polizze"],
+  convocazioni: ["Convocazioni", "Genera convocazioni a riunioni e assemblee"],
   utenti: ["Gestione Utenti", "Utenti abilitati e relativi permessi"],
   impostazioni: ["Impostazioni", "Configurazioni per modulo"]
 };
@@ -407,6 +409,7 @@ function router(){
   else if (route === "formazione") renderFormazione();
   else if (route === "firma") renderFirmaDocumenti();
   else if (route === "libromatricola") renderLibroMatricola();
+  else if (route === "convocazioni") renderConvocazioni();
   else if (route === "utenti") renderGestioneUtenti();
   else if (route === "impostazioni") renderImpostazioni();
 }
@@ -2502,6 +2505,7 @@ const PAGINE_PERMESSO = [
   { key:"formazione", label:"Formazione" },
   { key:"firma_documenti", label:"Firma Documenti" },
   { key:"libro_matricola", label:"Libro Matricola" },
+  { key:"convocazioni", label:"Convocazioni" },
   { key:"impostazioni", label:"Impostazioni" }
 ];
 
@@ -4464,6 +4468,401 @@ function apriModalExportPerSezione(sezioni){
     const righe = _libroMatricolaCache.filter(r => r.sezione === sez && r.stato !== "dismesso");
     esportaLibroMatricolaPdf(righe, `Libro Matricola — ${sez}`);
   });
+}
+
+
+/* ============================================================
+   MODULO CONVOCAZIONI
+   ============================================================ */
+let _convocazioniCache = [];
+let _gruppiDestinatariCache = [];
+
+const LABEL_TIPO_CONVOCAZIONE = {
+  assemblea_ordinaria: "Assemblea Ordinaria",
+  assemblea_straordinaria: "Assemblea Straordinaria",
+  consiglio_direttivo: "Consiglio Direttivo",
+  altro: "Altro"
+};
+
+async function renderConvocazioni(){
+  const content = document.getElementById("page-content");
+  const [{ data, error }, { data: gruppi }] = await Promise.all([
+    sb.from("convocazioni").select("*").order("data_documento", { ascending:false }),
+    sb.from("gruppi_destinatari").select("*").order("nome")
+  ]);
+  if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  _convocazioniCache = data;
+  _gruppiDestinatariCache = gruppi || [];
+
+  content.innerHTML = `
+    <div class="toolbar" style="justify-content:space-between;">
+      <button class="btn-cancel" id="conv-btn-gestisci-gruppi">👥 Gestisci gruppi destinatari</button>
+      <button class="btn-add" id="conv-btn-nuova">+ Nuova convocazione</button>
+    </div>
+    <div id="conv-list"></div>
+  `;
+  document.getElementById("conv-btn-gestisci-gruppi").addEventListener("click", () => apriModalGruppiDestinatari());
+  document.getElementById("conv-btn-nuova").addEventListener("click", () => apriModalConvocazione(null));
+
+  renderListaConvocazioni();
+}
+
+function renderListaConvocazioni(){
+  const wrap = document.getElementById("conv-list");
+  if (_convocazioniCache.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">📨</div>Nessuna convocazione creata.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Data</th><th>Tipo</th><th>Oggetto</th><th></th></tr></thead>
+      <tbody>
+        ${_convocazioniCache.map(c => `
+          <tr class="conv-riga" data-id="${c.id}" style="cursor:pointer;">
+            <td>${formatDataIt(c.data_documento)}</td>
+            <td>${LABEL_TIPO_CONVOCAZIONE[c.tipo]||c.tipo}</td>
+            <td>${escapeHtml(c.oggetto)}</td>
+            <td><button class="row-del" data-scarica="${c.id}">📄 Scarica PDF</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".conv-riga").forEach(tr => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.dataset.scarica) return;
+      apriModalConvocazione(parseInt(tr.dataset.id));
+    });
+  });
+  wrap.querySelectorAll("[data-scarica]").forEach(b => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const conv = _convocazioniCache.find(c => c.id === parseInt(b.dataset.scarica));
+    generaPdfConvocazione(conv);
+  }));
+}
+
+/* ---------- GRUPPI DESTINATARI ---------- */
+function apriModalGruppiDestinatari(){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Gruppi destinatari</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuovo-gruppo">+ Nuovo gruppo</button></div>
+        <div id="gruppi-destinatari-list"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+  document.getElementById("btn-nuovo-gruppo").addEventListener("click", () => mostraFormGruppoDestinatari(null));
+
+  renderListaGruppiDestinatari();
+}
+
+function renderListaGruppiDestinatari(){
+  const wrap = document.getElementById("gruppi-destinatari-list");
+  if (_gruppiDestinatariCache.length === 0){
+    wrap.innerHTML = `<div class="storico-empty">Nessun gruppo salvato.</div>`;
+    return;
+  }
+  wrap.innerHTML = _gruppiDestinatariCache.map(g => `
+    <div class="mini-form" style="margin-bottom:10px;">
+      <strong style="font-size:13px;">${escapeHtml(g.nome)}</strong>
+      <pre style="font-size:12px;white-space:pre-wrap;color:var(--grigio-700);margin:6px 0;font-family:inherit;">${escapeHtml(g.righe)}</pre>
+      <div class="form-actions" style="border-top:none;padding-top:0;">
+        <button class="btn-cancel" data-edit-gruppo="${g.id}">Modifica</button>
+        <button class="btn-danger" data-del-gruppo="${g.id}">Elimina</button>
+      </div>
+    </div>
+  `).join("");
+  wrap.querySelectorAll("[data-edit-gruppo]").forEach(b => b.addEventListener("click", () => {
+    const g = _gruppiDestinatariCache.find(x => x.id === parseInt(b.dataset.editGruppo));
+    mostraFormGruppoDestinatari(g);
+  }));
+  wrap.querySelectorAll("[data-del-gruppo]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Eliminare questo gruppo?")) return;
+    await sb.from("gruppi_destinatari").delete().eq("id", parseInt(b.dataset.delGruppo));
+    const { data } = await sb.from("gruppi_destinatari").select("*").order("nome");
+    _gruppiDestinatariCache = data || [];
+    renderListaGruppiDestinatari();
+  }));
+}
+
+function mostraFormGruppoDestinatari(gruppo){
+  const wrap = document.getElementById("gruppi-destinatari-list");
+  const form = document.createElement("div");
+  form.className = "mini-form";
+  form.style.marginBottom = "10px";
+  form.innerHTML = `
+    <form id="form-gruppo-destinatari">
+      <div class="form-field full"><label>Nome gruppo</label><input name="nome" required value="${escapeHtml(gruppo?.nome||"")}"></div>
+      <div class="form-field full"><label>Destinatari (uno per riga)</label><textarea name="righe" required rows="6" style="font-family:inherit;">${escapeHtml(gruppo?.righe||"")}</textarea></div>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="btn-cancel-gruppo">Annulla</button>
+        <button type="submit" class="btn-save">Salva</button>
+      </div>
+    </form>
+  `;
+  wrap.prepend(form);
+  document.getElementById("btn-cancel-gruppo").addEventListener("click", () => form.remove());
+  document.getElementById("form-gruppo-destinatari").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = { nome: fd.get("nome").trim(), righe: fd.get("righe").trim() };
+    let result;
+    if (gruppo){
+      result = await sb.from("gruppi_destinatari").update(payload).eq("id", gruppo.id);
+    } else {
+      result = await sb.from("gruppi_destinatari").insert(payload);
+    }
+    if (result.error){ alert("Errore: " + result.error.message); return; }
+    const { data } = await sb.from("gruppi_destinatari").select("*").order("nome");
+    _gruppiDestinatariCache = data || [];
+    renderListaGruppiDestinatari();
+  });
+}
+
+/* ---------- MODAL CONVOCAZIONE ---------- */
+async function apriModalConvocazione(id){
+  const conv = id ? _convocazioniCache.find(c => c.id === id) : null;
+  const { data: firme } = await sb.from("firme_salvate").select("*").order("nome");
+
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${conv ? "Convocazione" : "Nuova convocazione"}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-convocazione">
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Tipo *</label>
+              <select name="tipo" required>
+                ${Object.entries(LABEL_TIPO_CONVOCAZIONE).map(([k,l]) => `<option value="${k}" ${conv?.tipo===k?"selected":""}>${l}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-field"><label>Luogo (per intestazione, es. "Torino")</label><input name="luogo_data" value="${escapeHtml(conv?.luogo_data||"Torino")}"></div>
+            <div class="form-field full"><label>Oggetto *</label><input name="oggetto" required value="${escapeHtml(conv?.oggetto||"")}" placeholder="es. CONVOCAZIONE ASSEMBLEA ORDINARIA DEI SOCI DEL COORDINAMENTO ANA PIEMONTE"></div>
+            <div class="form-field"><label>Data documento</label><input type="date" name="data_documento" value="${conv?.data_documento||new Date().toISOString().slice(0,10)}"></div>
+
+            <div class="form-field full">
+              <label>Destinatari *
+                <select id="select-gruppo-destinatari" style="margin-left:8px;font-size:12px;">
+                  <option value="">— Carica da gruppo —</option>
+                  ${_gruppiDestinatariCache.map(g => `<option value="${g.id}">${escapeHtml(g.nome)}</option>`).join("")}
+                </select>
+              </label>
+              <textarea name="destinatari" required rows="5" style="font-family:inherit;">${escapeHtml(conv?.destinatari||"")}</textarea>
+            </div>
+            <div class="form-field full"><label>Destinatari "e, p.c." (facoltativo)</label><textarea name="destinatari_pc" rows="2" style="font-family:inherit;">${escapeHtml(conv?.destinatari_pc||"")}</textarea></div>
+
+            <div class="form-field"><label>Data riunione (prima convocazione)</label><input type="date" name="data_riunione_1" value="${conv?.data_riunione_1||""}"></div>
+            <div class="form-field"><label>Ora</label><input name="ora_riunione_1" value="${escapeHtml(conv?.ora_riunione_1||"")}" placeholder="es. 23:00"></div>
+            <div class="form-field"><label>Data riunione (seconda convocazione, opzionale)</label><input type="date" name="data_riunione_2" value="${conv?.data_riunione_2||""}"></div>
+            <div class="form-field"><label>Ora</label><input name="ora_riunione_2" value="${escapeHtml(conv?.ora_riunione_2||"")}" placeholder="es. 09:30"></div>
+            <div class="form-field full"><label>Luogo riunione</label><input name="luogo_riunione" value="${escapeHtml(conv?.luogo_riunione||"presso il Polo Logistico CMN di Vercelli in via Cerallo 4")}"></div>
+
+            <div class="form-field full"><label>Ordine del giorno * (un punto per riga)</label><textarea name="ordine_del_giorno" required rows="6" style="font-family:inherit;">${escapeHtml(conv?.ordine_del_giorno||"")}</textarea></div>
+            <div class="form-field full"><label>Testo aggiuntivo (facoltativo, es. scadenza candidature)</label><textarea name="testo_aggiuntivo" rows="2" style="font-family:inherit;">${escapeHtml(conv?.testo_aggiuntivo||"")}</textarea></div>
+            <div class="form-field full"><label>Testo di chiusura</label><textarea name="testo_chiusura" rows="2" style="font-family:inherit;">${escapeHtml(conv?.testo_chiusura||"Data l'importanza degli argomenti all'ordine del giorno, sei vivamente pregato, salvo gravi impedimenti, di portare con la tua presenza, il necessario contributo di confronto.")}</textarea></div>
+
+            <div class="form-field"><label>Firmatario</label><input name="firmatario_nome" value="${escapeHtml(conv?.firmatario_nome||"Alessandro Trovant")}"></div>
+            <div class="form-field"><label>Ruolo firmatario</label><input name="firmatario_ruolo" value="${escapeHtml(conv?.firmatario_ruolo||"Il Presidente")}"></div>
+            <div class="form-field full">
+              <label>Firma (dalla libreria Firma Documenti)</label>
+              <select name="firma_path">
+                <option value="">— Nessuna firma grafica —</option>
+                ${(firme||[]).map(f => `<option value="${f.storage_path}" ${conv?.firma_path===f.storage_path?"selected":""}>${escapeHtml(f.nome)}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          <div class="form-actions">
+            ${conv ? `<button type="button" class="btn-danger" id="btn-elimina-conv">Elimina</button>` : ""}
+            <button type="button" class="btn-cancel" id="btn-cancel-conv">Annulla</button>
+            <button type="submit" class="btn-save">Salva e genera PDF</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  document.getElementById("btn-cancel-conv").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
+  if (conv) document.getElementById("btn-elimina-conv").addEventListener("click", async () => {
+    if (!confirm("Eliminare questa convocazione?")) return;
+    await sb.from("convocazioni").delete().eq("id", conv.id);
+    chiudiModal();
+    renderConvocazioni();
+  });
+
+  document.getElementById("select-gruppo-destinatari").addEventListener("change", (e) => {
+    const g = _gruppiDestinatariCache.find(x => x.id === parseInt(e.target.value));
+    if (g) document.querySelector('textarea[name="destinatari"]').value = g.righe;
+  });
+
+  document.getElementById("form-convocazione").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      tipo: fd.get("tipo"),
+      oggetto: fd.get("oggetto").trim(),
+      luogo_data: fd.get("luogo_data") || "",
+      data_documento: fd.get("data_documento"),
+      destinatari: fd.get("destinatari").trim(),
+      destinatari_pc: fd.get("destinatari_pc") || null,
+      data_riunione_1: fd.get("data_riunione_1") || null,
+      ora_riunione_1: fd.get("ora_riunione_1") || null,
+      data_riunione_2: fd.get("data_riunione_2") || null,
+      ora_riunione_2: fd.get("ora_riunione_2") || null,
+      luogo_riunione: fd.get("luogo_riunione") || null,
+      ordine_del_giorno: fd.get("ordine_del_giorno").trim(),
+      testo_aggiuntivo: fd.get("testo_aggiuntivo") || null,
+      testo_chiusura: fd.get("testo_chiusura").trim(),
+      firma_path: fd.get("firma_path") || null,
+      firmatario_nome: fd.get("firmatario_nome").trim(),
+      firmatario_ruolo: fd.get("firmatario_ruolo").trim(),
+      created_by: state.user.id
+    };
+
+    const btn = e.target.querySelector(".btn-save");
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+
+    let result;
+    if (conv){
+      result = await sb.from("convocazioni").update(payload).eq("id", conv.id).select().single();
+    } else {
+      result = await sb.from("convocazioni").insert(payload).select().single();
+    }
+    if (result.error){ alert("Errore: " + result.error.message); btn.disabled=false; btn.textContent="Salva e genera PDF"; return; }
+
+    await generaPdfConvocazione(result.data);
+
+    chiudiModal();
+    renderConvocazioni();
+  });
+}
+
+/* ---------- GENERAZIONE PDF ---------- */
+async function generaPdfConvocazione(conv){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  try{ doc.addImage(LOGO_ANA_V2_BASE64, "PNG", 14, 10, 22, 22); }catch(e){}
+
+  doc.setFontSize(11);
+  doc.setFont(undefined, "bold");
+  doc.text("COORDINAMENTO DELLE SEZIONI PIEMONTESI", 105, 14, { align:"center" });
+  doc.text("DELL'ASSOCIAZIONE NAZIONALE ALPINI", 105, 20, { align:"center" });
+  doc.setFontSize(9);
+  doc.text("PROTEZIONE CIVILE", 105, 26, { align:"center" });
+  doc.setFont(undefined, "normal");
+  doc.setFontSize(7.5);
+  doc.text("Sede Legale: Corso Marche 79 - 10146 Torino (TO)", 105, 32, { align:"center" });
+  doc.text("Mail: info@coordanapiemonte.it - PEC: coordanapiemonte@pec.it", 105, 36, { align:"center" });
+  doc.text("Iscrizione Regione Piemonte: D.P.G.R. n° 940 del 06/04/2011", 105, 40, { align:"center" });
+  doc.text("Iscrizione nelle OO.VV. del DPC – DPR 194/01: n° DPC 8597 del 07/02/2011", 105, 44, { align:"center" });
+  doc.line(14, 48, 196, 48);
+
+  let y = 58;
+  doc.setFontSize(10);
+  doc.text(`${conv.luogo_data} ${formatDataIt(conv.data_documento)}`, 14, y); y += 9;
+
+  doc.text("Dal Presidente a:", 14, y); y += 6;
+  doc.setFont(undefined, "bold");
+  conv.destinatari.split("\n").forEach(riga => {
+    if (riga.trim()){ doc.text(riga.trim(), 14, y); y += 5.5; }
+  });
+  doc.setFont(undefined, "normal");
+
+  if (conv.destinatari_pc && conv.destinatari_pc.trim()){
+    y += 2;
+    doc.text("e, p.c", 14, y); y += 6;
+    doc.setFont(undefined, "bold");
+    conv.destinatari_pc.split("\n").forEach(riga => {
+      if (riga.trim()){ doc.text(riga.trim(), 14, y); y += 5.5; }
+    });
+    doc.setFont(undefined, "normal");
+  }
+
+  y += 6;
+  doc.setFont(undefined, "bold");
+  doc.text(`Oggetto: ${conv.oggetto}`, 14, y, { maxWidth: 182 });
+  doc.setFont(undefined, "normal");
+  y += 10;
+
+  let testoRiunione = `Carissimo, è convocata la riunione per `;
+  if (conv.data_riunione_1){
+    testoRiunione += `${formatDataIt(conv.data_riunione_1)}${conv.ora_riunione_1 ? " alle ore " + conv.ora_riunione_1 : ""}`;
+  }
+  if (conv.data_riunione_2){
+    testoRiunione += ` in prima convocazione e per ${formatDataIt(conv.data_riunione_2)}${conv.ora_riunione_2 ? " alle ore " + conv.ora_riunione_2 : ""} in seconda convocazione`;
+  }
+  if (conv.luogo_riunione){
+    testoRiunione += `, ${conv.luogo_riunione}.`;
+  } else {
+    testoRiunione += ".";
+  }
+  const righeTesto = doc.splitTextToSize(testoRiunione, 182);
+  doc.text(righeTesto, 14, y);
+  y += righeTesto.length * 5.5 + 8;
+
+  doc.setFont(undefined, "bold");
+  doc.text("ORDINE DEL GIORNO", 14, y); y += 7;
+  doc.setFont(undefined, "normal");
+  conv.ordine_del_giorno.split("\n").filter(r => r.trim()).forEach((riga, i) => {
+    if (y > 260){ doc.addPage(); y = 20; }
+    const righeOdg = doc.splitTextToSize(`${i+1}) ${riga.trim()}`, 182);
+    doc.text(righeOdg, 14, y);
+    y += righeOdg.length * 5.5 + 1;
+  });
+  y += 4;
+
+  if (conv.testo_aggiuntivo && conv.testo_aggiuntivo.trim()){
+    const righeAgg = doc.splitTextToSize(conv.testo_aggiuntivo.trim(), 182);
+    doc.text(righeAgg, 14, y);
+    y += righeAgg.length * 5.5 + 6;
+  }
+
+  const righeChiusura = doc.splitTextToSize(conv.testo_chiusura, 182);
+  doc.text(righeChiusura, 14, y);
+  y += righeChiusura.length * 5.5 + 16;
+
+  if (y > 250){ doc.addPage(); y = 30; }
+
+  if (conv.firma_path){
+    try{
+      const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME).getPublicUrl(conv.firma_path);
+      const resp = await fetch(u.publicUrl);
+      const blob = await resp.blob();
+      const dataUrl = await new Promise((res) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.readAsDataURL(blob);
+      });
+      doc.addImage(dataUrl, "PNG", 130, y, 60, 22);
+      y += 22;
+    }catch(err){ /* nessuna firma, procedo senza */ }
+  }
+
+  doc.setFontSize(10);
+  doc.text(conv.firmatario_ruolo, 196, y, { align: "right" }); y += 5.5;
+  doc.text(conv.firmatario_nome, 196, y, { align: "right" });
+
+  doc.save(`${conv.oggetto.replace(/[^a-zA-Z0-9]/g,"_").slice(0,60)}.pdf`);
 }
 
 
