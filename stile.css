@@ -93,7 +93,7 @@ input,select,textarea{font-family:inherit;}
 
 #sidebar{
   width:230px;flex-shrink:0;
-  background:linear-gradient(180deg, #0d3d2e 0%, #0a2e23 100%);
+  background:var(--blu-900);
   color:#cdd9ea;
   display:flex;flex-direction:column;
   position:fixed;top:0;left:0;bottom:0;
@@ -104,21 +104,21 @@ input,select,textarea{font-family:inherit;}
   padding:18px 18px 16px;
   border-bottom:1px solid rgba(255,255,255,0.08);
 }
-.sidebar-header .org{font-size:10.5px;letter-spacing:.4px;color:#9bc4ad;text-transform:uppercase;}
+.sidebar-header .org{font-size:10.5px;letter-spacing:.4px;color:#8aa3c7;text-transform:uppercase;}
 .sidebar-header .title{font-size:14px;font-weight:700;color:#fff;line-height:1.3;}
-.sidebar-role{font-size:10.5px;color:#4caf50;font-weight:500;margin-top:1px;}
+.sidebar-role{font-size:10.5px;color:#8aa3c7;font-weight:500;margin-top:1px;}
 
 .nav-list{flex:1;padding:12px 10px;overflow-y:auto;}
 .nav-item{
   display:flex;align-items:center;gap:10px;
   padding:9px 12px;border-radius:8px;
   font-size:13.5px;font-weight:500;
-  color:#9bc4ad;margin-bottom:2px;
+  color:#cdd9ea;margin-bottom:2px;
   cursor:pointer;
   transition:background .15s;
 }
 .nav-item:hover{background:rgba(255,255,255,0.06);color:#fff;}
-.nav-item.active{background:#2e7d32;color:#fff;}
+.nav-item.active{background:var(--blu-500);color:#fff;}
 .nav-item .ic{width:18px;text-align:center;font-size:15px;flex-shrink:0;}
 .nav-badge{
   margin-left:auto;background:var(--rosso);color:#fff;
@@ -133,7 +133,7 @@ input,select,textarea{font-family:inherit;}
 .sidebar-logout{
   display:flex;align-items:center;gap:8px;
   margin-top:8px;padding:8px 10px;border-radius:8px;
-  font-size:12.5px;color:#ffb4a8;cursor:pointer;font-weight:600;
+  font-size:12.5px;color:#e09b96;cursor:pointer;font-weight:600;
   transition:background .15s;
 }
 .sidebar-logout:hover{background:rgba(255,255,255,0.06);color:#ff8a80;}
@@ -142,7 +142,7 @@ input,select,textarea{font-family:inherit;}
 #sidebar-toggle{
   display:none;
   position:fixed;top:14px;left:14px;z-index:200;
-  background:#0d3d2e;color:#fff;border:none;
+  background:var(--blu-900);color:#fff;border:none;
   width:38px;height:38px;border-radius:8px;font-size:16px;
   box-shadow:var(--shadow);
 }
