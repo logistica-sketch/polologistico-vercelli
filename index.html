@@ -2,6 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Polo Logistico 1 RGPT/CAP Vercelli</title>
 <link rel="icon" href="icons/icon-192.png">
@@ -114,7 +115,7 @@ input,select,textarea{font-family:inherit;}
 
 #sidebar{
   width:230px;flex-shrink:0;
-  background:var(--blu-900);
+  background:linear-gradient(180deg, #0d3d2e 0%, #0a2e23 100%);
   color:#cdd9ea;
   display:flex;flex-direction:column;
   position:fixed;top:0;left:0;bottom:0;
@@ -122,23 +123,32 @@ input,select,textarea{font-family:inherit;}
   transition:transform .2s ease;
 }
 .sidebar-header{
-  padding:20px 18px 14px;
+  padding:18px 18px 16px;
   border-bottom:1px solid rgba(255,255,255,0.08);
+  display:flex;align-items:center;gap:10px;
 }
-.sidebar-header .org{font-size:11px;letter-spacing:.5px;color:#8aa3c7;text-transform:uppercase;}
-.sidebar-header .title{font-size:15px;font-weight:700;color:#fff;margin-top:3px;line-height:1.3;}
+.sidebar-avatar{
+  width:34px;height:34px;border-radius:50%;flex-shrink:0;
+  background:rgba(255,255,255,0.12);
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;
+}
+.sidebar-header .org{font-size:10.5px;letter-spacing:.4px;color:#9bc4ad;text-transform:uppercase;}
+.sidebar-header .title{font-size:14px;font-weight:700;color:#fff;line-height:1.3;}
+.sidebar-role{font-size:10.5px;color:#4caf50;font-weight:500;margin-top:1px;}
 
-.nav-list{flex:1;padding:14px 10px;overflow-y:auto;}
+.nav-list{flex:1;padding:12px 10px;overflow-y:auto;}
 .nav-item{
   display:flex;align-items:center;gap:10px;
-  padding:10px 12px;border-radius:8px;
+  padding:9px 12px;border-radius:8px;
   font-size:13.5px;font-weight:500;
-  color:#cdd9ea;margin-bottom:2px;
+  color:#9bc4ad;margin-bottom:2px;
   cursor:pointer;
+  transition:background .15s;
 }
 .nav-item:hover{background:rgba(255,255,255,0.06);color:#fff;}
-.nav-item.active{background:var(--blu-500);color:#fff;}
-.nav-item .ic{width:18px;text-align:center;font-size:14px;}
+.nav-item.active{background:#2e7d32;color:#fff;}
+.nav-item .ic{width:18px;text-align:center;font-size:15px;flex-shrink:0;}
 .nav-badge{
   margin-left:auto;background:var(--rosso);color:#fff;
   font-size:10px;font-weight:700;border-radius:999px;
@@ -146,19 +156,22 @@ input,select,textarea{font-family:inherit;}
 }
 
 .sidebar-footer{
-  padding:14px 16px;border-top:1px solid rgba(255,255,255,0.08);
+  padding:12px 14px;border-top:1px solid rgba(255,255,255,0.08);
 }
 .sidebar-user{font-size:12.5px;color:#fff;font-weight:600;}
-.sidebar-role{font-size:11px;color:#8aa3c7;margin-top:2px;}
 .sidebar-logout{
-  margin-top:10px;font-size:12px;color:#e09b96;cursor:pointer;font-weight:600;
+  display:flex;align-items:center;gap:8px;
+  margin-top:8px;padding:8px 10px;border-radius:8px;
+  font-size:12.5px;color:#ffb4a8;cursor:pointer;font-weight:600;
+  transition:background .15s;
 }
-.sidebar-logout:hover{color:#fff;}
+.sidebar-logout:hover{background:rgba(255,255,255,0.06);color:#ff8a80;}
+.sidebar-logout .ic{font-size:15px;}
 
 #sidebar-toggle{
   display:none;
   position:fixed;top:14px;left:14px;z-index:200;
-  background:var(--blu-900);color:#fff;border:none;
+  background:#0d3d2e;color:#fff;border:none;
   width:38px;height:38px;border-radius:8px;font-size:16px;
   box-shadow:var(--shadow);
 }
@@ -579,15 +592,18 @@ input,select,textarea{font-family:inherit;}
 <div id="app-shell">
   <nav id="sidebar">
     <div class="sidebar-header">
-      <div class="org" id="sidebar-welcome">Benvenuto/a</div>
-      <div class="title" id="sidebar-user-name">—</div>
-      <div class="sidebar-role" id="sidebar-user-role" style="margin-top:4px;">—</div>
+      <div class="sidebar-avatar"><i class="ti ti-shield-check" aria-hidden="true"></i></div>
+      <div>
+        <div class="org" id="sidebar-welcome">Benvenuto/a</div>
+        <div class="title" id="sidebar-user-name">—</div>
+        <div class="sidebar-role" id="sidebar-user-role">—</div>
+      </div>
     </div>
     <div class="nav-list" id="nav-list">
       <!-- generato da JS -->
     </div>
     <div class="sidebar-footer">
-      <div class="sidebar-logout" id="btn-logout">Esci</div>
+      <div class="sidebar-logout" id="btn-logout"><i class="ti ti-logout ic" aria-hidden="true"></i><span>Esci</span></div>
     </div>
   </nav>
 
@@ -636,14 +652,14 @@ const state = {
    (null = tutti i ruoli autenticati)
    ============================================================ */
 const MENU = [
-  { route: "home",         label: "Home",         icon: "🏠", permesso: "home" },
-  { route: "automezzi",    label: "Automezzi",     icon: "🚐", permesso: "automezzi" },
-  { route: "tlc",          label: "TLC / Radio",   icon: "📻", permesso: "tlc" },
-  { route: "formazione",   label: "Formazione",    icon: "🎓", permesso: "formazione" },
-  { route: "firma",        label: "Firma Documenti", icon: "✍️", permesso: "firma_documenti" },
-  { route: "libromatricola", label: "Libro Matricola", icon: "📘", permesso: "libro_matricola" },
-  { route: "utenti",       label: "Gestione Utenti", icon: "👥", permesso: "_solo_it_admin" },
-  { route: "impostazioni", label: "Impostazioni",  icon: "⚙️", permesso: "_almeno_una_sezione" },
+  { route: "home",         label: "Home",         icon: "ti-home",        permesso: "home" },
+  { route: "automezzi",    label: "Automezzi",     icon: "ti-truck",       permesso: "automezzi" },
+  { route: "tlc",          label: "TLC / Radio",   icon: "ti-radio",       permesso: "tlc" },
+  { route: "formazione",   label: "Formazione",    icon: "ti-school",      permesso: "formazione" },
+  { route: "firma",        label: "Firma Documenti", icon: "ti-signature", permesso: "firma_documenti" },
+  { route: "libromatricola", label: "Libro Matricola", icon: "ti-book",    permesso: "libro_matricola" },
+  { route: "utenti",       label: "Gestione Utenti", icon: "ti-users",     permesso: "_solo_it_admin" },
+  { route: "impostazioni", label: "Impostazioni",  icon: "ti-settings",    permesso: "_almeno_una_sezione" },
 ];
 
 /* ============================================================
@@ -828,7 +844,7 @@ function renderSidebar(){
   const list = document.getElementById("nav-list");
   list.innerHTML = MENU.filter(m => userCanSee(m.permesso)).map(m => `
     <div class="nav-item ${state.route === m.route ? "active" : ""}" data-route="${m.route}">
-      <span class="ic">${m.icon}</span>
+      <i class="ti ${m.icon} ic" aria-hidden="true"></i>
       <span>${m.label}</span>
       <span class="nav-badge" id="badge-${m.route}" style="display:none;"></span>
     </div>
@@ -1922,6 +1938,13 @@ async function renderTlc(){
       </select>
       ${soloLettura ? "" : `<button class="btn-add" id="tlc-btn-nuovo">+ Nuovo apparato</button>`}
       <button class="btn-add" id="tlc-btn-movimentazioni" style="background:var(--blu-700);">📋 Movimentazioni</button>
+      <button class="btn-add" id="tlc-btn-export-excel" style="background:var(--verde);">📊 Esporta Excel</button>
+      ${soloLettura ? "" : `
+        <label class="btn-add" style="background:var(--grigio-600);cursor:pointer;">
+          📥 Importa Excel
+          <input type="file" id="tlc-input-import-excel" accept=".xlsx,.xls" style="display:none;">
+        </label>
+      `}
     </div>
     <div class="results-count" id="tlc-results-count"></div>
     <div class="card-grid" id="tlc-grid"></div>
@@ -1932,8 +1955,103 @@ async function renderTlc(){
   document.getElementById("tlc-filtro-marca").addEventListener("change", e => { _tlcFiltro.marca = e.target.value; renderTlcGrid(); });
   if (!soloLettura) document.getElementById("tlc-btn-nuovo").addEventListener("click", () => apriModalTlc(null));
   document.getElementById("tlc-btn-movimentazioni").addEventListener("click", () => renderMovimentazioniTlc());
+  document.getElementById("tlc-btn-export-excel").addEventListener("click", () => esportaMagazzinoTlcExcel());
+  if (!soloLettura) document.getElementById("tlc-input-import-excel").addEventListener("change", (ev) => importaMagazzinoTlcExcel(ev));
 
   renderTlcGrid();
+}
+
+function esportaMagazzinoTlcExcel(){
+  const dati = _tlcCache.map(a => ({
+    "Codice ANA": a.codice_ana,
+    "Categoria": a.categoria || "",
+    "Sottocategoria (solo Radio)": a.sottocategoria_radio || "",
+    "Marca": a.marca || "",
+    "Modello": a.modello || "",
+    "Matricola": a.matricola || "",
+    "Selettiva": a.selettiva || "",
+    "Assegnato a": a.assegnato_a || "",
+    "Descrizione": a.descrizione || "",
+    "Note": a.note || ""
+  }));
+  const ws = XLSX.utils.json_to_sheet(dati);
+  ws["!cols"] = Object.keys(dati[0]||{}).map(() => ({ wch: 18 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Magazzino TLC");
+  XLSX.writeFile(wb, `Magazzino_TLC_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+async function importaMagazzinoTlcExcel(ev){
+  const file = ev.target.files[0];
+  if (!file) return;
+  ev.target.value = "";
+
+  if (!confirm(`Importare il magazzino da ${file.name}?\n\nSe il Codice ANA esiste già, la riga verrà aggiornata. Se non esiste, verrà creato un nuovo apparato.`)) return;
+
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(255,255,255,0.9);z-index:600;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;";
+  overlay.innerHTML = `<div class="loading-spin">Importazione in corso…</div><div id="import-tlc-excel-progress" style="font-size:13px;color:var(--grigio-600);"></div>`;
+  document.body.appendChild(overlay);
+  const progressEl = overlay.querySelector("#import-tlc-excel-progress");
+
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:"array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const righe = XLSX.utils.sheet_to_json(ws, { defval:"" });
+
+    let creati = 0, aggiornati = 0, errori = [];
+    let i = 0;
+    for (const riga of righe){
+      i++;
+      progressEl.textContent = `${i} di ${righe.length}…`;
+
+      const codiceAna = String(riga["Codice ANA"] || "").trim().toUpperCase();
+      if (!codiceAna){
+        errori.push(`Riga ${i+1}: Codice ANA mancante, saltata.`);
+        continue;
+      }
+
+      const payload = {
+        codice_ana: codiceAna,
+        categoria: String(riga["Categoria"] || "").trim().toUpperCase() || null,
+        sottocategoria_radio: String(riga["Sottocategoria (solo Radio)"] || "").trim().toUpperCase() || null,
+        marca: String(riga["Marca"] || "").trim().toUpperCase() || null,
+        modello: String(riga["Modello"] || "").trim() || null,
+        matricola: String(riga["Matricola"] || "").trim() || null,
+        selettiva: String(riga["Selettiva"] || "").trim().toUpperCase() || null,
+        assegnato_a: String(riga["Assegnato a"] || "").trim() || null,
+        descrizione: String(riga["Descrizione"] || "").trim() || null,
+        note: String(riga["Note"] || "").trim() || null
+      };
+
+      try{
+        const { data: esistente } = await sb.from("tlc_apparati").select("id").eq("codice_ana", codiceAna).maybeSingle();
+        if (esistente){
+          const { error } = await sb.from("tlc_apparati").update(payload).eq("id", esistente.id);
+          if (error) throw error;
+          aggiornati++;
+        } else {
+          const { error } = await sb.from("tlc_apparati").insert(payload);
+          if (error) throw error;
+          creati++;
+        }
+      }catch(err){
+        errori.push(`${codiceAna}: ${err.message}`);
+      }
+    }
+
+    overlay.remove();
+    let msg = `Import completato.\nNuovi apparati: ${creati}\nApparati aggiornati: ${aggiornati}`;
+    if (errori.length) msg += `\n\nErrori (${errori.length}):\n` + errori.join("\n");
+    alert(msg);
+
+    renderTlc();
+
+  }catch(err){
+    overlay.remove();
+    alert("Errore nella lettura del file: " + err.message);
+  }
 }
 
 function renderTlcGrid(){
