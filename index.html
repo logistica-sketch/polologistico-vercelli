@@ -134,6 +134,14 @@ function formatDataIt(dateStr){
   return d.toLocaleDateString("it-IT", { day:"2-digit", month:"2-digit", year:"numeric" });
 }
 
+function formatDataEstesaIt(dateStr){
+  if(!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  const giorni = ["Domenica","Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato"];
+  const mesi = ["GENNAIO","FEBBRAIO","MARZO","APRILE","MAGGIO","GIUGNO","LUGLIO","AGOSTO","SETTEMBRE","OTTOBRE","NOVEMBRE","DICEMBRE"];
+  return `${giorni[d.getDay()]} ${d.getDate()} ${mesi[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 function giorniDaOggi(dateStr){
   const oggi = new Date(); oggi.setHours(0,0,0,0);
   const target = new Date(dateStr + "T00:00:00");
@@ -4813,19 +4821,26 @@ async function generaPdfConvocazione(conv){
   doc.text(`Oggetto: ${conv.oggetto}`, 14, y, { maxWidth: 182 });
   y += 12;
 
+  const FRASE_TIPO_RIUNIONE = {
+    assemblea_ordinaria: "l'Assemblea Ordinaria dei Soci del CAP",
+    assemblea_straordinaria: "l'Assemblea Straordinaria dei Soci del CAP",
+    consiglio_direttivo: "la riunione del consiglio direttivo del CAP",
+    altro: "la riunione"
+  };
+
   doc.setFontSize(11);
-  doc.text("Carissimo, è convocata la riunione per", 105, y, { align: "center" });
+  doc.text(`Carissimo, è convocata ${FRASE_TIPO_RIUNIONE[conv.tipo] || "la riunione"}`, 105, y, { align: "center" });
   y += 8;
 
   doc.setFont(undefined, "bold");
   doc.setFontSize(13);
   if (conv.data_riunione_1){
-    const rigaData1 = `${formatDataIt(conv.data_riunione_1)}${conv.ora_riunione_1 ? " alle ore " + conv.ora_riunione_1 : ""}` + (conv.data_riunione_2 ? " in prima convocazione" : "");
+    const rigaData1 = `${formatDataEstesaIt(conv.data_riunione_1)}${conv.ora_riunione_1 ? " alle ore " + conv.ora_riunione_1 : ""}` + (conv.data_riunione_2 ? " in prima convocazione" : "");
     doc.text(rigaData1, 105, y, { align: "center" });
     y += 7;
   }
   if (conv.data_riunione_2){
-    const rigaData2 = `e per ${formatDataIt(conv.data_riunione_2)}${conv.ora_riunione_2 ? " alle ore " + conv.ora_riunione_2 : ""} in seconda convocazione`;
+    const rigaData2 = `e per ${formatDataEstesaIt(conv.data_riunione_2)}${conv.ora_riunione_2 ? " alle ore " + conv.ora_riunione_2 : ""} in seconda convocazione`;
     doc.text(rigaData2, 105, y, { align: "center" });
     y += 7;
   }
@@ -4840,7 +4855,7 @@ async function generaPdfConvocazione(conv){
 
   doc.setFontSize(10);
   doc.setFont(undefined, "bold");
-  doc.text("ORDINE DEL GIORNO", 14, y); y += 9;
+  doc.text("Con il seguente ORDINE DEL GIORNO", 14, y); y += 9;
   doc.setFont(undefined, "normal");
   conv.ordine_del_giorno.split("\n").filter(r => r.trim()).forEach((riga, i) => {
     if (y > 250){ doc.addPage(); y = 20; }
@@ -4858,7 +4873,10 @@ async function generaPdfConvocazione(conv){
 
   const righeChiusura = doc.splitTextToSize(conv.testo_chiusura, 182);
   doc.text(righeChiusura, 14, y);
-  y += righeChiusura.length * 5.5 + 14;
+  y += righeChiusura.length * 5.5 + 8;
+
+  doc.text("Fraterni saluti alpini.", 14, y);
+  y += 14;
 
   // Firma e footer sempre ancorati in fondo pagina, indipendentemente
   // da quanto testo precede (evita di generare una seconda pagina quasi vuota).
@@ -4873,7 +4891,7 @@ async function generaPdfConvocazione(conv){
 
   doc.setFontSize(10);
   doc.text(conv.firmatario_ruolo, 196, yFirma, { align: "right" });
-  yFirma += 14;
+  yFirma += 18;
 
   if (conv.firma_path){
     try{
@@ -4885,7 +4903,7 @@ async function generaPdfConvocazione(conv){
         reader.onload = () => res(reader.result);
         reader.readAsDataURL(blob);
       });
-      doc.addImage(dataUrl, "PNG", 141, yFirma - 16, 55, 18);
+      doc.addImage(dataUrl, "PNG", 141, yFirma - 14, 55, 14);
     }catch(err){ /* nessuna firma, procedo senza */ }
   }
 
