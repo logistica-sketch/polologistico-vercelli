@@ -1527,6 +1527,28 @@ async function importaMagazzinoTlcExcel(ev){
   }
 }
 
+let _tlcGruppiAperti = new Set(); // categorie aperte, persiste tra re-render finché resti sulla pagina
+
+function renderCardApparatoTlc(a){
+  const inUscita = _idApparatiInUsoTlc.has(a.id);
+  return `
+    <div class="veicolo-card tlc-card" data-id="${a.id}">
+      <div class="tlc-card-head">
+        ${a.categoria ? `<span class="badge-cat" style="position:static;">${a.categoria}${a.sottocategoria_radio ? ' · '+a.sottocategoria_radio : ''}</span>` : ""}
+        ${inUscita ? `<span class="badge-stato-mezzo revisionare" style="margin:0;">Uscita</span>` : ""}
+      </div>
+      <div class="info">
+        <div class="targa">${escapeHtml(a.codice_ana)}</div>
+        <div class="modello">${escapeHtml(a.marca || "")} ${escapeHtml(a.modello || "")}</div>
+        <div class="meta">
+          ${a.assegnato_a ? `<span>${escapeHtml(a.assegnato_a)}</span>` : `<span>Non assegnato</span>`}
+          ${a.selettiva ? `<span>${escapeHtml(a.selettiva)}</span>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTlcGrid(){
   const f = _tlcFiltro;
   const filtrati = _tlcCache.filter(a => {
@@ -1549,25 +1571,52 @@ function renderTlcGrid(){
     return;
   }
 
-  grid.innerHTML = filtrati.map(a => {
-    const inUscita = _idApparatiInUsoTlc.has(a.id);
-    return `
-    <div class="veicolo-card tlc-card" data-id="${a.id}">
-      <div class="tlc-card-head">
-        ${a.categoria ? `<span class="badge-cat" style="position:static;">${a.categoria}${a.sottocategoria_radio ? ' · '+a.sottocategoria_radio : ''}</span>` : ""}
-        ${inUscita ? `<span class="badge-stato-mezzo revisionare" style="margin:0;">Uscita</span>` : ""}
+  // Sezione fissa in cima: apparati attualmente in uscita (tra quelli filtrati)
+  const inUscita = filtrati.filter(a => _idApparatiInUsoTlc.has(a.id));
+  let htmlUscita = "";
+  if (inUscita.length > 0){
+    htmlUscita = `
+      <div class="stat-card" style="margin-bottom:20px;border-left:3px solid var(--rosso);">
+        <div class="section-title" style="margin:0 0 10px;color:var(--rosso);">📤 Attualmente in uscita (${inUscita.length})</div>
+        <div class="card-grid">${inUscita.map(renderCardApparatoTlc).join("")}</div>
       </div>
-      <div class="info">
-        <div class="targa">${escapeHtml(a.codice_ana)}</div>
-        <div class="modello">${escapeHtml(a.marca || "")} ${escapeHtml(a.modello || "")}</div>
-        <div class="meta">
-          ${a.assegnato_a ? `<span>${escapeHtml(a.assegnato_a)}</span>` : `<span>Non assegnato</span>`}
-          ${a.selettiva ? `<span>${escapeHtml(a.selettiva)}</span>` : ""}
+    `;
+  }
+
+  // Raggruppamento per categoria, collassabile, chiuso di default
+  const gruppi = {};
+  filtrati.forEach(a => {
+    const k = a.categoria || "Senza categoria";
+    if (!gruppi[k]) gruppi[k] = [];
+    gruppi[k].push(a);
+  });
+
+  const htmlGruppi = Object.keys(gruppi).sort().map(cat => {
+    const apparatiGruppo = gruppi[cat];
+    const aperto = _tlcGruppiAperti.has(cat);
+    return `
+      <div class="collapse-block" style="margin-bottom:10px;">
+        <button class="collapse-head" data-gruppo-tlc="${escapeHtml(cat)}">
+          <span>${escapeHtml(cat)}</span>
+          <span class="collapse-badge" style="display:inline-block;">${apparatiGruppo.length}</span>
+          <span class="collapse-arrow">${aperto?"▴":"▾"}</span>
+        </button>
+        <div class="collapse-body" style="display:${aperto?"block":"none"};">
+          <div class="card-grid">${apparatiGruppo.map(renderCardApparatoTlc).join("")}</div>
         </div>
       </div>
-    </div>
-  `;
+    `;
   }).join("");
+
+  grid.innerHTML = htmlUscita + htmlGruppi;
+
+  grid.querySelectorAll("[data-gruppo-tlc]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const g = btn.dataset.gruppoTlc;
+      if (_tlcGruppiAperti.has(g)) _tlcGruppiAperti.delete(g); else _tlcGruppiAperti.add(g);
+      renderTlcGrid();
+    });
+  });
 
   grid.querySelectorAll(".veicolo-card").forEach(el => {
     el.addEventListener("click", () => apriModalTlc(parseInt(el.dataset.id), livelloPermesso("tlc") !== "completo"));
