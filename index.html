@@ -2779,6 +2779,14 @@ async function importaZipAttestati(ev){
           created_by: state.user.id
         });
         if (docErr) throw docErr;
+
+        // Aggiorna a "completato" tutte le iscrizioni di questo volontario
+        // che erano ancora "in_verifica" (coerente col caricamento singolo da scheda)
+        await sb.from("iscrizioni_corsi")
+          .update({ stato: "completato" })
+          .eq("volontario_id", volontario.id)
+          .eq("stato", "in_verifica");
+
         ok++;
       }catch(err){
         errori.push(`${nomeBase}: ${err.message}`);
