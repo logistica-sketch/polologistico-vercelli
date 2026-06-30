@@ -2597,10 +2597,10 @@ async function renderFormazione(){
         ${_catalogoCache.map(c => `<option value="${c.codice}" ${_formazioneFiltro.tipologia===c.codice?"selected":""}>${c.codice}</option>`).join("")}
       </select>
       <button class="btn-add" id="form-btn-cerca-volontari" style="background:var(--blu-700);">🔍 Cerca volontari</button>
-      <label class="btn-add" style="background:var(--grigio-800);cursor:pointer;">
+      <button class="btn-add" id="form-btn-import-zip" style="background:var(--grigio-800);">
         📦 Import massivo attestati (ZIP)
-        <input type="file" id="input-import-zip-attestati" accept=".zip" style="display:none;">
-      </label>
+      </button>
+      <input type="file" id="input-import-zip-attestati" accept=".zip" style="display:none;">
       <button class="btn-add" id="form-btn-verifica-mancanti" style="background:var(--rosso);">⚠️ Verifica attestati mancanti</button>
       <button class="btn-add" id="form-btn-nuova">+ Nuova edizione corso</button>
     </div>
@@ -2613,6 +2613,7 @@ async function renderFormazione(){
   document.getElementById("form-filtro-tipologia").addEventListener("change", e => { _formazioneFiltro.tipologia = e.target.value; renderFormazioneList(); });
   document.getElementById("form-btn-nuova").addEventListener("click", () => apriModalEdizione(null));
   document.getElementById("form-btn-cerca-volontari").addEventListener("click", () => apriModalRicercaVolontari());
+  document.getElementById("form-btn-import-zip").addEventListener("click", () => apriModalSceltaEdizioneImport());
   document.getElementById("input-import-zip-attestati").addEventListener("change", (ev) => importaZipAttestati(ev));
   document.getElementById("form-btn-verifica-mancanti").addEventListener("click", () => apriModalAttestatiMancanti());
 
@@ -2726,12 +2727,55 @@ async function caricaAttestatoDaListaMancanti(ev){
 }
 
 
+let _importZipEdizioneId = null;
+
+function apriModalSceltaEdizioneImport(){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  const opts = _edizioniCache.map(e =>
+    `<option value="${e.id}">${escapeHtml(e.label || (e.catalogo_corsi?.codice||""))} — ${e.data_corso ? new Date(e.data_corso).toLocaleDateString("it-IT") : ""}</option>`
+  ).join("");
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>📦 Import massivo attestati</h3>
+        <button class="modal-close" onclick="chiudiModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--grigio-600);margin-bottom:10px;">Seleziona l'edizione del corso a cui appartengono gli attestati nello ZIP. Solo le iscrizioni di questa edizione verranno aggiornate a "completato".</p>
+        <select id="select-edizione-import" style="width:100%;padding:8px;">
+          <option value="">— Seleziona edizione corso —</option>
+          ${opts}
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-add" id="btn-conferma-edizione-import">Avanti, scegli ZIP</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("btn-conferma-edizione-import").addEventListener("click", () => {
+    const sel = document.getElementById("select-edizione-import").value;
+    if (!sel){ alert("Seleziona un'edizione corso."); return; }
+    _importZipEdizioneId = sel;
+    chiudiModal();
+    document.getElementById("input-import-zip-attestati").click();
+  });
+}
+
 async function importaZipAttestati(ev){
   const file = ev.target.files[0];
   if (!file) return;
   ev.target.value = "";
 
-  if (!confirm(`Importare gli attestati dal file ${file.name}?\n\nOgni PDF deve essere nominato con il codice fiscale del volontario (es. RSSMNL90H01G674A.pdf, o RSSMNL90H01G674A_2.pdf per attestati multipli della stessa persona).`)) return;
+  const edizioneId = _importZipEdizioneId;
+  _importZipEdizioneId = null;
+  if (!edizioneId){ alert("Nessuna edizione corso selezionata. Riprova dal pulsante \"Import massivo attestati\"."); return; }
+  const edizione = _edizioniCache.find(e => String(e.id) === String(edizioneId));
+
+  if (!confirm(`Importare gli attestati dal file ${file.name} per l'edizione "${edizione?.label||""}"?\n\nOgni PDF deve essere nominato con il codice fiscale del volontario (es. RSSMNL90H01G674A.pdf, o RSSMNL90H01G674A_2.pdf per attestati multipli della stessa persona).`)) return;
 
   const content = document.getElementById("page-content");
   const overlay = document.createElement("div");
@@ -2745,7 +2789,7 @@ async function importaZipAttestati(ev){
     const zip = await JSZip.loadAsync(buf);
     const pdfEntries = Object.values(zip.files).filter(f => !f.dir && /\.pdf$/i.test(f.name));
 
-    let ok = 0, nonTrovati = [], errori = [];
+    let ok = 0, nonTrovati = [], nonIscrittiEdizione = [], errori = [];
     let i = 0;
     for (const entry of pdfEntries){
       i++;
@@ -2765,6 +2809,12 @@ async function importaZipAttestati(ev){
         continue;
       }
 
+      const { data: iscrizione } = await sb.from("iscrizioni_corsi").select("id, stato").eq("volontario_id", volontario.id).eq("edizione_corso_id", edizioneId).maybeSingle();
+      if (!iscrizione){
+        nonIscrittiEdizione.push(`${nomeBase} (${volontario.cognome} ${volontario.nome}): non iscritto a questa edizione`);
+        continue;
+      }
+
       try{
         const blob = await entry.async("blob");
         const path = `${volontario.cognome}_${volontario.nome}/${Date.now()}_${nomeBase}`.replace(/\s+/g, "_");
@@ -2780,12 +2830,10 @@ async function importaZipAttestati(ev){
         });
         if (docErr) throw docErr;
 
-        // Aggiorna a "completato" tutte le iscrizioni di questo volontario
-        // che erano ancora "in_verifica" (coerente col caricamento singolo da scheda)
+        // Aggiorna a "completato" solo l'iscrizione di questo volontario per l'edizione selezionata
         await sb.from("iscrizioni_corsi")
           .update({ stato: "completato" })
-          .eq("volontario_id", volontario.id)
-          .eq("stato", "in_verifica");
+          .eq("id", iscrizione.id);
 
         ok++;
       }catch(err){
@@ -2794,8 +2842,9 @@ async function importaZipAttestati(ev){
     }
 
     overlay.remove();
-    let msg = `Import completato.\nAttestati caricati: ${ok}\nVolontari non trovati: ${nonTrovati.length}`;
+    let msg = `Import completato (${edizione?.label||""}).\nAttestati caricati: ${ok}\nVolontari non trovati: ${nonTrovati.length}\nNon iscritti a questa edizione: ${nonIscrittiEdizione.length}`;
     if (nonTrovati.length) msg += `\n\nNon trovati:\n` + nonTrovati.join("\n");
+    if (nonIscrittiEdizione.length) msg += `\n\nNon iscritti a questa edizione:\n` + nonIscrittiEdizione.join("\n");
     if (errori.length) msg += `\n\nErrori:\n` + errori.join("\n");
     alert(msg);
 
@@ -3097,7 +3146,8 @@ async function caricaVolontariEdizione(){
             let linkAttestato = "—";
             if (doc){
               const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(doc.storage_path);
-              linkAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a>`;
+              linkAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a> &nbsp;
+                <a href="#" data-rimuovi-attestato="${doc.id}" data-iscrizione="${r.id}" style="color:var(--rosso);font-size:11.5px;">Rimuovi</a>`;
             }
             return `
             <tr>
@@ -3126,7 +3176,8 @@ async function caricaVolontariEdizione(){
               cellaAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a> &nbsp;
                 <label style="cursor:pointer;color:var(--blu-500);font-size:11.5px;">Sostituisci
                   <input type="file" accept=".pdf,image/*" style="display:none;" data-upload-attestato="${r.id}" data-volontario="${r.volontari_formazione.id}" data-cognome="${escapeHtml(r.volontari_formazione.cognome)}" data-nome="${escapeHtml(r.volontari_formazione.nome)}">
-                </label>`;
+                </label> &nbsp;
+                <a href="#" data-rimuovi-attestato="${doc.id}" data-iscrizione="${r.id}" style="color:var(--rosso);font-size:11.5px;">Rimuovi</a>`;
             } else if (assente){
               cellaAttestato = `<span style="color:var(--grigio-600);">—</span>`;
             } else {
@@ -3158,6 +3209,11 @@ async function caricaVolontariEdizione(){
     wrap.querySelectorAll("[data-upload-attestato]").forEach(input => input.addEventListener("change", (ev) => caricaAttestatoIscrizione(ev, e)));
   }
 
+  wrap.querySelectorAll("[data-rimuovi-attestato]").forEach(a => a.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    rimuoviAttestatoIscrizione(parseInt(a.dataset.rimuoviAttestato), parseInt(a.dataset.iscrizione));
+  }));
+
   wrap.querySelectorAll("[data-apri-volontario]").forEach(a => a.addEventListener("click", (ev) => {
     ev.preventDefault();
     apriModalVolontario(parseInt(a.dataset.apriVolontario), "edizione");
@@ -3186,6 +3242,23 @@ async function caricaAttestatoIscrizione(ev, edizione){
   if (errDoc){ alert("Errore: " + errDoc.message); return; }
 
   await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+
+  caricaVolontariEdizione();
+}
+
+async function rimuoviAttestatoIscrizione(docId, iscrizioneId){
+  if (!confirm("Rimuovere questo attestato? Il file verrà eliminato e lo stato dell'iscrizione tornerà \"In verifica\".")) return;
+
+  const { data: doc, error: getErr } = await sb.from("documenti_volontario").select("storage_path").eq("id", docId).maybeSingle();
+  if (getErr || !doc){ alert("Errore: attestato non trovato."); return; }
+
+  const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([doc.storage_path]);
+  if (rmErr){ alert("Errore eliminazione file: " + rmErr.message); return; }
+
+  const { error: delErr } = await sb.from("documenti_volontario").delete().eq("id", docId);
+  if (delErr){ alert("Errore: " + delErr.message); return; }
+
+  await sb.from("iscrizioni_corsi").update({ stato: "in_verifica" }).eq("id", iscrizioneId);
 
   caricaVolontariEdizione();
 }
