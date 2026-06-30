@@ -1420,7 +1420,7 @@ async function renderTlc(){
       `}
     </div>
     <div class="results-count" id="tlc-results-count"></div>
-    <div class="card-grid" id="tlc-grid"></div>
+    <div id="tlc-grid"></div>
   `;
 
   document.getElementById("tlc-search").addEventListener("input", e => { _tlcFiltro.search = e.target.value; renderTlcGrid(); });
