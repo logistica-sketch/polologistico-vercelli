@@ -543,3 +543,9 @@ input,select,textarea{font-family:inherit;}
   .login-box{padding:28px 22px;max-width:100%;}
   .stat-card .num{font-size:22px;}
 }
+
+/* Report formazione */
+.modal-box-lg{ max-width:880px; width:95%; }
+.report-stat-box{ background:var(--grigio-100,#f3f4f6); border-radius:8px; padding:14px; text-align:center; }
+.report-stat-num{ font-size:26px; font-weight:700; color:var(--blu-900); }
+.report-stat-lbl{ font-size:11.5px; color:var(--grigio-600); margin-top:2px; }

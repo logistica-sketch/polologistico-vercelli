@@ -2602,6 +2602,7 @@ async function renderFormazione(){
       </button>
       <input type="file" id="input-import-zip-attestati" accept=".zip" style="display:none;">
       <button class="btn-add" id="form-btn-verifica-mancanti" style="background:var(--rosso);">⚠️ Verifica attestati mancanti</button>
+      <button class="btn-add" id="form-btn-report" style="background:var(--blu-900);">📊 Report formazione</button>
       <button class="btn-add" id="form-btn-nuova">+ Nuova edizione corso</button>
     </div>
     <div class="results-count" id="form-results-count"></div>
@@ -2616,8 +2617,168 @@ async function renderFormazione(){
   document.getElementById("form-btn-import-zip").addEventListener("click", () => apriModalSceltaEdizioneImport());
   document.getElementById("input-import-zip-attestati").addEventListener("change", (ev) => importaZipAttestati(ev));
   document.getElementById("form-btn-verifica-mancanti").addEventListener("click", () => apriModalAttestatiMancanti());
+  document.getElementById("form-btn-report").addEventListener("click", () => apriModalReportFormazione());
 
   renderFormazioneList();
+}
+
+async function apriModalReportFormazione(){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box modal-box-lg">
+      <div class="modal-head">
+        <h3>📊 Report formazione</h3>
+        <button class="modal-close" onclick="chiudiModal()">✕</button>
+      </div>
+      <div class="modal-body" id="report-formazione-body"><div class="loading-spin">Calcolo in corso…</div></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  await caricaReportFormazione();
+}
+
+async function caricaReportFormazione(){
+  const body = document.getElementById("report-formazione-body");
+  if (!body) return;
+
+  const [{ data: volontari, error: errV }, { data: iscrizioni, error: errI }] = await Promise.all([
+    sb.from("volontari_formazione").select("id, cognome, nome, sezione_ana"),
+    sb.from("iscrizioni_corsi").select("stato, volontario_id, edizioni_corso(id, label, data_corso, stato, catalogo_corsi(codice, descrizione))")
+  ]);
+  if (errV || errI){ body.innerHTML = `<p>Errore: ${escapeHtml((errV||errI).message)}</p>`; return; }
+
+  const totVolontari = volontari.length;
+  const sezioneDiVolontario = {};
+  volontari.forEach(v => sezioneDiVolontario[v.id] = v.sezione_ana || "Non indicata");
+
+  // Per sezione: n. volontari distinti coinvolti in formazione
+  const perSezione = {};
+  const volontariConIscrizioni = new Set();
+  iscrizioni.forEach(r => volontariConIscrizioni.add(r.volontario_id));
+  volontari.forEach(v => {
+    if (!volontariConIscrizioni.has(v.id)) return;
+    const sez = sezioneDiVolontario[v.id];
+    perSezione[sez] = (perSezione[sez]||0) + 1;
+  });
+
+  // Per corso (edizione): totale iscritti, completati, in verifica, assenti
+  const perEdizione = {};
+  iscrizioni.forEach(r => {
+    const ed = r.edizioni_corso;
+    if (!ed) return;
+    const key = ed.id;
+    if (!perEdizione[key]) perEdizione[key] = {
+      label: ed.label, data: ed.data_corso, stato: ed.stato,
+      codice: ed.catalogo_corsi?.codice || "—",
+      iscritti:0, completati:0, in_verifica:0, assenti:0
+    };
+    perEdizione[key].iscritti++;
+    if (r.stato === "completato") perEdizione[key].completati++;
+    else if (r.stato === "in_verifica" || r.stato === "iscritto") perEdizione[key].in_verifica++;
+    else if (r.stato === "assente") perEdizione[key].assenti++;
+  });
+  const edizioniArr = Object.values(perEdizione).sort((a,b) => (b.data||"").localeCompare(a.data||""));
+
+  // Per tipologia corso (codice catalogo): n. edizioni, n. attestati completati totali
+  const perTipologia = {};
+  edizioniArr.forEach(e => {
+    if (!perTipologia[e.codice]) perTipologia[e.codice] = { edizioni:0, completati:0 };
+    perTipologia[e.codice].edizioni++;
+    perTipologia[e.codice].completati += e.completati;
+  });
+
+  const totIscrizioni = iscrizioni.length;
+  const totCompletati = iscrizioni.filter(r => r.stato === "completato").length;
+  const totInVerifica = iscrizioni.filter(r => r.stato === "in_verifica" || r.stato === "iscritto").length;
+  const totAssenti = iscrizioni.filter(r => r.stato === "assente").length;
+
+  body.innerHTML = `
+    <div class="report-stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+      <div class="report-stat-box"><div class="report-stat-num">${totVolontari}</div><div class="report-stat-lbl">Volontari censiti</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${volontariConIscrizioni.size}</div><div class="report-stat-lbl">Volontari in formazione</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${edizioniArr.length}</div><div class="report-stat-lbl">Edizioni corso</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${totCompletati}</div><div class="report-stat-lbl">Attestati completati</div></div>
+    </div>
+
+    <h4>Per sezione ANA (volontari in formazione)</h4>
+    <table class="storico-table">
+      <thead><tr><th>Sezione</th><th>Volontari</th></tr></thead>
+      <tbody>
+        ${Object.entries(perSezione).sort((a,b)=>b[1]-a[1]).map(([sez,n]) => `<tr><td>${escapeHtml(sez)}</td><td>${n}</td></tr>`).join("")}
+      </tbody>
+    </table>
+
+    <h4 style="margin-top:18px;">Per tipologia corso</h4>
+    <table class="storico-table">
+      <thead><tr><th>Codice corso</th><th>Edizioni</th><th>Attestati completati</th></tr></thead>
+      <tbody>
+        ${Object.entries(perTipologia).sort((a,b)=>b[1].completati-a[1].completati).map(([cod,d]) => `<tr><td>${escapeHtml(cod)}</td><td>${d.edizioni}</td><td>${d.completati}</td></tr>`).join("")}
+      </tbody>
+    </table>
+
+    <h4 style="margin-top:18px;">Per edizione corso</h4>
+    <table class="storico-table">
+      <thead><tr><th>Edizione</th><th>Codice</th><th>Data</th><th>Stato</th><th>Iscritti</th><th>Completati</th><th>In verifica</th><th>Assenti</th></tr></thead>
+      <tbody>
+        ${edizioniArr.map(e => `
+          <tr>
+            <td>${escapeHtml(e.label)}</td>
+            <td>${escapeHtml(e.codice)}</td>
+            <td>${e.data ? formatDataIt(e.data) : "—"}</td>
+            <td>${labelStatoCorso(e.stato)}</td>
+            <td>${e.iscritti}</td>
+            <td>${e.completati}</td>
+            <td>${e.in_verifica}</td>
+            <td>${e.assenti}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+
+    <div style="margin-top:18px;display:flex;gap:8px;">
+      <button class="btn-add" id="btn-export-report-formazione" style="background:var(--blu-700);">📥 Esporta Excel</button>
+    </div>
+  `;
+
+  document.getElementById("btn-export-report-formazione").addEventListener("click", () => {
+    const wb = XLSX.utils.book_new();
+
+    const wsRiepilogo = XLSX.utils.aoa_to_sheet([
+      ["Report Formazione", new Date().toLocaleDateString("it-IT")],
+      [],
+      ["Volontari censiti", totVolontari],
+      ["Volontari in formazione", volontariConIscrizioni.size],
+      ["Edizioni corso", edizioniArr.length],
+      ["Iscrizioni totali", totIscrizioni],
+      ["Attestati completati", totCompletati],
+      ["In verifica", totInVerifica],
+      ["Assenti", totAssenti],
+    ]);
+    XLSX.utils.book_append_sheet(wb, wsRiepilogo, "Riepilogo");
+
+    const wsSezioni = XLSX.utils.json_to_sheet(
+      Object.entries(perSezione).sort((a,b)=>b[1]-a[1]).map(([sez,n]) => ({ Sezione: sez, Volontari: n }))
+    );
+    XLSX.utils.book_append_sheet(wb, wsSezioni, "Per sezione");
+
+    const wsTipologie = XLSX.utils.json_to_sheet(
+      Object.entries(perTipologia).map(([cod,d]) => ({ "Codice corso": cod, Edizioni: d.edizioni, "Attestati completati": d.completati }))
+    );
+    XLSX.utils.book_append_sheet(wb, wsTipologie, "Per tipologia");
+
+    const wsEdizioni = XLSX.utils.json_to_sheet(
+      edizioniArr.map(e => ({
+        Edizione: e.label, Codice: e.codice, Data: e.data ? formatDataIt(e.data) : "—", Stato: labelStatoCorso(e.stato),
+        Iscritti: e.iscritti, Completati: e.completati, "In verifica": e.in_verifica, Assenti: e.assenti
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, wsEdizioni, "Per edizione");
+
+    XLSX.writeFile(wb, `Report_Formazione_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
 }
 
 async function apriModalAttestatiMancanti(){
