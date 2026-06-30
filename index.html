@@ -1578,7 +1578,7 @@ function renderTlcGrid(){
     htmlUscita = `
       <div class="stat-card" style="margin-bottom:20px;border-left:3px solid var(--rosso);">
         <div class="section-title" style="margin:0 0 10px;color:var(--rosso);">📤 Attualmente in uscita (${inUscita.length})</div>
-        <div class="card-grid">${inUscita.map(renderCardApparatoTlc).join("")}</div>
+        <div class="tlc-lista-verticale">${inUscita.map(renderCardApparatoTlc).join("")}</div>
       </div>
     `;
   }
@@ -1602,7 +1602,7 @@ function renderTlcGrid(){
           <span class="collapse-arrow">${aperto?"▴":"▾"}</span>
         </button>
         <div class="collapse-body" style="display:${aperto?"block":"none"};">
-          <div class="card-grid">${apparatiGruppo.map(renderCardApparatoTlc).join("")}</div>
+          <div class="tlc-lista-verticale">${apparatiGruppo.map(renderCardApparatoTlc).join("")}</div>
         </div>
       </div>
     `;

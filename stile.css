@@ -266,6 +266,24 @@ input,select,textarea{font-family:inherit;}
   display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
   gap:16px;
 }
+.tlc-lista-verticale{
+  display:flex;flex-direction:column;gap:8px;
+}
+.tlc-lista-verticale .veicolo-card.tlc-card{
+  display:flex;align-items:center;gap:14px;
+  padding:10px 14px;
+}
+.tlc-lista-verticale .tlc-card-head{
+  flex-direction:column;align-items:flex-start;gap:4px;
+  padding:0;flex-shrink:0;
+}
+.tlc-lista-verticale .veicolo-card .info{
+  padding:0;flex:1;min-width:0;
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+}
+.tlc-lista-verticale .veicolo-card .targa{flex-shrink:0;}
+.tlc-lista-verticale .veicolo-card .modello{flex-shrink:0;}
+.tlc-lista-verticale .veicolo-card .meta{margin-top:0;}
 .veicolo-card{
   background:#fff;border-radius:var(--radius);overflow:hidden;
   box-shadow:var(--shadow);cursor:pointer;
