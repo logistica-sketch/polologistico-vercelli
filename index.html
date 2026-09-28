@@ -1584,8 +1584,9 @@ function renderTlcGrid(){
   }
 
   // Raggruppamento per categoria, collassabile, chiuso di default
+  // (esclude gli apparati "in uscita", già mostrati nel riquadro fisso sopra)
   const gruppi = {};
-  filtrati.forEach(a => {
+  filtrati.filter(a => !_idApparatiInUsoTlc.has(a.id)).forEach(a => {
     const k = a.categoria || "Senza categoria";
     if (!gruppi[k]) gruppi[k] = [];
     gruppi[k].push(a);
@@ -1906,19 +1907,22 @@ async function renderMovimentazioniTlc(){
 
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
 
+  const soloLettura = livelloPermesso("tlc") !== "completo";
+
   content.innerHTML = `
     <div class="toolbar" style="justify-content:space-between;">
       <button class="btn-cancel" id="btn-torna-apparati-tlc">← Torna agli apparati</button>
-      <button class="btn-add" id="btn-nuova-movimentazione-tlc">+ Nuova movimentazione</button>
+      ${soloLettura ? "" : `<button class="btn-add" id="btn-nuova-movimentazione-tlc">+ Nuova movimentazione</button>`}
     </div>
+    ${soloLettura ? `<p style="font-size:12px;color:var(--grigio-600);">Visualizzazione in sola lettura. Il tuo livello di accesso TLC non permette di registrare movimentazioni.</p>` : ""}
     <div id="movimentazioni-tlc-list"></div>
   `;
   document.getElementById("btn-torna-apparati-tlc").addEventListener("click", () => renderTlc());
-  document.getElementById("btn-nuova-movimentazione-tlc").addEventListener("click", () => apriModalNuovaMovimentazioneTlc());
-  renderTabellaMovimentazioniTlc(data);
+  if (!soloLettura) document.getElementById("btn-nuova-movimentazione-tlc").addEventListener("click", () => apriModalNuovaMovimentazioneTlc());
+  renderTabellaMovimentazioniTlc(data, soloLettura);
 }
 
-function renderTabellaMovimentazioniTlc(data){
+function renderTabellaMovimentazioniTlc(data, soloLettura){
   const wrap = document.getElementById("movimentazioni-tlc-list");
   if (!data || data.length === 0){
     wrap.innerHTML = `<div class="empty-state"><div class="ic">📻</div>Nessuna movimentazione registrata.</div>`;
@@ -1926,7 +1930,7 @@ function renderTabellaMovimentazioniTlc(data){
   }
   wrap.innerHTML = `
     <table class="storico-table">
-      <thead><tr><th>Uscita</th><th>Rientro</th><th>Operatore</th><th>Sezione</th><th>Apparati</th><th>Stato</th><th>Bolla</th><th></th></tr></thead>
+      <thead><tr><th>Uscita</th><th>Rientro</th><th>Operatore</th><th>Sezione</th><th>Apparati</th><th>Stato</th><th>Bolla</th>${soloLettura ? "" : "<th></th><th></th>"}</tr></thead>
       <tbody>
         ${data.map(r => {
           const apparati = (r.movimentazioni_tlc_apparati||[]).map(a => a.tlc_apparati?.selettiva).filter(Boolean).join(", ");
@@ -1939,6 +1943,7 @@ function renderTabellaMovimentazioniTlc(data){
             <td>${escapeHtml(apparati)}</td>
             <td>${r.stato === "in_uso" ? '<span class="tag" style="background:var(--giallo-bg);color:var(--giallo);">IN USO</span>' : '<span class="tag" style="background:var(--verde-bg);color:var(--verde);">RIENTRATO</span>'}</td>
             <td>${r.bolla_path ? `<a href="${sb.storage.from(STORAGE_BUCKET_BOLLE).getPublicUrl(r.bolla_path).data.publicUrl}" target="_blank" rel="noopener">PDF</a>` : "—"}</td>
+            ${soloLettura ? "" : `
             <td>
               <label class="row-del" style="cursor:pointer;">
                 Carica firmata
@@ -1946,30 +1951,33 @@ function renderTabellaMovimentazioniTlc(data){
               </label>
             </td>
             <td>${r.stato === "in_uso" ? `<button class="row-del" style="color:var(--blu-500);" data-rientro="${r.id}">Registra rientro</button>` : ""}</td>
+            `}
           </tr>
         `}).join("")}
       </tbody>
     </table>
   `;
+  if (soloLettura) return;
   wrap.querySelectorAll("[data-upload-bolla]").forEach(input => {
     input.addEventListener("change", (e) => caricaBollaFirmata(e.target));
   });
   wrap.querySelectorAll("[data-rientro]").forEach(b => b.addEventListener("click", () => registraRientroTlc(parseInt(b.dataset.rientro))));
 }
 
-function pathBollaFirmata(sezione, stato, dataUscita, dataRientro, estensione){
+function pathBollaFirmata(sezione, stato, dataUscita, dataRientro, estensione, movId){
   const tipo = stato === "rientrato" ? "rientro" : "uscita";
   const dataRif = (tipo === "rientro" && dataRientro) ? dataRientro : dataUscita;
   const sezioneSlug = sezione.replace(/\s+/g, "_");
-  return `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}.${estensione}`;
+  return `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}_${movId}.${estensione}`;
 }
 
 async function caricaBollaFirmata(input){
+  if (livelloPermesso("tlc") !== "completo"){ alert("Il tuo livello di accesso TLC non permette questa operazione."); return; }
   const file = input.files[0];
   if (!file) return;
   const movId = parseInt(input.dataset.uploadBolla);
   const estensione = file.name.split(".").pop().toLowerCase();
-  const path = pathBollaFirmata(input.dataset.sezione, input.dataset.stato, input.dataset.dataUscita, input.dataset.dataRientro, estensione);
+  const path = pathBollaFirmata(input.dataset.sezione, input.dataset.stato, input.dataset.dataUscita, input.dataset.dataRientro, estensione, movId);
   const vecchioPath = input.dataset.vecchioPath;
 
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).upload(path, file, { upsert: true });
@@ -1988,6 +1996,7 @@ async function caricaBollaFirmata(input){
 const TESTO_RESPONSABILITA_TLC = "Il sottoscritto dichiara di aver ricevuto in consegna il materiale sopra indicato, impegnandosi a utilizzarlo esclusivamente per l'attività indicata e a restituirlo integralmente, al termine dell'utilizzo, nello stato in cui è stato consegnato. In caso di smarrimento o di guasto dovuto a incuria, il consegnatario si impegna a rimborsare alla Sede Nazionale le spese di ripristino.";
 
 async function apriModalNuovaMovimentazioneTlc(){
+  if (livelloPermesso("tlc") !== "completo"){ alert("Il tuo livello di accesso TLC non permette questa operazione."); return; }
   const { data: apparatiLiberi } = await sb
     .from("tlc_apparati")
     .select("*")
@@ -2255,6 +2264,7 @@ async function apriModalNuovaMovimentazioneTlc(){
 }
 
 async function registraRientroTlc(movId){
+  if (livelloPermesso("tlc") !== "completo"){ alert("Il tuo livello di accesso TLC non permette questa operazione."); return; }
   const { data: mov, error: errMov } = await sb.from("movimentazioni_tlc").select("*").eq("id", movId).single();
   if (errMov){ alert("Errore: " + errMov.message); return; }
 
@@ -2535,7 +2545,7 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   const tipo = mov.stato === "rientrato" ? "rientro" : "uscita";
   const dataRif = (tipo === "rientro" && mov.data_rientro) ? mov.data_rientro : mov.data_uscita;
   const sezioneSlug = mov.sezione_ana.replace(/\s+/g, "_");
-  const path = `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}.pdf`;
+  const path = `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}_${mov.id}.pdf`;
 
   const vecchioPath = mov.bolla_path;
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).upload(path, blob, { upsert: true, contentType: "application/pdf" });
