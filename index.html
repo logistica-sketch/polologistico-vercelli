@@ -1485,11 +1485,36 @@ async function importaMagazzinoTlcExcel(ev){
         continue;
       }
 
+      const categoria = String(riga["Categoria"] || "").trim().toUpperCase() || null;
+      const marca = String(riga["Marca"] || "").trim().toUpperCase() || null;
+      const sottocategoriaRadio = String(riga["Sottocategoria (solo Radio)"] || "").trim().toUpperCase() || null;
+
+      // Validazione contro le liste canoniche gestite in Impostazioni:
+      // niente categorie/marche/sottocategorie "fantasma" introdotte da un refuso nel file.
+      if (categoria && !_tlcCategorie.includes(categoria)){
+        errori.push(`${codiceAna}: categoria "${categoria}" non esiste tra quelle gestite in Impostazioni, riga saltata.`);
+        continue;
+      }
+      if (marca && !_tlcMarche.includes(marca)){
+        errori.push(`${codiceAna}: marca "${marca}" non esiste tra quelle gestite in Impostazioni, riga saltata.`);
+        continue;
+      }
+      if (categoria === "RADIO"){
+        if (!sottocategoriaRadio){
+          errori.push(`${codiceAna}: categoria RADIO richiede la sottocategoria, riga saltata.`);
+          continue;
+        }
+        if (!_tlcSottocategorieRadio.includes(sottocategoriaRadio)){
+          errori.push(`${codiceAna}: sottocategoria "${sottocategoriaRadio}" non esiste tra quelle gestite in Impostazioni, riga saltata.`);
+          continue;
+        }
+      }
+
       const payload = {
         codice_ana: codiceAna,
-        categoria: String(riga["Categoria"] || "").trim().toUpperCase() || null,
-        sottocategoria_radio: String(riga["Sottocategoria (solo Radio)"] || "").trim().toUpperCase() || null,
-        marca: String(riga["Marca"] || "").trim().toUpperCase() || null,
+        categoria: categoria,
+        sottocategoria_radio: categoria === "RADIO" ? sottocategoriaRadio : null,
+        marca: marca,
         modello: String(riga["Modello"] || "").trim() || null,
         matricola: String(riga["Matricola"] || "").trim() || null,
         selettiva: String(riga["Selettiva"] || "").trim().toUpperCase() || null,
@@ -1765,6 +1790,16 @@ function renderTabDatiTlc(){
       }
     } else if (document.getElementById("input-codice-ana-header")){
       codiceAna = document.getElementById("input-codice-ana-header").value.trim().toUpperCase();
+    }
+
+    if (codiceAna !== a.codice_ana){
+      let query = sb.from("tlc_apparati").select("id").eq("codice_ana", codiceAna);
+      if (a.id) query = query.neq("id", a.id);
+      const { data: duplicato } = await query.maybeSingle();
+      if (duplicato){
+        alert(`Il codice ANA "${codiceAna}" è già assegnato a un altro apparato. Scegline uno diverso.`);
+        return;
+      }
     }
 
     const payload = {
@@ -2256,7 +2291,11 @@ async function apriModalNuovaMovimentazioneTlc(){
     await sb.from("movimentazioni_tlc_apparati").insert(righe);
 
     const apparatiDettaglio = disponibili.filter(a => apparatiSelezionati.includes(a.id));
-    await generaEArchiviaBollaTlc(mov, apparatiDettaglio);
+    try{
+      await generaEArchiviaBollaTlc(mov, apparatiDettaglio);
+    }catch(err){
+      alert("Movimentazione salvata, ma la generazione della bolla PDF è fallita: " + err.message + "\n\nPuoi ricaricare la bolla firmata manualmente dall'elenco movimentazioni.");
+    }
 
     chiudiModal();
     renderMovimentazioniTlc();
@@ -2410,7 +2449,11 @@ async function apriModalFirmaRientro(mov){
     const { data: movAggiornato, error } = await sb.from("movimentazioni_tlc").update(aggiornato).eq("id", mov.id).select().single();
     if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Registra rientro"; return; }
 
-    await generaEArchiviaBollaTlc(movAggiornato, apparati, { scarica: true });
+    try{
+      await generaEArchiviaBollaTlc(movAggiornato, apparati, { scarica: true });
+    }catch(err){
+      alert("Rientro registrato, ma la generazione della bolla PDF è fallita: " + err.message + "\n\nPuoi ricaricare la bolla firmata manualmente dall'elenco movimentazioni.");
+    }
 
     chiudiModal();
     renderMovimentazioniTlc();
@@ -2479,7 +2522,7 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   y += 6;
 
   apparati.forEach(a => {
-    doc.text(a.selettiva, 14, y);
+    doc.text(a.selettiva || "—", 14, y);
     doc.text(`${a.marca||""} ${a.modello||""}`.trim().slice(0,30), 60, y);
     doc.text(a.categoria||"—", 130, y);
     doc.text(a.matricola||"—", 165, y);
