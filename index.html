@@ -556,10 +556,11 @@ function attivaToggleCollapse(toggleId, bodyId){
 }
 
 async function caricaBloccoScadenzeAutomezzi(){
-  const [{ data: scadenze }, { data: automezzi }] = await Promise.all([
+  const [{ data: scadenze, error: errScad }, { data: automezzi, error: errMezzi }] = await Promise.all([
     sb.from("v_scadenze").select("*"),
     sb.from("automezzi").select("*")
   ]);
+  if (errScad || errMezzi){ alert("Errore: " + (errScad || errMezzi).message); return; }
 
   const elenco = (scadenze || [])
     .filter(s => s.data_scadenza)
@@ -1135,7 +1136,8 @@ async function renderTabFotoMezzo(){
 
       // aggiorna flag in DB
       const campo = "foto_" + lato;
-      await sb.from("automezzi").update({ [campo]: true }).eq("id", m.id);
+      const { error: errFlag } = await sb.from("automezzi").update({ [campo]: true }).eq("id", m.id);
+      if (errFlag){ alert("Errore: " + errFlag.message); return; }
       m[campo] = true;
       const idx = _automezziCache.findIndex(x => x.id === m.id);
       if (idx >= 0) _automezziCache[idx][campo] = true;
@@ -1298,7 +1300,8 @@ async function caricaManutenzioni(){
   `;
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo intervento?")) return;
-    await sb.from("manutenzioni_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("manutenzioni_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
     caricaManutenzioni();
     refreshAlertBadge();
   }));
@@ -1389,7 +1392,8 @@ async function caricaMovimenti(){
   `;
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questa movimentazione?")) return;
-    await sb.from("movimenti_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("movimenti_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
     caricaMovimenti();
   }));
 }
@@ -1448,12 +1452,15 @@ function mostraFormMovimento(){
 let _tlcCache = [];
 let _idApparatiInUsoTlc = new Set();
 
+// I caricatori di supporto TLC ritornano l'eventuale errore (null se ok).
 async function caricaApparatiInUsoTlc(){
-  const { data } = await sb
+  const { data, error } = await sb
     .from("movimentazioni_tlc_apparati")
     .select("apparato_id, movimentazioni_tlc!inner(stato)")
     .eq("movimentazioni_tlc.stato", "in_uso");
+  if (error) return error;
   _idApparatiInUsoTlc = new Set((data||[]).map(r => r.apparato_id));
+  return null;
 }
 let _tlcCategorie = [];
 let _tlcMarche = [];
@@ -1461,18 +1468,24 @@ let _tlcSottocategorieRadio = [];
 let _tlcFiltro = { search:"", categoria:"", marca:"" };
 
 async function caricaCategorieTlc(){
-  const { data } = await sb.from("tlc_categorie").select("*").order("nome");
+  const { data, error } = await sb.from("tlc_categorie").select("*").order("nome");
+  if (error) return error;
   _tlcCategorie = (data || []).map(c => c.nome);
+  return null;
 }
 
 async function caricaMarcheTlc(){
-  const { data } = await sb.from("tlc_marche").select("*").order("nome");
+  const { data, error } = await sb.from("tlc_marche").select("*").order("nome");
+  if (error) return error;
   _tlcMarche = (data || []).map(m => m.nome);
+  return null;
 }
 
 async function caricaSottocategorieRadioTlc(){
-  const { data } = await sb.from("tlc_sottocategorie_radio").select("*").order("nome");
+  const { data, error } = await sb.from("tlc_sottocategorie_radio").select("*").order("nome");
+  if (error) return error;
   _tlcSottocategorieRadio = (data || []).map(s => s.nome);
+  return null;
 }
 
 async function renderTlc(){
@@ -1480,10 +1493,9 @@ async function renderTlc(){
   const { data, error } = await sb.from("tlc_apparati").select("*").order("selettiva");
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _tlcCache = data;
-  await caricaCategorieTlc();
-  await caricaMarcheTlc();
-  await caricaSottocategorieRadioTlc();
-  await caricaApparatiInUsoTlc();
+  const errSupporto = (await caricaCategorieTlc()) || (await caricaMarcheTlc())
+    || (await caricaSottocategorieRadioTlc()) || (await caricaApparatiInUsoTlc());
+  if (errSupporto){ alert("Errore: " + errSupporto.message); return; }
   const livello = livelloPermesso("tlc");
   const soloLettura = livello !== "completo";
 
@@ -1615,7 +1627,8 @@ async function importaMagazzinoTlcExcel(ev){
       };
 
       try{
-        const { data: esistente } = await sb.from("tlc_apparati").select("id").eq("codice_ana", codiceAna).maybeSingle();
+        const { data: esistente, error: errEsist } = await sb.from("tlc_apparati").select("id").eq("codice_ana", codiceAna).maybeSingle();
+        if (errEsist) throw errEsist;
         if (esistente){
           const { error } = await sb.from("tlc_apparati").update(payload).eq("id", esistente.id);
           if (error) throw error;
@@ -1787,11 +1800,12 @@ function renderModalTlc(){
 }
 
 async function generaProssimoCodiceAna(){
-  const { data } = await sb
+  const { data, error } = await sb
     .from("tlc_apparati")
     .select("codice_ana")
     .ilike("codice_ana", "TLC%")
     .order("codice_ana", { ascending: false });
+  if (error){ alert("Errore: " + error.message); return null; }
 
   let max = 0;
   (data || []).forEach(r => {
@@ -1878,6 +1892,7 @@ function renderTabDatiTlc(){
       codiceAna = (fd.get("codice_ana") || "").trim().toUpperCase();
       if (!codiceAna){
         codiceAna = await generaProssimoCodiceAna();
+        if (!codiceAna) return;
       }
     } else if (document.getElementById("input-codice-ana-header")){
       codiceAna = document.getElementById("input-codice-ana-header").value.trim().toUpperCase();
@@ -1886,7 +1901,8 @@ function renderTabDatiTlc(){
     if (codiceAna !== a.codice_ana){
       let query = sb.from("tlc_apparati").select("id").eq("codice_ana", codiceAna);
       if (a.id) query = query.neq("id", a.id);
-      const { data: duplicato } = await query.maybeSingle();
+      const { data: duplicato, error: errDup } = await query.maybeSingle();
+      if (errDup){ alert("Errore: " + errDup.message); return; }
       if (duplicato){
         alert(`Il codice ANA "${codiceAna}" è già assegnato a un altro apparato. Scegline uno diverso.`);
         return;
@@ -2124,16 +2140,18 @@ const TESTO_RESPONSABILITA_TLC = "Il sottoscritto dichiara di aver ricevuto in c
 
 async function apriModalNuovaMovimentazioneTlc(){
   if (livelloPermesso("tlc") !== "completo"){ alert("Il tuo livello di accesso TLC non permette questa operazione."); return; }
-  const { data: apparatiLiberi } = await sb
+  const { data: apparatiLiberi, error: errApp } = await sb
     .from("tlc_apparati")
     .select("*")
     .order("codice_ana");
+  if (errApp){ alert("Errore: " + errApp.message); return; }
 
   // Escludi apparati attualmente "in_uso" in una movimentazione non rientrata
-  const { data: inUso } = await sb
+  const { data: inUso, error: errInUso } = await sb
     .from("movimentazioni_tlc_apparati")
     .select("apparato_id, movimentazioni_tlc!inner(stato)")
     .eq("movimentazioni_tlc.stato", "in_uso");
+  if (errInUso){ alert("Errore: " + errInUso.message); return; }
   const idInUso = new Set((inUso||[]).map(r => r.apparato_id));
   const disponibili = apparatiLiberi.filter(a => !idInUso.has(a.id));
 
@@ -2375,8 +2393,9 @@ async function apriModalNuovaMovimentazioneTlc(){
     const righe = apparatiSelezionati.map(id => ({ movimentazione_id: mov.id, apparato_id: id }));
     const { error: errRighe } = await sb.from("movimentazioni_tlc_apparati").insert(righe);
     if (errRighe){
-      await sb.from("movimentazioni_tlc").delete().eq("id", mov.id);
-      alert("Errore: " + errRighe.message);
+      const { error: errAnnulla } = await sb.from("movimentazioni_tlc").delete().eq("id", mov.id);
+      alert("Errore: " + errRighe.message +
+        (errAnnulla ? `\n\nInoltre non è stato possibile annullare la movimentazione #${mov.id}: ${errAnnulla.message}` : ""));
       btn.disabled=false; btn.textContent="Salva e genera bolla";
       return;
     }
@@ -2442,10 +2461,11 @@ function parseDataItInput(s){
 }
 
 async function apriModalFirmaRientro(mov){
-  const { data: righe } = await sb
+  const { data: righe, error: errRighe } = await sb
     .from("movimentazioni_tlc_apparati")
     .select("apparato_id, tlc_apparati(*)")
     .eq("movimentazione_id", mov.id);
+  if (errRighe){ alert("Errore: " + errRighe.message); return; }
   const apparati = (righe||[]).map(r => r.tlc_apparati).filter(Boolean);
   const haFirmaPersonale = !!state.profile.firma_personale_path;
 
@@ -2668,17 +2688,23 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   const path = `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}_${mov.id}.pdf`;
 
   const vecchioPath = mov.bolla_path;
+  let errArchivio = null;
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).upload(path, blob, { upsert: true, contentType: "application/pdf" });
-  if (!upErr){
+  if (upErr){
+    errArchivio = upErr;
+  } else {
     if (vecchioPath && vecchioPath !== path){
       await sb.storage.from(STORAGE_BUCKET_BOLLE).remove([vecchioPath]);
     }
-    await sb.from("movimentazioni_tlc").update({ bolla_path: path }).eq("id", mov.id);
+    const { error: errAgg } = await sb.from("movimentazioni_tlc").update({ bolla_path: path }).eq("id", mov.id);
+    if (errAgg) errArchivio = errAgg;
   }
 
   if (opzioni.scarica !== false){
     doc.save(`bolla_movimentazione_${mov.id}_${tipo}.pdf`);
   }
+  // Il PDF è comunque stato scaricato; segnaliamo al chiamante che l'archiviazione è fallita.
+  if (errArchivio) throw new Error("archiviazione della bolla non riuscita: " + errArchivio.message);
 }
 
 
@@ -2706,11 +2732,12 @@ let _formazioneFiltro = { search:"", stato:"", tipologia:"" };
 
 async function renderFormazione(){
   const content = document.getElementById("page-content");
-  const [{ data: edizioni, error }, { data: catalogo }] = await Promise.all([
+  const [{ data: edizioni, error }, { data: catalogo, error: errCat }] = await Promise.all([
     sb.from("edizioni_corso").select("*, catalogo_corsi(codice, descrizione)").order("data_corso", { ascending:false }),
     sb.from("catalogo_corsi").select("*").order("codice")
   ]);
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  if (errCat){ alert("Errore: " + errCat.message); return; }
   _edizioniCache = edizioni;
   _catalogoCache = catalogo;
 
@@ -2985,7 +3012,8 @@ async function caricaAttestatiMancanti(){
   body.querySelectorAll("[data-toggle-assente-mancanti]").forEach(chk => chk.addEventListener("change", async (ev) => {
     if (!ev.target.checked) return;
     const iscrizioneId = parseInt(ev.target.dataset.toggleAssenteMancanti);
-    await sb.from("iscrizioni_corsi").update({ stato: "assente" }).eq("id", iscrizioneId);
+    const { error } = await sb.from("iscrizioni_corsi").update({ stato: "assente" }).eq("id", iscrizioneId);
+    if (error){ alert("Errore: " + error.message); ev.target.checked = false; return; }
     caricaAttestatiMancanti();
   }));
   body.querySelectorAll("[data-upload-attestato-mancanti]").forEach(input => input.addEventListener("change", (ev) => caricaAttestatoDaListaMancanti(ev)));
@@ -3012,7 +3040,8 @@ async function caricaAttestatoDaListaMancanti(ev){
   });
   if (errDoc){ alert("Errore: " + errDoc.message); return; }
 
-  await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+  const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+  if (errStato){ alert("Errore: " + errStato.message); return; }
 
   caricaAttestatiMancanti();
 }
@@ -3094,13 +3123,15 @@ async function importaZipAttestati(ev){
       }
       const cf = cfMatch[1].toUpperCase();
 
-      const { data: volontario } = await sb.from("volontari_formazione").select("id, cognome, nome").eq("codice_fiscale", cf).maybeSingle();
+      const { data: volontario, error: errVol } = await sb.from("volontari_formazione").select("id, cognome, nome").eq("codice_fiscale", cf).maybeSingle();
+      if (errVol){ errori.push(`${nomeBase}: ${errVol.message}`); continue; }
       if (!volontario){
         nonTrovati.push(`${nomeBase} (CF: ${cf})`);
         continue;
       }
 
-      const { data: iscrizione } = await sb.from("iscrizioni_corsi").select("id, stato").eq("volontario_id", volontario.id).eq("edizione_corso_id", edizioneId).maybeSingle();
+      const { data: iscrizione, error: errIsc } = await sb.from("iscrizioni_corsi").select("id, stato").eq("volontario_id", volontario.id).eq("edizione_corso_id", edizioneId).maybeSingle();
+      if (errIsc){ errori.push(`${nomeBase}: ${errIsc.message}`); continue; }
       if (!iscrizione){
         nonIscrittiEdizione.push(`${nomeBase} (${volontario.cognome} ${volontario.nome}): non iscritto a questa edizione`);
         continue;
@@ -3122,9 +3153,10 @@ async function importaZipAttestati(ev){
         if (docErr) throw docErr;
 
         // Aggiorna a "completato" solo l'iscrizione di questo volontario per l'edizione selezionata
-        await sb.from("iscrizioni_corsi")
+        const { error: errStato } = await sb.from("iscrizioni_corsi")
           .update({ stato: "completato" })
           .eq("id", iscrizione.id);
+        if (errStato) throw errStato;
 
         ok++;
       }catch(err){
@@ -3418,11 +3450,12 @@ async function caricaVolontariEdizione(){
   if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun volontario iscritto a questa edizione.</div>`; return; }
 
   const idVolontari = data.map(r => r.volontari_formazione.id);
-  const { data: documenti } = await sb
+  const { data: documenti, error: errDocs } = await sb
     .from("documenti_volontario")
     .select("id, volontario_id, storage_path, nome_file")
     .eq("tipo", "attestato")
     .in("volontario_id", idVolontari);
+  if (errDocs){ alert("Errore: " + errDocs.message); return; }
   const attestatoPerVolontario = {};
   (documenti||[]).forEach(d => { attestatoPerVolontario[d.volontario_id] = d; });
 
@@ -3491,7 +3524,8 @@ async function caricaVolontariEdizione(){
     wrap.querySelectorAll("[data-toggle-assente]").forEach(chk => chk.addEventListener("change", async (ev) => {
       const iscrizioneId = parseInt(ev.target.dataset.toggleAssente);
       const nuovoStato = ev.target.checked ? "assente" : "in_verifica";
-      await sb.from("iscrizioni_corsi").update({ stato: nuovoStato }).eq("id", iscrizioneId);
+      const { error } = await sb.from("iscrizioni_corsi").update({ stato: nuovoStato }).eq("id", iscrizioneId);
+      if (error){ alert("Errore: " + error.message); ev.target.checked = !ev.target.checked; return; }
       caricaVolontariEdizione();
     }));
 
@@ -3531,7 +3565,8 @@ async function caricaAttestatoIscrizione(ev, edizione){
   });
   if (errDoc){ alert("Errore: " + errDoc.message); return; }
 
-  await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+  const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
+  if (errStato){ alert("Errore: " + errStato.message); return; }
 
   caricaVolontariEdizione();
 }
@@ -3548,7 +3583,8 @@ async function rimuoviAttestatoIscrizione(docId, iscrizioneId){
   const { error: delErr } = await sb.from("documenti_volontario").delete().eq("id", docId);
   if (delErr){ alert("Errore: " + delErr.message); return; }
 
-  await sb.from("iscrizioni_corsi").update({ stato: "in_verifica" }).eq("id", iscrizioneId);
+  const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "in_verifica" }).eq("id", iscrizioneId);
+  if (errStato){ alert("Errore: " + errStato.message); return; }
 
   caricaVolontariEdizione();
 }
@@ -3635,12 +3671,14 @@ async function caricaVolontariDaExcel(ev, e){
       try{
         let volontarioId;
         if (cf){
-          const { data: esistente } = await sb.from("volontari_formazione").select("id").eq("codice_fiscale", cf).maybeSingle();
+          const { data: esistente, error: errEsist } = await sb.from("volontari_formazione").select("id").eq("codice_fiscale", cf).maybeSingle();
+          if (errEsist) throw errEsist;
           if (esistente){
-            await sb.from("volontari_formazione").update({
+            const { error: errAgg } = await sb.from("volontari_formazione").update({
               cognome, nome, luogo_nascita: luogoNascita, provincia_nascita: prov,
               data_nascita: dataNascita, telefono, email, sezione_ana: sezione
             }).eq("id", esistente.id);
+            if (errAgg) throw errAgg;
             volontarioId = esistente.id;
             aggiornati++;
           }
@@ -3655,9 +3693,11 @@ async function caricaVolontariDaExcel(ev, e){
           nuovi++;
         }
 
-        const { data: giaIscritto } = await sb.from("iscrizioni_corsi").select("id").eq("volontario_id", volontarioId).eq("edizione_corso_id", e.id).maybeSingle();
+        const { data: giaIscritto, error: errGia } = await sb.from("iscrizioni_corsi").select("id").eq("volontario_id", volontarioId).eq("edizione_corso_id", e.id).maybeSingle();
+        if (errGia) throw errGia;
         if (!giaIscritto){
-          await sb.from("iscrizioni_corsi").insert({ volontario_id: volontarioId, edizione_corso_id: e.id, stato:"iscritto" });
+          const { error: errIscr } = await sb.from("iscrizioni_corsi").insert({ volontario_id: volontarioId, edizione_corso_id: e.id, stato:"iscritto" });
+          if (errIscr) throw errIscr;
           iscritti++;
         }
       }catch(err){
@@ -3680,8 +3720,10 @@ async function mostraFormAggiungiVolontario(){
   const e = _modalEdizioneCorrente;
   const wrap = document.getElementById("volontari-edizione-list");
 
-  const { data: tuttiVolontari } = await sb.from("volontari_formazione").select("id, cognome, nome").order("cognome").order("nome");
-  const { data: giaIscritti } = await sb.from("iscrizioni_corsi").select("volontario_id").eq("edizione_corso_id", e.id);
+  const { data: tuttiVolontari, error: errTutti } = await sb.from("volontari_formazione").select("id, cognome, nome").order("cognome").order("nome");
+  if (errTutti){ alert("Errore: " + errTutti.message); return; }
+  const { data: giaIscritti, error: errGia } = await sb.from("iscrizioni_corsi").select("volontario_id").eq("edizione_corso_id", e.id);
+  if (errGia){ alert("Errore: " + errGia.message); return; }
   const idIscritti = new Set((giaIscritti||[]).map(r => r.volontario_id));
   const disponibili = tuttiVolontari.filter(v => !idIscritti.has(v.id));
 
@@ -4916,11 +4958,12 @@ const LABEL_TIPO_CONVOCAZIONE = {
 
 async function renderConvocazioni(){
   const content = document.getElementById("page-content");
-  const [{ data, error }, { data: gruppi }] = await Promise.all([
+  const [{ data, error }, { data: gruppi, error: errGruppi }] = await Promise.all([
     sb.from("convocazioni").select("*").order("data_documento", { ascending:false }),
     sb.from("gruppi_destinatari").select("*").order("nome")
   ]);
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
+  if (errGruppi){ alert("Errore: " + errGruppi.message); return; }
   _convocazioniCache = data;
   _gruppiDestinatariCache = gruppi || [];
 
@@ -5019,8 +5062,10 @@ function renderListaGruppiDestinatari(){
   }));
   wrap.querySelectorAll("[data-del-gruppo]").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo gruppo?")) return;
-    await sb.from("gruppi_destinatari").delete().eq("id", parseInt(b.dataset.delGruppo));
-    const { data } = await sb.from("gruppi_destinatari").select("*").order("nome");
+    const { error: errDel } = await sb.from("gruppi_destinatari").delete().eq("id", parseInt(b.dataset.delGruppo));
+    if (errDel){ alert("Errore: " + errDel.message); return; }
+    const { data, error: errLista } = await sb.from("gruppi_destinatari").select("*").order("nome");
+    if (errLista){ alert("Errore: " + errLista.message); return; }
     _gruppiDestinatariCache = data || [];
     renderListaGruppiDestinatari();
   }));
@@ -5054,7 +5099,8 @@ function mostraFormGruppoDestinatari(gruppo){
       result = await sb.from("gruppi_destinatari").insert(payload);
     }
     if (result.error){ alert("Errore: " + result.error.message); return; }
-    const { data } = await sb.from("gruppi_destinatari").select("*").order("nome");
+    const { data, error: errLista } = await sb.from("gruppi_destinatari").select("*").order("nome");
+    if (errLista){ alert("Errore: " + errLista.message); return; }
     _gruppiDestinatariCache = data || [];
     renderListaGruppiDestinatari();
   });
@@ -5063,7 +5109,8 @@ function mostraFormGruppoDestinatari(gruppo){
 /* ---------- MODAL CONVOCAZIONE ---------- */
 async function apriModalConvocazione(id){
   const conv = id ? _convocazioniCache.find(c => c.id === id) : null;
-  const { data: firme } = await sb.from("firme_salvate").select("*").order("nome");
+  const { data: firme, error: errFirme } = await sb.from("firme_salvate").select("*").order("nome");
+  if (errFirme){ alert("Errore: " + errFirme.message); return; }
 
   chiudiModal();
   const overlay = document.createElement("div");
@@ -5134,7 +5181,8 @@ async function apriModalConvocazione(id){
   overlay.addEventListener("click", (e) => { if (e.target === overlay) chiudiModal(); });
   if (conv) document.getElementById("btn-elimina-conv").addEventListener("click", async () => {
     if (!confirm("Eliminare questa convocazione?")) return;
-    await sb.from("convocazioni").delete().eq("id", conv.id);
+    const { error } = await sb.from("convocazioni").delete().eq("id", conv.id);
+    if (error){ alert("Errore: " + error.message); return; }
     chiudiModal();
     renderConvocazioni();
   });
@@ -5558,7 +5606,8 @@ async function renderListaCategorieTlc(){
   `;
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questa categoria? Gli apparati che la usano non verranno modificati.")) return;
-    await sb.from("tlc_categorie").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("tlc_categorie").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
     renderListaCategorieTlc();
   }));
 }
@@ -5595,7 +5644,8 @@ async function renderListaMarcheTlc(){
   `;
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questa marca? Gli apparati che la usano non verranno modificati.")) return;
-    await sb.from("tlc_marche").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("tlc_marche").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
     renderListaMarcheTlc();
   }));
 }
@@ -5632,7 +5682,8 @@ async function renderListaSottocategorieRadioTlc(){
   `;
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questa sottocategoria? Gli apparati che la usano non verranno modificati.")) return;
-    await sb.from("tlc_sottocategorie_radio").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("tlc_sottocategorie_radio").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
     renderListaSottocategorieRadioTlc();
   }));
 }
