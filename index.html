@@ -1201,8 +1201,10 @@ async function caricaDocumenti(){
   attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo documento?")) return;
-    await sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).remove([b.dataset.path]);
-    await sb.from("documenti_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("documenti_automezzi").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).remove([b.dataset.path]);
+    if (rmErr) console.warn("File non rimosso dallo storage:", b.dataset.path, rmErr.message);
     caricaDocumenti();
   }));
 }
@@ -2126,12 +2128,13 @@ async function caricaBollaFirmata(input){
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).upload(path, file, { upsert: true });
   if (upErr){ alert("Errore upload: " + upErr.message); return; }
 
-  if (vecchioPath && vecchioPath !== path){
-    await sb.storage.from(STORAGE_BUCKET_BOLLE).remove([vecchioPath]);
-  }
-
   const { error } = await sb.from("movimentazioni_tlc").update({ bolla_path: path }).eq("id", movId);
   if (error){ alert("Errore: " + error.message); return; }
+
+  if (vecchioPath && vecchioPath !== path){
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).remove([vecchioPath]);
+    if (rmErr) console.warn("Vecchia bolla non rimossa dallo storage:", vecchioPath, rmErr.message);
+  }
 
   renderMovimentazioniTlc();
 }
@@ -2693,11 +2696,13 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   if (upErr){
     errArchivio = upErr;
   } else {
-    if (vecchioPath && vecchioPath !== path){
-      await sb.storage.from(STORAGE_BUCKET_BOLLE).remove([vecchioPath]);
-    }
     const { error: errAgg } = await sb.from("movimentazioni_tlc").update({ bolla_path: path }).eq("id", mov.id);
-    if (errAgg) errArchivio = errAgg;
+    if (errAgg){
+      errArchivio = errAgg;
+    } else if (vecchioPath && vecchioPath !== path){
+      const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_BOLLE).remove([vecchioPath]);
+      if (rmErr) console.warn("Vecchia bolla non rimossa dallo storage:", vecchioPath, rmErr.message);
+    }
   }
 
   if (opzioni.scarica !== false){
@@ -3577,11 +3582,11 @@ async function rimuoviAttestatoIscrizione(docId, iscrizioneId){
   const { data: doc, error: getErr } = await sb.from("documenti_volontario").select("storage_path").eq("id", docId).maybeSingle();
   if (getErr || !doc){ alert("Errore: attestato non trovato."); return; }
 
-  const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([doc.storage_path]);
-  if (rmErr){ alert("Errore eliminazione file: " + rmErr.message); return; }
-
   const { error: delErr } = await sb.from("documenti_volontario").delete().eq("id", docId);
   if (delErr){ alert("Errore: " + delErr.message); return; }
+
+  const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([doc.storage_path]);
+  if (rmErr) console.warn("File non rimosso dallo storage:", doc.storage_path, rmErr.message);
 
   const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "in_verifica" }).eq("id", iscrizioneId);
   if (errStato){ alert("Errore: " + errStato.message); return; }
@@ -3976,8 +3981,10 @@ async function caricaDocumentiVolontario(){
   attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo documento?")) return;
-    await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([b.dataset.path]);
-    await sb.from("documenti_volontario").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("documenti_volontario").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([b.dataset.path]);
+    if (rmErr) console.warn("File non rimosso dallo storage:", b.dataset.path, rmErr.message);
     caricaDocumentiVolontario();
   }));
 }
@@ -4122,8 +4129,12 @@ async function caricaLibreriaFirme(){
     if (!confirm("Eliminare questa firma dalla libreria?")) return;
     const id = parseInt(b.dataset.eliminaFirma);
     const firma = _firmeLibreria.find(f => f.id === id);
-    if (firma) await sb.storage.from(STORAGE_BUCKET_FIRME).remove([firma.storage_path]);
-    await sb.from("firme_salvate").delete().eq("id", id);
+    const { error } = await sb.from("firme_salvate").delete().eq("id", id);
+    if (error){ alert("Errore: " + error.message); return; }
+    if (firma){
+      const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_FIRME).remove([firma.storage_path]);
+      if (rmErr) console.warn("File non rimosso dallo storage:", firma.storage_path, rmErr.message);
+    }
     if (_firmaSelezionataId === id) _firmaSelezionataId = null;
     caricaLibreriaFirme();
   }));
@@ -4674,8 +4685,10 @@ async function caricaDocumentiLm(){
   attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo documento?")) return;
-    await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).remove([b.dataset.path]);
-    await sb.from("documenti_libro_matricola").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("documenti_libro_matricola").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).remove([b.dataset.path]);
+    if (rmErr) console.warn("File non rimosso dallo storage:", b.dataset.path, rmErr.message);
     caricaDocumentiLm();
   }));
 }
