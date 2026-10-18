@@ -165,6 +165,62 @@ function pulisciNomeFile(s){
     .replace(/_+/g, "_");
 }
 
+/* I file su storage si aprono SOLO con URL firmati (mai URL pubblici),
+   così i bucket possono diventare privati senza toccare il codice. */
+
+// URL firmato per un singolo file (default 1 ora). null se non disponibile.
+async function urlFirmato(bucket, path, secondi = 3600){
+  if (!path) return null;
+  const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, secondi);
+  if (error){ console.warn(`URL firmato non disponibile (${bucket}/${path}):`, error.message); return null; }
+  return data.signedUrl;
+}
+
+// URL firmati per più file con una sola chiamata. Ritorna { path: url }.
+async function urlFirmatiMultipli(bucket, paths, secondi = 3600){
+  const unici = [...new Set((paths || []).filter(Boolean))];
+  if (unici.length === 0) return {};
+  const { data, error } = await sb.storage.from(bucket).createSignedUrls(unici, secondi);
+  if (error){ console.warn(`URL firmati non disponibili (${bucket}):`, error.message); return {}; }
+  const mappa = {};
+  (data || []).forEach(r => { if (r.signedUrl && !r.error) mappa[r.path] = r.signedUrl; });
+  return mappa;
+}
+
+// Apre un documento in una nuova scheda con un URL firmato valido 60 secondi.
+// La finestra si apre subito (dentro il click) così i browser mobile non la bloccano.
+async function apriFileStorage(bucket, path){
+  const win = window.open("", "_blank");
+  const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, 60);
+  if (error || !data?.signedUrl){
+    if (win) win.close();
+    alert("Impossibile aprire il file: " + (error?.message || "URL non disponibile"));
+    return;
+  }
+  if (win) win.location.href = data.signedUrl;
+  else location.href = data.signedUrl;
+}
+
+// Collega i pulsanti [data-apri-file] (con data-bucket) dentro un contenitore.
+function attaccaListenerApriFile(contenitore){
+  contenitore.querySelectorAll("[data-apri-file]").forEach(b => b.addEventListener("click", (e) => {
+    e.preventDefault();
+    apriFileStorage(b.dataset.bucket, b.dataset.apriFile);
+  }));
+}
+
+// Scarica un file dallo storage e lo restituisce come dataURL (per i PDF).
+async function scaricaComeDataUrl(bucket, path){
+  const { data: blob, error } = await sb.storage.from(bucket).download(path);
+  if (error) throw new Error(`Download non riuscito (${bucket}/${path}): ${error.message}`);
+  return await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result);
+    reader.onerror = () => rej(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 function escapeHtml(s){
   if(s===null||s===undefined) return "";
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -657,14 +713,12 @@ let _automezziFiltro = { search:"", categoria:"", posizione:"", proprietario:"" 
 function pathFotoMezzo(targa, lato){
   // lato: fronte | retro | sx | dx
   // Niente pulisciNomeFile qui: questo percorso serve anche in lettura
-  // (urlFotoMezzo) e le foto esistenti sono salvate con la targa originale,
+  // (URL firmati delle foto) e le foto esistenti sono salvate con la targa originale,
   // spazi compresi (es. "GRU GC437HZ"). Pulirlo le renderebbe irraggiungibili.
   return `${targa}/${lato}.jpg`;
 }
-function urlFotoMezzo(targa, lato){
-  const { data } = sb.storage.from(STORAGE_BUCKET_MEZZI).getPublicUrl(pathFotoMezzo(targa, lato));
-  return data.publicUrl;
-}
+// URL firmati delle foto frontali per la griglia, per id mezzo (riempita in renderAutomezzi)
+let _automezziFotoUrl = {};
 
 async function renderAutomezzi(){
   const content = document.getElementById("page-content");
@@ -675,6 +729,11 @@ async function renderAutomezzi(){
     return;
   }
   _automezziCache = data;
+
+  const conFoto = data.filter(m => m.foto_fronte);
+  const urlPerPath = await urlFirmatiMultipli(STORAGE_BUCKET_MEZZI, conFoto.map(m => pathFotoMezzo(m.targa, "fronte")));
+  _automezziFotoUrl = {};
+  conFoto.forEach(m => { _automezziFotoUrl[m.id] = urlPerPath[pathFotoMezzo(m.targa, "fronte")] || null; });
 
   content.innerHTML = `
     <div class="toolbar">
@@ -784,7 +843,7 @@ function renderAutomezziGrid(){
 function renderCardMezziHtml(elenco){
   return elenco.map(m => {
     const statoOp = statoOperativoMezzo(m);
-    const fotoUrl = m.foto_fronte ? urlFotoMezzo(m.targa, "fronte") : null;
+    const fotoUrl = m.foto_fronte ? (_automezziFotoUrl[m.id] || null) : null;
     return `
       <div class="veicolo-card" data-id="${m.id}">
         <div class="foto-wrap">
@@ -1009,7 +1068,7 @@ async function eliminaMezzo(id){
   refreshAlertBadge();
 }
 
-function renderTabFotoMezzo(){
+async function renderTabFotoMezzo(){
   const m = _modalMezzoCorrente;
   const body = document.getElementById("modal-body");
   const lati = [
@@ -1019,11 +1078,16 @@ function renderTabFotoMezzo(){
     { key:"dx", label:"Fianco destro" }
   ];
 
+  const urlPerPath = await urlFirmatiMultipli(STORAGE_BUCKET_MEZZI,
+    lati.filter(l => m["foto_" + l.key]).map(l => pathFotoMezzo(m.targa, l.key)));
+
   body.innerHTML = `
     <div class="foto-grid4">
       ${lati.map(l => {
         const has = m["foto_" + l.key];
-        const url = has ? urlFotoMezzo(m.targa, l.key) + "?t=" + Date.now() : null;
+        const firmato = has ? urlPerPath[pathFotoMezzo(m.targa, l.key)] : null;
+        // l'URL firmato contiene già "?", quindi il cache-busting va con "&"
+        const url = firmato ? firmato + "&t=" + Date.now() : null;
         return `
           <div class="foto-slot" id="slot-${l.key}">
             ${url ? `<img src="${url}">` : `<div class="ph"><span class="ic">📷</span>${l.label}</div>`}
@@ -1077,7 +1141,11 @@ function renderTabFotoMezzo(){
       if (idx >= 0) _automezziCache[idx][campo] = true;
 
       renderTabFotoMezzo();
-      if (lato === "fronte") renderAutomezziGrid();
+      if (lato === "fronte"){
+        const u = await urlFirmato(STORAGE_BUCKET_MEZZI, path);
+        _automezziFotoUrl[m.id] = u ? u + "&t=" + Date.now() : null;
+        renderAutomezziGrid();
+      }
     });
   });
 }
@@ -1114,14 +1182,13 @@ async function caricaDocumenti(){
       <thead><tr><th>Tipo</th><th>File</th><th>Data doc.</th><th></th><th></th></tr></thead>
       <tbody>
         ${data.map(d => {
-          const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).getPublicUrl(d.storage_path);
           const lbl = TIPI_DOCUMENTO.find(t => t.value === d.tipo)?.label || d.tipo;
           return `
             <tr>
               <td>${lbl}</td>
               <td>${escapeHtml(d.nome_file)}</td>
               <td>${d.data_documento ? formatDataIt(d.data_documento) : "—"}</td>
-              <td><a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a></td>
+              <td><a href="#" role="button" data-apri-file="${escapeHtml(d.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_MEZZI}">Apri</a></td>
               <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
             </tr>
           `;
@@ -1129,6 +1196,7 @@ async function caricaDocumenti(){
       </tbody>
     </table>
   `;
+  attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo documento?")) return;
     await sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).remove([b.dataset.path]);
@@ -2000,7 +2068,7 @@ function renderTabellaMovimentazioniTlc(data, soloLettura){
             <td>${escapeHtml(r.sezione_ana)}</td>
             <td>${escapeHtml(apparati)}</td>
             <td>${r.stato === "in_uso" ? '<span class="tag" style="background:var(--giallo-bg);color:var(--giallo);">IN USO</span>' : '<span class="tag" style="background:var(--verde-bg);color:var(--verde);">RIENTRATO</span>'}</td>
-            <td>${r.bolla_path ? `<a href="${sb.storage.from(STORAGE_BUCKET_BOLLE).getPublicUrl(r.bolla_path).data.publicUrl}" target="_blank" rel="noopener">PDF</a>` : "—"}</td>
+            <td>${r.bolla_path ? `<a href="#" role="button" data-apri-file="${escapeHtml(r.bolla_path)}" data-bucket="${STORAGE_BUCKET_BOLLE}">PDF</a>` : "—"}</td>
             ${soloLettura ? "" : `
             <td>
               <label class="row-del" style="cursor:pointer;">
@@ -2015,6 +2083,7 @@ function renderTabellaMovimentazioniTlc(data, soloLettura){
       </tbody>
     </table>
   `;
+  attaccaListenerApriFile(wrap);
   if (soloLettura) return;
   wrap.querySelectorAll("[data-upload-bolla]").forEach(input => {
     input.addEventListener("change", (e) => caricaBollaFirmata(e.target));
@@ -2283,15 +2352,8 @@ async function apriModalNuovaMovimentazioneTlc(){
 
     let firmaAppPng = null;
     try{
-      const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
-      const resp = await fetch(u.publicUrl);
-      const blob = await resp.blob();
-      firmaAppPng = await new Promise((res) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result);
-        reader.readAsDataURL(blob);
-      });
-    }catch(err){ firmaAppPng = null; }
+      firmaAppPng = await scaricaComeDataUrl(STORAGE_BUCKET_FIRME_PERSONALI, state.profile.firma_personale_path);
+    }catch(err){ console.warn(err.message); firmaAppPng = null; }
 
     const payload = {
       data_uscita: fd.get("data_uscita"),
@@ -2359,15 +2421,8 @@ async function registraRientroTlc(movId){
 
   let firmaAppPng = null;
   try{
-    const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
-    const resp = await fetch(u.publicUrl);
-    const blob = await resp.blob();
-    firmaAppPng = await new Promise((res) => {
-      const reader = new FileReader();
-      reader.onload = () => res(reader.result);
-      reader.readAsDataURL(blob);
-    });
-  }catch(err){ firmaAppPng = null; }
+    firmaAppPng = await scaricaComeDataUrl(STORAGE_BUCKET_FIRME_PERSONALI, state.profile.firma_personale_path);
+  }catch(err){ console.warn(err.message); firmaAppPng = null; }
 
   const { error } = await sb.from("movimentazioni_tlc").update({
     data_rientro: iso,
@@ -2457,15 +2512,8 @@ async function apriModalFirmaRientro(mov){
 
     let firmaAppPng = null;
     try{
-      const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(state.profile.firma_personale_path);
-      const resp = await fetch(u.publicUrl);
-      const blob = await resp.blob();
-      firmaAppPng = await new Promise((res) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result);
-        reader.readAsDataURL(blob);
-      });
-    }catch(err){ firmaAppPng = null; }
+      firmaAppPng = await scaricaComeDataUrl(STORAGE_BUCKET_FIRME_PERSONALI, state.profile.firma_personale_path);
+    }catch(err){ console.warn(err.message); firmaAppPng = null; }
 
     const aggiornato = {
       data_rientro: fd.get("data_rientro"),
@@ -3388,8 +3436,7 @@ async function caricaVolontariEdizione(){
             const doc = attestatoPerVolontario[r.volontari_formazione.id];
             let linkAttestato = "—";
             if (doc){
-              const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(doc.storage_path);
-              linkAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a> &nbsp;
+              linkAttestato = `<a href="#" role="button" data-apri-file="${escapeHtml(doc.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_VOLONTARI}">Apri</a> &nbsp;
                 <a href="#" data-rimuovi-attestato="${doc.id}" data-iscrizione="${r.id}" style="color:var(--rosso);font-size:11.5px;">Rimuovi</a>`;
             }
             return `
@@ -3415,8 +3462,7 @@ async function caricaVolontariEdizione(){
             const assente = r.stato === "assente";
             let cellaAttestato;
             if (doc){
-              const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(doc.storage_path);
-              cellaAttestato = `<a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a> &nbsp;
+              cellaAttestato = `<a href="#" role="button" data-apri-file="${escapeHtml(doc.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_VOLONTARI}">Apri</a> &nbsp;
                 <label style="cursor:pointer;color:var(--blu-500);font-size:11.5px;">Sostituisci
                   <input type="file" accept=".pdf,image/*" style="display:none;" data-upload-attestato="${r.id}" data-volontario="${r.volontari_formazione.id}" data-cognome="${escapeHtml(r.volontari_formazione.cognome)}" data-nome="${escapeHtml(r.volontari_formazione.nome)}">
                 </label> &nbsp;
@@ -3452,6 +3498,7 @@ async function caricaVolontariEdizione(){
     wrap.querySelectorAll("[data-upload-attestato]").forEach(input => input.addEventListener("change", (ev) => caricaAttestatoIscrizione(ev, e)));
   }
 
+  attaccaListenerApriFile(wrap);
   wrap.querySelectorAll("[data-rimuovi-attestato]").forEach(a => a.addEventListener("click", (ev) => {
     ev.preventDefault();
     rimuoviAttestatoIscrizione(parseInt(a.dataset.rimuoviAttestato), parseInt(a.dataset.iscrizione));
@@ -3872,12 +3919,11 @@ async function caricaDocumentiVolontario(){
       <thead><tr><th>Tipo</th><th>File</th><th></th><th></th></tr></thead>
       <tbody>
         ${data.map(d => {
-          const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).getPublicUrl(d.storage_path);
           return `
             <tr>
               <td>${tipiLabel[d.tipo]||d.tipo}</td>
               <td>${escapeHtml(d.nome_file)}</td>
-              <td><a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a></td>
+              <td><a href="#" role="button" data-apri-file="${escapeHtml(d.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_VOLONTARI}">Apri</a></td>
               <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
             </tr>
           `;
@@ -3885,6 +3931,7 @@ async function caricaDocumentiVolontario(){
       </tbody>
     </table>
   `;
+  attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo documento?")) return;
     await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([b.dataset.path]);
@@ -3952,10 +3999,11 @@ function mostraFormDocumentoVolontario(){
    ============================================================ */
 const STORAGE_BUCKET_FIRME = "firme";
 let _firmeLibreria = [];
+let _firmeLibreriaUrl = {};    // URL firmati per l'anteprima, per storage_path
 let _firmaSelezionataId = null;
 let _pdfCorrente = null;       // documento pdf.js
 let _pdfBytesOriginali = null; // ArrayBuffer originale, per pdf-lib
-let _firmePosizionate = [];    // { pagina, xPct, yPct, wPct, hPct, firmaUrl, firmaId }
+let _firmePosizionate = [];    // { pagina, xPct, yPct, wPct, hPct, firmaUrl, firmaPath }
 let _paginaAttivaDrag = null;
 
 async function renderFirmaDocumenti(){
@@ -4006,12 +4054,14 @@ async function caricaLibreriaFirme(){
     return;
   }
 
+  _firmeLibreriaUrl = await urlFirmatiMultipli(STORAGE_BUCKET_FIRME, _firmeLibreria.map(f => f.storage_path));
+
   grid.innerHTML = _firmeLibreria.map(f => {
-    const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME).getPublicUrl(f.storage_path);
+    const url = _firmeLibreriaUrl[f.storage_path] || "";
     const selezionata = _firmaSelezionataId === f.id;
     return `
-      <div class="firma-lib-item ${selezionata?"selezionata":""}" data-id="${f.id}" data-url="${u.publicUrl}">
-        <img src="${u.publicUrl}" alt="${escapeHtml(f.nome)}">
+      <div class="firma-lib-item ${selezionata?"selezionata":""}" data-id="${f.id}">
+        <img src="${url}" alt="${escapeHtml(f.nome)}">
         <div class="nome">${escapeHtml(f.nome)}</div>
         <div class="del" data-elimina-firma="${f.id}">✕</div>
       </div>
@@ -4106,7 +4156,6 @@ function onClickPaginaPerFirma(e, wrap, numeroPagina){
     return;
   }
   const firma = _firmeLibreria.find(f => f.id === _firmaSelezionataId);
-  const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME).getPublicUrl(firma.storage_path);
 
   const rect = wrap.getBoundingClientRect();
   const x = e.clientX - rect.left;
@@ -4122,7 +4171,8 @@ function onClickPaginaPerFirma(e, wrap, numeroPagina){
     yPct: (y - altezzaIniziale/2) / rect.height,
     wPct: larghezzaIniziale / rect.width,
     hPct: altezzaIniziale / rect.height,
-    firmaUrl: u.publicUrl
+    firmaUrl: _firmeLibreriaUrl[firma.storage_path] || "",
+    firmaPath: firma.storage_path
   };
   _firmePosizionate.push(posizione);
   renderOverlayFirma(wrap, posizione);
@@ -4234,12 +4284,11 @@ async function generaPdfFirmato(){
       if (!pagina) continue;
       const { width: pw, height: ph } = pagina.getSize();
 
-      if (!cacheImmagini[pos.firmaUrl]){
-        const resp = await fetch(pos.firmaUrl);
-        const bytes = await resp.arrayBuffer();
-        cacheImmagini[pos.firmaUrl] = await pdfDoc.embedPng(bytes);
+      if (!cacheImmagini[pos.firmaPath]){
+        const dataUrl = await scaricaComeDataUrl(STORAGE_BUCKET_FIRME, pos.firmaPath);
+        cacheImmagini[pos.firmaPath] = await pdfDoc.embedPng(dataUrl);
       }
-      const img = cacheImmagini[pos.firmaUrl];
+      const img = cacheImmagini[pos.firmaPath];
 
       const wPdf = pos.wPct * pw;
       const hPdf = pos.hPct * ph;
@@ -4567,13 +4616,12 @@ async function caricaDocumentiLm(){
       <thead><tr><th>Tipo</th><th>Anno</th><th>File</th><th></th><th></th></tr></thead>
       <tbody>
         ${data.map(d => {
-          const { data: u } = sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).getPublicUrl(d.storage_path);
           return `
             <tr>
               <td>${tipiLabel[d.tipo]||d.tipo}</td>
               <td>${d.anno||"—"}</td>
               <td>${escapeHtml(d.nome_file)}</td>
-              <td><a href="${u.publicUrl}" target="_blank" rel="noopener">Apri</a></td>
+              <td><a href="#" role="button" data-apri-file="${escapeHtml(d.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_LIBRO_MATRICOLA}">Apri</a></td>
               <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
             </tr>
           `;
@@ -4581,6 +4629,7 @@ async function caricaDocumentiLm(){
       </tbody>
     </table>
   `;
+  attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Eliminare questo documento?")) return;
     await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).remove([b.dataset.path]);
@@ -5268,16 +5317,9 @@ async function generaPdfConvocazione(conv){
 
   if (conv.firma_path){
     try{
-      const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME).getPublicUrl(conv.firma_path);
-      const resp = await fetch(u.publicUrl);
-      const blob = await resp.blob();
-      const dataUrl = await new Promise((res) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result);
-        reader.readAsDataURL(blob);
-      });
+      const dataUrl = await scaricaComeDataUrl(STORAGE_BUCKET_FIRME, conv.firma_path);
       doc.addImage(dataUrl, "PNG", 141, yFirma - 14, 55, 14);
-    }catch(err){ /* nessuna firma, procedo senza */ }
+    }catch(err){ /* nessuna firma, procedo senza */ console.warn(err.message); }
   }
 
   doc.text(conv.firmatario_nome.toUpperCase(), 196, yFirma, { align: "right" });
@@ -5423,8 +5465,9 @@ async function renderFirmaPersonaleBox(){
   const path = state.profile.firma_personale_path;
   let urlFirma = null;
   if (path){
-    const { data: u } = sb.storage.from(STORAGE_BUCKET_FIRME_PERSONALI).getPublicUrl(path);
-    urlFirma = u.publicUrl + "?t=" + Date.now();
+    const u = await urlFirmato(STORAGE_BUCKET_FIRME_PERSONALI, path);
+    // l'URL firmato contiene già "?", quindi il cache-busting va con "&"
+    urlFirma = u ? u + "&t=" + Date.now() : null;
   }
 
   box.innerHTML = `
