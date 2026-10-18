@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-"Polo Logistico 1 RGPT/CAP Vercelli" — a gestionale (management app) for vehicles (automezzi) and radio/telecom equipment (TLC) of a Croce Rossa Italiana logistics unit. Italian-language UI throughout; comments and identifiers in the code are Italian.
+Gestionale del Polo Logistico 1 RGPT/CAP Vercelli del Coordinamento delle Sezioni Piemontesi ANA (Associazione Nazionale Alpini) – Protezione Civile: manages vehicles (automezzi) and radio/telecom equipment (TLC). Italian-language UI throughout; comments and identifiers in the code are Italian.
 
 It is a static, no-build, single-page PWA: there is no bundler, package manager, or compile step. All application logic lives in one file, `index.html` (~5800 lines: markup + CSS classes + a single `<script>` block with the entire app). `stile.css` holds shared styles, `sw.js` is a minimal service worker (installability only, no offline API caching — see comments at the top of that file), and `manifest.json` is the PWA manifest.
 
@@ -55,6 +55,13 @@ Roles (`app_users.ruolo`): `it_admin`, `specialita`, `segreteria`, `standard`. `
 - Storage buckets (each declared as a `STORAGE_BUCKET_*` constant near its first use): `mezzi-foto`, `mezzi-documenti`, `tlc-bolle`, `volontari-documenti`, `firme-personali`, and buckets for libro-matricola documents and saved TLC signatures — grep `STORAGE_BUCKET_` to find each one's declaration site and usage.
 - Supabase URL and anon key are hardcoded at the top of `index.html` (this is a client-only anon key, expected to be public; do not add service-role keys or other secrets here).
 
+### Sicurezza Supabase
+
+- RLS is the real authorization boundary; client-side checks (`userCanSee`, `livelloPermesso`) are UI only.
+- SQL helper functions used by the policies: `public.is_it_admin()` and `public.ha_permesso(chiave)`.
+- A trigger on `app_users` prevents non-admin users from changing `ruolo`, `permessi`, `attivo`, `nome`, `email`.
+- Bucket `firme-personali`: each user can write only `<uid>.png`.
+
 ### External libraries (all loaded via CDN `<script>` tags in `<head>`, no local copies/bundling)
 
-`@supabase/supabase-js@2`, `heic2any` (HEIC photo conversion), `jspdf` + `pdf-lib` (PDF generation/editing), `pdf.js` (PDF rendering for the Firma Documenti viewer), `xlsx` (Excel import/export), `jszip` (bulk ZIP import/export), `@tabler/icons-webfont` (icon font).
+`@supabase/supabase-js@2.117.2`, `heic2any` (HEIC photo conversion), `jspdf` + `pdf-lib` (PDF generation/editing), `pdf.js` (PDF rendering for the Firma Documenti viewer), `xlsx` (Excel import/export), `jszip` (bulk ZIP import/export), `@tabler/icons-webfont@3.48.0` (icon font).

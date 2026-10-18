@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.48.0/dist/tabler-icons.min.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Polo Logistico 1 RGPT/CAP Vercelli</title>
 <link rel="icon" href="icons/icon-192.png">
@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Polo Logistico">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2.117.2"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -155,6 +155,16 @@ function statoScadenza(dateStr, giorniPreavviso){
   return "ok";
 }
 
+// Rende un segmento di percorso sicuro per lo storage: niente accenti,
+// solo [A-Za-z0-9._-], "_" ripetuti compressi.
+function pulisciNomeFile(s){
+  return String(s ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._-]/g, "_")
+    .replace(/_+/g, "_");
+}
+
 function escapeHtml(s){
   if(s===null||s===undefined) return "";
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -202,6 +212,16 @@ async function onAuthenticated(user){
     state.profile = created || { nome: user.email, ruolo: "standard" };
   } else {
     state.profile = profile;
+  }
+
+  if (profile && profile.attivo === false){
+    await sb.auth.signOut().catch(() => {});
+    state.user = null;
+    state.profile = null;
+    const errBox = document.getElementById("login-error");
+    errBox.textContent = "Utente disattivato, contatta l'amministratore IT";
+    errBox.style.display = "block";
+    return;
   }
 
   // Registra questo accesso nel log (best-effort, non blocca il login se fallisce)
@@ -636,6 +656,9 @@ let _automezziFiltro = { search:"", categoria:"", posizione:"", proprietario:"" 
 
 function pathFotoMezzo(targa, lato){
   // lato: fronte | retro | sx | dx
+  // Niente pulisciNomeFile qui: questo percorso serve anche in lettura
+  // (urlFotoMezzo) e le foto esistenti sono salvate con la targa originale,
+  // spazi compresi (es. "GRU GC437HZ"). Pulirlo le renderebbe irraggiungibili.
   return `${targa}/${lato}.jpg`;
 }
 function urlFotoMezzo(targa, lato){
@@ -1147,7 +1170,7 @@ function mostraFormDocumento(){
     const btn = e.target.querySelector(".btn-save");
     btn.disabled = true; btn.textContent = "Caricamento…";
 
-    const path = `${m.targa}/${Date.now()}_${file.name}`;
+    const path = `${pulisciNomeFile(m.targa)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
     const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_MEZZI).upload(path, file);
     if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Carica"; return; }
 
@@ -2002,7 +2025,7 @@ function renderTabellaMovimentazioniTlc(data, soloLettura){
 function pathBollaFirmata(sezione, stato, dataUscita, dataRientro, estensione, movId){
   const tipo = stato === "rientrato" ? "rientro" : "uscita";
   const dataRif = (tipo === "rientro" && dataRientro) ? dataRientro : dataUscita;
-  const sezioneSlug = sezione.replace(/\s+/g, "_");
+  const sezioneSlug = pulisciNomeFile(sezione);
   return `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}_${movId}.${estensione}`;
 }
 
@@ -2288,7 +2311,13 @@ async function apriModalNuovaMovimentazioneTlc(){
     if (error){ alert("Errore: " + error.message); btn.disabled=false; btn.textContent="Salva e genera bolla"; return; }
 
     const righe = apparatiSelezionati.map(id => ({ movimentazione_id: mov.id, apparato_id: id }));
-    await sb.from("movimentazioni_tlc_apparati").insert(righe);
+    const { error: errRighe } = await sb.from("movimentazioni_tlc_apparati").insert(righe);
+    if (errRighe){
+      await sb.from("movimentazioni_tlc").delete().eq("id", mov.id);
+      alert("Errore: " + errRighe.message);
+      btn.disabled=false; btn.textContent="Salva e genera bolla";
+      return;
+    }
 
     const apparatiDettaglio = disponibili.filter(a => apparatiSelezionati.includes(a.id));
     try{
@@ -2587,7 +2616,7 @@ async function generaEArchiviaBollaTlc(mov, apparati, opzioni){
   const blob = doc.output("blob");
   const tipo = mov.stato === "rientrato" ? "rientro" : "uscita";
   const dataRif = (tipo === "rientro" && mov.data_rientro) ? mov.data_rientro : mov.data_uscita;
-  const sezioneSlug = mov.sezione_ana.replace(/\s+/g, "_");
+  const sezioneSlug = pulisciNomeFile(mov.sezione_ana);
   const path = `Bolla_TLC_${dataRif}_${tipo}_${sezioneSlug}_${mov.id}.pdf`;
 
   const vecchioPath = mov.bolla_path;
@@ -2922,7 +2951,7 @@ async function caricaAttestatoDaListaMancanti(ev){
   const cognome = ev.target.dataset.cognome;
   const nome = ev.target.dataset.nome;
 
-  const path = `${cognome}_${nome}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+  const path = `${pulisciNomeFile(`${cognome}_${nome}`)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
   if (upErr){ alert("Errore upload: " + upErr.message); return; }
 
@@ -3031,7 +3060,7 @@ async function importaZipAttestati(ev){
 
       try{
         const blob = await entry.async("blob");
-        const path = `${volontario.cognome}_${volontario.nome}/${Date.now()}_${nomeBase}`.replace(/\s+/g, "_");
+        const path = `${pulisciNomeFile(`${volontario.cognome}_${volontario.nome}`)}/${Date.now()}_${pulisciNomeFile(nomeBase)}`;
         const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, blob, { contentType: "application/pdf" });
         if (upErr) throw upErr;
 
@@ -3442,7 +3471,7 @@ async function caricaAttestatoIscrizione(ev, edizione){
   const cognome = ev.target.dataset.cognome;
   const nome = ev.target.dataset.nome;
 
-  const path = `${cognome}_${nome}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+  const path = `${pulisciNomeFile(`${cognome}_${nome}`)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
   if (upErr){ alert("Errore upload: " + upErr.message); return; }
 
@@ -3898,7 +3927,7 @@ function mostraFormDocumentoVolontario(){
     const btn = ev.target.querySelector(".btn-save");
     btn.disabled = true; btn.textContent = "Caricamento…";
 
-    const path = `${v.cognome}_${v.nome}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+    const path = `${pulisciNomeFile(`${v.cognome}_${v.nome}`)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
     const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
     if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Carica"; return; }
 
@@ -4015,7 +4044,7 @@ async function caricaNuovaFirma(ev){
   const nome = prompt("Nome per questa firma (es. il tuo nome):", file.name.replace(/\.png$/i, ""));
   if (!nome) return;
 
-  const path = `${Date.now()}_${file.name}`;
+  const path = `${Date.now()}_${pulisciNomeFile(file.name)}`;
   const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_FIRME).upload(path, file, { contentType: "image/png" });
   if (upErr){ alert("Errore upload: " + upErr.message); return; }
 
@@ -4596,7 +4625,7 @@ function mostraFormDocumentoLm(){
     const btn = e.target.querySelector(".btn-save");
     btn.disabled = true; btn.textContent = "Caricamento…";
 
-    const path = `${r.targa_telaio}/${Date.now()}_${file.name}`.replace(/\s+/g, "_");
+    const path = `${pulisciNomeFile(r.targa_telaio)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
     const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).upload(path, file);
     if (upErr){ alert("Errore upload: " + upErr.message); btn.disabled=false; btn.textContent="Carica"; return; }
 
@@ -4742,7 +4771,7 @@ async function importaZipPolizzeLibroMatricola(ev){
 
       try{
         const blob = await entry.async("blob");
-        const path = `${mezzo.targa_telaio}/${Date.now()}_${nomeBase}`.replace(/\s+/g, "_");
+        const path = `${pulisciNomeFile(mezzo.targa_telaio)}/${Date.now()}_${pulisciNomeFile(nomeBase)}`;
         const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_LIBRO_MATRICOLA).upload(path, blob, { contentType: "application/pdf" });
         if (upErr) throw upErr;
 
