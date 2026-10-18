@@ -209,6 +209,23 @@ function attaccaListenerApriFile(contenitore){
   }));
 }
 
+// Carica tutte le righe di una query superando il limite di 1000 righe di Supabase,
+// a blocchi con .range(). creaQuery deve restituire ogni volta una query NUOVA
+// (es. () => sb.from("x").select("*").order("nome")), perché il builder non è riutilizzabile.
+// Aggiunge .order("id") come ultimo criterio così i blocchi sono stabili.
+// Ritorna { data, error } come una normale chiamata Supabase.
+async function caricaTutteLeRighe(creaQuery){
+  const BLOCCO = 1000;
+  let tutte = [];
+  for (let da = 0; ; da += BLOCCO){
+    const { data, error } = await creaQuery().order("id").range(da, da + BLOCCO - 1);
+    if (error) return { data: null, error };
+    tutte = tutte.concat(data || []);
+    if (!data || data.length < BLOCCO) break;
+  }
+  return { data: tutte, error: null };
+}
+
 // Scarica un file dallo storage e lo restituisce come dataURL (per i PDF).
 async function scaricaComeDataUrl(bucket, path){
   const { data: blob, error } = await sb.storage.from(bucket).download(path);
@@ -558,7 +575,7 @@ function attivaToggleCollapse(toggleId, bodyId){
 async function caricaBloccoScadenzeAutomezzi(){
   const [{ data: scadenze, error: errScad }, { data: automezzi, error: errMezzi }] = await Promise.all([
     sb.from("v_scadenze").select("*"),
-    sb.from("automezzi").select("*")
+    caricaTutteLeRighe(() => sb.from("automezzi").select("*"))
   ]);
   if (errScad || errMezzi){ alert("Errore: " + (errScad || errMezzi).message); return; }
 
@@ -603,11 +620,11 @@ async function caricaBloccoScadenzeAutomezzi(){
 }
 
 async function caricaBloccoTlcInUso(){
-  const { data, error } = await sb
+  const { data, error } = await caricaTutteLeRighe(() => sb
     .from("movimentazioni_tlc")
     .select("*, movimentazioni_tlc_apparati(tlc_apparati(selettiva, modello))")
     .eq("stato", "in_uso")
-    .order("data_uscita", { ascending: true });
+    .order("data_uscita", { ascending: true }));
 
   document.getElementById("badge-tlc-in-uso").textContent = (data && data.length) || "";
   document.getElementById("badge-tlc-in-uso").style.display = (data && data.length) ? "inline-block" : "none";
@@ -723,7 +740,7 @@ let _automezziFotoUrl = {};
 
 async function renderAutomezzi(){
   const content = document.getElementById("page-content");
-  const { data, error } = await sb.from("automezzi").select("*").order("targa");
+  const { data, error } = await caricaTutteLeRighe(() => sb.from("automezzi").select("*").order("targa"));
 
   if (error){
     content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`;
@@ -1492,7 +1509,7 @@ async function caricaSottocategorieRadioTlc(){
 
 async function renderTlc(){
   const content = document.getElementById("page-content");
-  const { data, error } = await sb.from("tlc_apparati").select("*").order("selettiva");
+  const { data, error } = await caricaTutteLeRighe(() => sb.from("tlc_apparati").select("*").order("selettiva"));
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _tlcCache = data;
   const errSupporto = (await caricaCategorieTlc()) || (await caricaMarcheTlc())
@@ -1802,11 +1819,11 @@ function renderModalTlc(){
 }
 
 async function generaProssimoCodiceAna(){
-  const { data, error } = await sb
+  const { data, error } = await caricaTutteLeRighe(() => sb
     .from("tlc_apparati")
     .select("codice_ana")
     .ilike("codice_ana", "TLC%")
-    .order("codice_ana", { ascending: false });
+    .order("codice_ana", { ascending: false }));
   if (error){ alert("Errore: " + error.message); return null; }
 
   let max = 0;
@@ -2044,10 +2061,10 @@ function creaCanvasFirma(containerEl){
 
 async function renderMovimentazioniTlc(){
   const content = document.getElementById("page-content");
-  const { data, error } = await sb
+  const { data, error } = await caricaTutteLeRighe(() => sb
     .from("movimentazioni_tlc")
     .select("*, movimentazioni_tlc_apparati(apparato_id, tlc_apparati(selettiva, modello))")
-    .order("data_uscita", { ascending:false });
+    .order("data_uscita", { ascending:false }));
 
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
 
@@ -2143,10 +2160,10 @@ const TESTO_RESPONSABILITA_TLC = "Il sottoscritto dichiara di aver ricevuto in c
 
 async function apriModalNuovaMovimentazioneTlc(){
   if (livelloPermesso("tlc") !== "completo"){ alert("Il tuo livello di accesso TLC non permette questa operazione."); return; }
-  const { data: apparatiLiberi, error: errApp } = await sb
+  const { data: apparatiLiberi, error: errApp } = await caricaTutteLeRighe(() => sb
     .from("tlc_apparati")
     .select("*")
-    .order("codice_ana");
+    .order("codice_ana"));
   if (errApp){ alert("Errore: " + errApp.message); return; }
 
   // Escludi apparati attualmente "in_uso" in una movimentazione non rientrata
@@ -2807,8 +2824,8 @@ async function caricaReportFormazione(){
   if (!body) return;
 
   const [{ data: volontari, error: errV }, { data: iscrizioni, error: errI }] = await Promise.all([
-    sb.from("volontari_formazione").select("id, cognome, nome, sezione_ana"),
-    sb.from("iscrizioni_corsi").select("stato, volontario_id, edizioni_corso(id, label, data_corso, stato, catalogo_corsi(codice, descrizione))")
+    caricaTutteLeRighe(() => sb.from("volontari_formazione").select("id, cognome, nome, sezione_ana")),
+    caricaTutteLeRighe(() => sb.from("iscrizioni_corsi").select("stato, volontario_id, edizioni_corso(id, label, data_corso, stato, catalogo_corsi(codice, descrizione))"))
   ]);
   if (errV || errI){ body.innerHTML = `<p>Errore: ${escapeHtml((errV||errI).message)}</p>`; return; }
 
@@ -2969,11 +2986,11 @@ async function caricaAttestatiMancanti(){
   if (!body) return;
   body.innerHTML = `<div class="loading-spin">Verifica in corso…</div>`;
 
-  const { data: datiGrezzi, error } = await sb
+  const { data: datiGrezzi, error } = await caricaTutteLeRighe(() => sb
     .from("iscrizioni_corsi")
     .select("*, volontari_formazione(id, cognome, nome, sezione_ana), edizioni_corso!inner(label, data_corso, stato)")
     .eq("stato", "in_verifica")
-    .eq("edizioni_corso.stato", "terminato");
+    .eq("edizioni_corso.stato", "terminato"));
 
   if (error){ body.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
 
@@ -3725,7 +3742,7 @@ async function mostraFormAggiungiVolontario(){
   const e = _modalEdizioneCorrente;
   const wrap = document.getElementById("volontari-edizione-list");
 
-  const { data: tuttiVolontari, error: errTutti } = await sb.from("volontari_formazione").select("id, cognome, nome").order("cognome").order("nome");
+  const { data: tuttiVolontari, error: errTutti } = await caricaTutteLeRighe(() => sb.from("volontari_formazione").select("id, cognome, nome").order("cognome").order("nome"));
   if (errTutti){ alert("Errore: " + errTutti.message); return; }
   const { data: giaIscritti, error: errGia } = await sb.from("iscrizioni_corsi").select("volontario_id").eq("edizione_corso_id", e.id);
   if (errGia){ alert("Errore: " + errGia.message); return; }
@@ -4378,7 +4395,7 @@ let _libroMatricolaFiltro = { search:"", sezione:"", tipo:"" };
 
 async function renderLibroMatricola(){
   const content = document.getElementById("page-content");
-  const { data, error } = await sb.from("libro_matricola").select("*").order("sezione").order("targa_telaio");
+  const { data, error } = await caricaTutteLeRighe(() => sb.from("libro_matricola").select("*").order("sezione").order("targa_telaio"));
   if (error){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(error.message)}</p></div>`; return; }
   _libroMatricolaCache = data;
 
