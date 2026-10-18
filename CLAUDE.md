@@ -61,6 +61,12 @@ Roles (`app_users.ruolo`): `it_admin`, `specialita`, `segreteria`, `standard`. `
 - SQL helper functions used by the policies: `public.is_it_admin()` and `public.ha_permesso(chiave)`.
 - A trigger on `app_users` prevents non-admin users from changing `ruolo`, `permessi`, `attivo`, `nome`, `email`.
 - Bucket `firme-personali`: each user can write only `<uid>.png`.
+- Storage files are opened **only through signed URLs — never `getPublicUrl`** — so buckets can be private. Use the helpers in the UTILITY section of `index.html`:
+  - `urlFirmato(bucket, path, secondi=3600)` / `urlFirmatiMultipli(bucket, paths, secondi=3600)` — on-screen images (one `createSignedUrls` call for lists). Signed URLs already contain `?`, so cache-busting is appended with `&t=`.
+  - `apriFileStorage(bucket, path)` — opens a document with a 60-second signed URL (window opened synchronously so mobile browsers don't block it). In list HTML, render `<a href="#" role="button" data-apri-file="<path>" data-bucket="<bucket>">` and call `attaccaListenerApriFile(container)`; never put file URLs in the HTML.
+  - `scaricaComeDataUrl(bucket, path)` — signatures embedded in PDFs (`storage.download` → dataURL, no URL involved).
+- Every `sb.from(...)` / `sb.storage` call checks `error`. When deleting a document, delete the DB row first and remove the storage file only if that succeeded (a failed file removal is just `console.warn`).
+- Lists that can grow past 1000 rows (`automezzi`, `tlc_apparati`, `movimentazioni_tlc`, `volontari_formazione`, `iscrizioni_corsi`, `libro_matricola`) load through `caricaTutteLeRighe(() => query)`, which pages with `.range()` and returns `{ data, error }`.
 
 ### External libraries (all loaded via CDN `<script>` tags in `<head>`, no local copies/bundling)
 
