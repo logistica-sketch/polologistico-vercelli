@@ -2813,7 +2813,7 @@ async function caricaReportFormazione(){
 
   const [{ data: volontari, error: errV }, { data: iscrizioni, error: errI }] = await Promise.all([
     caricaTutteLeRighe(() => sb.from("volontari_formazione").select("id, cognome, nome, sezione_ana")),
-    caricaTutteLeRighe(() => sb.from("iscrizioni_corsi").select("stato, volontario_id, edizioni_corso(id, label, data_corso, stato, catalogo_corsi(codice, descrizione))"))
+    caricaTutteLeRighe(() => sb.from("iscrizioni_corsi").select("stato, attestato_rilasciato, volontario_id, edizioni_corso(id, label, data_corso, stato, catalogo_corsi(codice, descrizione))"))
   ]);
   if (errV || errI){ body.innerHTML = `<p>Errore: ${escapeHtml((errV||errI).message)}</p>`; return; }
 
@@ -2831,7 +2831,8 @@ async function caricaReportFormazione(){
     perSezione[sez] = (perSezione[sez]||0) + 1;
   });
 
-  // Per corso (edizione): totale iscritti, completati, in verifica, assenti
+  // Per corso (edizione): totale iscritti, completati, in verifica, assenti, attestati
+  // ("attestati" = iscrizioni con attestato_rilasciato = true)
   const perEdizione = {};
   iscrizioni.forEach(r => {
     const ed = r.edizioni_corso;
@@ -2840,34 +2841,36 @@ async function caricaReportFormazione(){
     if (!perEdizione[key]) perEdizione[key] = {
       label: ed.label, data: ed.data_corso, stato: ed.stato,
       codice: ed.catalogo_corsi?.codice || "—",
-      iscritti:0, completati:0, in_verifica:0, assenti:0
+      iscritti:0, completati:0, in_verifica:0, assenti:0, attestati:0
     };
     perEdizione[key].iscritti++;
+    if (r.attestato_rilasciato === true) perEdizione[key].attestati++;
     if (r.stato === "completato") perEdizione[key].completati++;
     else if (r.stato === "in_verifica" || r.stato === "iscritto") perEdizione[key].in_verifica++;
     else if (r.stato === "assente") perEdizione[key].assenti++;
   });
   const edizioniArr = Object.values(perEdizione).sort((a,b) => (b.data||"").localeCompare(a.data||""));
 
-  // Per tipologia corso (codice catalogo): n. edizioni, n. attestati completati totali
+  // Per tipologia corso (codice catalogo): n. edizioni, n. attestati rilasciati totali
   const perTipologia = {};
   edizioniArr.forEach(e => {
-    if (!perTipologia[e.codice]) perTipologia[e.codice] = { edizioni:0, completati:0 };
+    if (!perTipologia[e.codice]) perTipologia[e.codice] = { edizioni:0, attestati:0 };
     perTipologia[e.codice].edizioni++;
-    perTipologia[e.codice].completati += e.completati;
+    perTipologia[e.codice].attestati += e.attestati;
   });
 
   const totIscrizioni = iscrizioni.length;
   const totCompletati = iscrizioni.filter(r => r.stato === "completato").length;
   const totInVerifica = iscrizioni.filter(r => r.stato === "in_verifica" || r.stato === "iscritto").length;
   const totAssenti = iscrizioni.filter(r => r.stato === "assente").length;
+  const totAttestati = iscrizioni.filter(r => r.attestato_rilasciato === true).length;
 
   body.innerHTML = `
     <div class="report-stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
       <div class="report-stat-box"><div class="report-stat-num">${totVolontari}</div><div class="report-stat-lbl">Volontari censiti</div></div>
       <div class="report-stat-box"><div class="report-stat-num">${volontariConIscrizioni.size}</div><div class="report-stat-lbl">Volontari in formazione</div></div>
       <div class="report-stat-box"><div class="report-stat-num">${edizioniArr.length}</div><div class="report-stat-lbl">Edizioni corso</div></div>
-      <div class="report-stat-box"><div class="report-stat-num">${totCompletati}</div><div class="report-stat-lbl">Attestati completati</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${totAttestati}</div><div class="report-stat-lbl">Attestati rilasciati</div></div>
     </div>
 
     <h4>Per sezione ANA (volontari in formazione)</h4>
@@ -2880,15 +2883,15 @@ async function caricaReportFormazione(){
 
     <h4 style="margin-top:18px;">Per tipologia corso</h4>
     <table class="storico-table">
-      <thead><tr><th>Codice corso</th><th>Edizioni</th><th>Attestati completati</th></tr></thead>
+      <thead><tr><th>Codice corso</th><th>Edizioni</th><th>Attestati rilasciati</th></tr></thead>
       <tbody>
-        ${Object.entries(perTipologia).sort((a,b)=>b[1].completati-a[1].completati).map(([cod,d]) => `<tr><td>${escapeHtml(cod)}</td><td>${d.edizioni}</td><td>${d.completati}</td></tr>`).join("")}
+        ${Object.entries(perTipologia).sort((a,b)=>b[1].attestati-a[1].attestati).map(([cod,d]) => `<tr><td>${escapeHtml(cod)}</td><td>${d.edizioni}</td><td>${d.attestati}</td></tr>`).join("")}
       </tbody>
     </table>
 
     <h4 style="margin-top:18px;">Per edizione corso</h4>
     <table class="storico-table">
-      <thead><tr><th>Edizione</th><th>Codice</th><th>Data</th><th>Stato</th><th>Iscritti</th><th>Completati</th><th>In verifica</th><th>Assenti</th></tr></thead>
+      <thead><tr><th>Edizione</th><th>Codice</th><th>Data</th><th>Stato</th><th>Iscritti</th><th>Completati</th><th>In verifica</th><th>Assenti</th><th>Attestati</th></tr></thead>
       <tbody>
         ${edizioniArr.map(e => `
           <tr>
@@ -2900,6 +2903,7 @@ async function caricaReportFormazione(){
             <td>${e.completati}</td>
             <td>${e.in_verifica}</td>
             <td>${e.assenti}</td>
+            <td>${e.attestati}</td>
           </tr>
         `).join("")}
       </tbody>
@@ -2920,7 +2924,8 @@ async function caricaReportFormazione(){
       ["Volontari in formazione", volontariConIscrizioni.size],
       ["Edizioni corso", edizioniArr.length],
       ["Iscrizioni totali", totIscrizioni],
-      ["Attestati completati", totCompletati],
+      ["Completati", totCompletati],
+      ["Attestati rilasciati", totAttestati],
       ["In verifica", totInVerifica],
       ["Assenti", totAssenti],
     ]);
@@ -2932,14 +2937,14 @@ async function caricaReportFormazione(){
     XLSX.utils.book_append_sheet(wb, wsSezioni, "Per sezione");
 
     const wsTipologie = XLSX.utils.json_to_sheet(
-      Object.entries(perTipologia).map(([cod,d]) => ({ "Codice corso": cod, Edizioni: d.edizioni, "Attestati completati": d.completati }))
+      Object.entries(perTipologia).map(([cod,d]) => ({ "Codice corso": cod, Edizioni: d.edizioni, "Attestati rilasciati": d.attestati }))
     );
     XLSX.utils.book_append_sheet(wb, wsTipologie, "Per tipologia");
 
     const wsEdizioni = XLSX.utils.json_to_sheet(
       edizioniArr.map(e => ({
         Edizione: e.label, Codice: e.codice, Data: e.data ? formatDataIt(e.data) : "—", Stato: labelStatoCorso(e.stato),
-        Iscritti: e.iscritti, Completati: e.completati, "In verifica": e.in_verifica, Assenti: e.assenti
+        Iscritti: e.iscritti, Completati: e.completati, "In verifica": e.in_verifica, Assenti: e.assenti, Attestati: e.attestati
       }))
     );
     XLSX.utils.book_append_sheet(wb, wsEdizioni, "Per edizione");
@@ -3029,31 +3034,120 @@ async function caricaAttestatiMancanti(){
   body.querySelectorAll("[data-upload-attestato-mancanti]").forEach(input => input.addEventListener("change", (ev) => caricaAttestatoDaListaMancanti(ev)));
 }
 
+/* ---------- ATTESTATI: collegamento 1:1 con l'iscrizione ----------
+   Regola: ogni documento con tipo = 'attestato' DEVE avere iscrizione_id,
+   e ogni iscrizione ha al massimo un attestato. Tutti i caricamenti e le
+   rimozioni di attestati passano da questi due helper. */
+
+// Carica il file e lo collega all'iscrizione. Se l'iscrizione ha già un
+// attestato: sostituisci = "chiedi" (confirm) | true | false.
+// Aggiorna l'iscrizione: attestato_rilasciato = true, stato = 'completato',
+// data_completamento = data_corso dell'edizione se vuota.
+// Ritorna { ok:true } | { saltato:true } | { errore:"..." }.
+async function salvaAttestatoIscrizione({ iscrizioneId, volontarioId, file, nomeFile, cognome, nome, note = null, contentType = null, sostituisci = "chiedi" }){
+  const { data: isc, error: errIsc } = await sb
+    .from("iscrizioni_corsi")
+    .select("id, volontario_id, data_completamento, edizioni_corso(label, data_corso)")
+    .eq("id", iscrizioneId)
+    .maybeSingle();
+  if (errIsc) return { errore: errIsc.message };
+  if (!isc) return { errore: "iscrizione non trovata" };
+  if (isc.volontario_id !== volontarioId) return { errore: "l'iscrizione non appartiene a questo volontario" };
+
+  const { data: vecchio, error: errVecchio } = await sb
+    .from("documenti_volontario")
+    .select("*")
+    .eq("iscrizione_id", iscrizioneId)
+    .eq("tipo", "attestato")
+    .maybeSingle();
+  if (errVecchio) return { errore: errVecchio.message };
+  if (vecchio){
+    const procedi = sostituisci === "chiedi"
+      ? confirm(`L'iscrizione a "${isc.edizioni_corso?.label || ""}" ha già un attestato collegato (${vecchio.nome_file}).\n\nSostituirlo con "${nomeFile}"?`)
+      : sostituisci;
+    if (!procedi) return { saltato: true };
+  }
+
+  const path = `${pulisciNomeFile(`${cognome}_${nome}`)}/${Date.now()}_${pulisciNomeFile(nomeFile)}`;
+  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file, contentType ? { contentType } : undefined);
+  if (upErr) return { errore: "upload non riuscito: " + upErr.message };
+
+  // Sostituzione: la vecchia riga va tolta prima di inserire la nuova (un attestato per iscrizione).
+  if (vecchio){
+    const { error: errDel } = await sb.from("documenti_volontario").delete().eq("id", vecchio.id);
+    if (errDel){
+      await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([path]);
+      return { errore: errDel.message };
+    }
+  }
+
+  const { error: errIns } = await sb.from("documenti_volontario").insert({
+    volontario_id: volontarioId,
+    iscrizione_id: iscrizioneId,
+    tipo: "attestato",
+    nome_file: nomeFile,
+    storage_path: path,
+    note,
+    created_by: state.user.id
+  });
+  if (errIns){
+    await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([path]);
+    if (vecchio){
+      // ripristino la riga precedente (il suo file non è ancora stato toccato)
+      const { id, ...rigaPrecedente } = vecchio;
+      const { error: errRipr } = await sb.from("documenti_volontario").insert(rigaPrecedente);
+      if (errRipr) return { errore: `${errIns.message} — e non è stato possibile ripristinare l'attestato precedente (${errRipr.message})` };
+    }
+    return { errore: errIns.message };
+  }
+
+  if (vecchio){
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([vecchio.storage_path]);
+    if (rmErr) console.warn("File non rimosso dallo storage:", vecchio.storage_path, rmErr.message);
+  }
+
+  const aggiornamento = { attestato_rilasciato: true, stato: "completato" };
+  if (!isc.data_completamento && isc.edizioni_corso?.data_corso) aggiornamento.data_completamento = isc.edizioni_corso.data_corso;
+  const { error: errAgg } = await sb.from("iscrizioni_corsi").update(aggiornamento).eq("id", iscrizioneId);
+  if (errAgg) return { errore: "attestato caricato, ma aggiornamento dell'iscrizione non riuscito: " + errAgg.message };
+
+  return { ok: true };
+}
+
+// Rimuove un attestato: cancella la riga, poi il file, poi riporta
+// attestato_rilasciato = false sull'iscrizione (lo stato non viene toccato).
+// Ritorna true se riuscito; in caso di errore mostra l'alert e ritorna false.
+async function rimuoviAttestato(docId){
+  const { data: doc, error: getErr } = await sb.from("documenti_volontario").select("storage_path, iscrizione_id").eq("id", docId).maybeSingle();
+  if (getErr){ alert("Errore: " + getErr.message); return false; }
+  if (!doc){ alert("Errore: attestato non trovato."); return false; }
+
+  const { error: delErr } = await sb.from("documenti_volontario").delete().eq("id", docId);
+  if (delErr){ alert("Errore: " + delErr.message); return false; }
+
+  const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([doc.storage_path]);
+  if (rmErr) console.warn("File non rimosso dallo storage:", doc.storage_path, rmErr.message);
+
+  if (doc.iscrizione_id){
+    const { error: errAgg } = await sb.from("iscrizioni_corsi").update({ attestato_rilasciato: false }).eq("id", doc.iscrizione_id);
+    if (errAgg){ alert("Attestato rimosso, ma aggiornamento dell'iscrizione non riuscito: " + errAgg.message); return false; }
+  }
+  return true;
+}
+
 async function caricaAttestatoDaListaMancanti(ev){
   const file = ev.target.files[0];
   if (!file) return;
-  const iscrizioneId = parseInt(ev.target.dataset.uploadAttestatoMancanti);
-  const volontarioId = parseInt(ev.target.dataset.volontario);
-  const cognome = ev.target.dataset.cognome;
-  const nome = ev.target.dataset.nome;
-
-  const path = `${pulisciNomeFile(`${cognome}_${nome}`)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
-  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
-  if (upErr){ alert("Errore upload: " + upErr.message); return; }
-
-  const { error: errDoc } = await sb.from("documenti_volontario").insert({
-    volontario_id: volontarioId,
-    tipo: "attestato",
-    nome_file: file.name,
-    storage_path: path,
-    created_by: state.user.id
+  const ris = await salvaAttestatoIscrizione({
+    iscrizioneId: parseInt(ev.target.dataset.uploadAttestatoMancanti),
+    volontarioId: parseInt(ev.target.dataset.volontario),
+    file, nomeFile: file.name,
+    cognome: ev.target.dataset.cognome,
+    nome: ev.target.dataset.nome
   });
-  if (errDoc){ alert("Errore: " + errDoc.message); return; }
-
-  const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
-  if (errStato){ alert("Errore: " + errStato.message); return; }
-
-  caricaAttestatiMancanti();
+  ev.target.value = "";
+  if (ris.errore) alert("Errore: " + ris.errore);
+  if (!ris.saltato) caricaAttestatiMancanti();
 }
 
 
@@ -3105,7 +3199,7 @@ async function importaZipAttestati(ev){
   if (!edizioneId){ alert("Nessuna edizione corso selezionata. Riprova dal pulsante \"Import massivo attestati\"."); return; }
   const edizione = _edizioniCache.find(e => String(e.id) === String(edizioneId));
 
-  if (!confirm(`Importare gli attestati dal file ${file.name} per l'edizione "${edizione?.label||""}"?\n\nOgni PDF deve essere nominato con il codice fiscale del volontario (es. RSSMNL90H01G674A.pdf, o RSSMNL90H01G674A_2.pdf per attestati multipli della stessa persona).`)) return;
+  if (!confirm(`Importare gli attestati dal file ${file.name} per l'edizione "${edizione?.label||""}"?\n\nOgni PDF deve essere nominato con il codice fiscale del volontario (es. RSSMNL90H01G674A.pdf). Ogni iscrizione ha un solo attestato: se nello ZIP ci sono più file per la stessa persona viene usato il primo.`)) return;
 
   const content = document.getElementById("page-content");
   const overlay = document.createElement("div");
@@ -3119,7 +3213,9 @@ async function importaZipAttestati(ev){
     const zip = await JSZip.loadAsync(buf);
     const pdfEntries = Object.values(zip.files).filter(f => !f.dir && /\.pdf$/i.test(f.name));
 
-    let ok = 0, nonTrovati = [], nonIscrittiEdizione = [], errori = [];
+    let ok = 0, nonTrovati = [], nonIscrittiEdizione = [], errori = [], saltati = [];
+    let sostituisciEsistenti = null; // chiesto una sola volta, al primo attestato già presente
+    const iscrizioniGiaImportate = new Set();
     let i = 0;
     for (const entry of pdfEntries){
       i++;
@@ -3147,27 +3243,37 @@ async function importaZipAttestati(ev){
         continue;
       }
 
+      if (iscrizioniGiaImportate.has(iscrizione.id)){
+        saltati.push(`${nomeBase} (${volontario.cognome} ${volontario.nome}): altro file per la stessa iscrizione già importato da questo ZIP`);
+        continue;
+      }
+
+      // Attestato già presente sull'iscrizione: chiedo una volta sola cosa fare per tutto lo ZIP
+      if (sostituisciEsistenti === null){
+        const { data: esistente, error: errEsist } = await sb.from("documenti_volontario")
+          .select("id").eq("iscrizione_id", iscrizione.id).eq("tipo", "attestato").maybeSingle();
+        if (errEsist){ errori.push(`${nomeBase}: ${errEsist.message}`); continue; }
+        if (esistente){
+          sostituisciEsistenti = confirm("Alcuni volontari di questa edizione hanno già un attestato collegato.\n\nOK = sostituisci gli attestati esistenti con quelli dello ZIP\nAnnulla = lascia quelli esistenti e salta questi file");
+        }
+      }
+
       try{
         const blob = await entry.async("blob");
-        const path = `${pulisciNomeFile(`${volontario.cognome}_${volontario.nome}`)}/${Date.now()}_${pulisciNomeFile(nomeBase)}`;
-        const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, blob, { contentType: "application/pdf" });
-        if (upErr) throw upErr;
-
-        const { error: docErr } = await sb.from("documenti_volontario").insert({
-          volontario_id: volontario.id,
-          tipo: "attestato",
-          nome_file: nomeBase,
-          storage_path: path,
-          created_by: state.user.id
+        const ris = await salvaAttestatoIscrizione({
+          iscrizioneId: iscrizione.id,
+          volontarioId: volontario.id,
+          file: blob, nomeFile: nomeBase,
+          cognome: volontario.cognome, nome: volontario.nome,
+          contentType: "application/pdf",
+          sostituisci: sostituisciEsistenti === true
         });
-        if (docErr) throw docErr;
-
-        // Aggiorna a "completato" solo l'iscrizione di questo volontario per l'edizione selezionata
-        const { error: errStato } = await sb.from("iscrizioni_corsi")
-          .update({ stato: "completato" })
-          .eq("id", iscrizione.id);
-        if (errStato) throw errStato;
-
+        if (ris.errore) throw new Error(ris.errore);
+        if (ris.saltato){
+          saltati.push(`${nomeBase} (${volontario.cognome} ${volontario.nome}): attestato già presente, non sostituito`);
+          continue;
+        }
+        iscrizioniGiaImportate.add(iscrizione.id);
         ok++;
       }catch(err){
         errori.push(`${nomeBase}: ${err.message}`);
@@ -3175,9 +3281,10 @@ async function importaZipAttestati(ev){
     }
 
     overlay.remove();
-    let msg = `Import completato (${edizione?.label||""}).\nAttestati caricati: ${ok}\nVolontari non trovati: ${nonTrovati.length}\nNon iscritti a questa edizione: ${nonIscrittiEdizione.length}`;
+    let msg = `Import completato (${edizione?.label||""}).\nAttestati caricati: ${ok}\nVolontari non trovati: ${nonTrovati.length}\nNon iscritti a questa edizione: ${nonIscrittiEdizione.length}\nSaltati: ${saltati.length}`;
     if (nonTrovati.length) msg += `\n\nNon trovati:\n` + nonTrovati.join("\n");
     if (nonIscrittiEdizione.length) msg += `\n\nNon iscritti a questa edizione:\n` + nonIscrittiEdizione.join("\n");
+    if (saltati.length) msg += `\n\nSaltati:\n` + saltati.join("\n");
     if (errori.length) msg += `\n\nErrori:\n` + errori.join("\n");
     alert(msg);
 
@@ -3459,15 +3566,15 @@ async function caricaVolontariEdizione(){
   if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
   if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessun volontario iscritto a questa edizione.</div>`; return; }
 
-  const idVolontari = data.map(r => r.volontari_formazione.id);
+  // Attestati collegati alle iscrizioni di questa edizione (1:1 tramite iscrizione_id)
   const { data: documenti, error: errDocs } = await sb
     .from("documenti_volontario")
-    .select("id, volontario_id, storage_path, nome_file")
+    .select("id, iscrizione_id, storage_path, nome_file")
     .eq("tipo", "attestato")
-    .in("volontario_id", idVolontari);
+    .in("iscrizione_id", data.map(r => r.id));
   if (errDocs){ alert("Errore: " + errDocs.message); return; }
-  const attestatoPerVolontario = {};
-  (documenti||[]).forEach(d => { attestatoPerVolontario[d.volontario_id] = d; });
+  const attestatoPerIscrizione = {};
+  (documenti||[]).forEach(d => { attestatoPerIscrizione[d.iscrizione_id] = d; });
 
   if (!terminato){
     // Vista semplice: prima del termine corso, solo link attestato se presente
@@ -3476,7 +3583,7 @@ async function caricaVolontariEdizione(){
         <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Stato</th><th>Attestato</th></tr></thead>
         <tbody>
           ${data.map(r => {
-            const doc = attestatoPerVolontario[r.volontari_formazione.id];
+            const doc = attestatoPerIscrizione[r.id];
             let linkAttestato = "—";
             if (doc){
               linkAttestato = `<a href="#" role="button" data-apri-file="${escapeHtml(doc.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_VOLONTARI}">Apri</a> &nbsp;
@@ -3501,7 +3608,7 @@ async function caricaVolontariEdizione(){
         <thead><tr><th>Cognome Nome</th><th>Sezione</th><th>Assente</th><th>Stato</th><th>Attestato</th></tr></thead>
         <tbody>
           ${data.map(r => {
-            const doc = attestatoPerVolontario[r.volontari_formazione.id];
+            const doc = attestatoPerIscrizione[r.id];
             const assente = r.stato === "assente";
             let cellaAttestato;
             if (doc){
@@ -3545,7 +3652,7 @@ async function caricaVolontariEdizione(){
   attaccaListenerApriFile(wrap);
   wrap.querySelectorAll("[data-rimuovi-attestato]").forEach(a => a.addEventListener("click", (ev) => {
     ev.preventDefault();
-    rimuoviAttestatoIscrizione(parseInt(a.dataset.rimuoviAttestato), parseInt(a.dataset.iscrizione));
+    rimuoviAttestatoIscrizione(parseInt(a.dataset.rimuoviAttestato));
   }));
 
   wrap.querySelectorAll("[data-apri-volontario]").forEach(a => a.addEventListener("click", (ev) => {
@@ -3557,45 +3664,21 @@ async function caricaVolontariEdizione(){
 async function caricaAttestatoIscrizione(ev, edizione){
   const file = ev.target.files[0];
   if (!file) return;
-  const iscrizioneId = parseInt(ev.target.dataset.uploadAttestato);
-  const volontarioId = parseInt(ev.target.dataset.volontario);
-  const cognome = ev.target.dataset.cognome;
-  const nome = ev.target.dataset.nome;
-
-  const path = `${pulisciNomeFile(`${cognome}_${nome}`)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
-  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).upload(path, file);
-  if (upErr){ alert("Errore upload: " + upErr.message); return; }
-
-  const { error: errDoc } = await sb.from("documenti_volontario").insert({
-    volontario_id: volontarioId,
-    tipo: "attestato",
-    nome_file: file.name,
-    storage_path: path,
-    created_by: state.user.id
+  const ris = await salvaAttestatoIscrizione({
+    iscrizioneId: parseInt(ev.target.dataset.uploadAttestato),
+    volontarioId: parseInt(ev.target.dataset.volontario),
+    file, nomeFile: file.name,
+    cognome: ev.target.dataset.cognome,
+    nome: ev.target.dataset.nome
   });
-  if (errDoc){ alert("Errore: " + errDoc.message); return; }
-
-  const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "completato" }).eq("id", iscrizioneId);
-  if (errStato){ alert("Errore: " + errStato.message); return; }
-
-  caricaVolontariEdizione();
+  ev.target.value = "";
+  if (ris.errore) alert("Errore: " + ris.errore);
+  if (!ris.saltato) caricaVolontariEdizione();
 }
 
-async function rimuoviAttestatoIscrizione(docId, iscrizioneId){
-  if (!confirm("Rimuovere questo attestato? Il file verrà eliminato e lo stato dell'iscrizione tornerà \"In verifica\".")) return;
-
-  const { data: doc, error: getErr } = await sb.from("documenti_volontario").select("storage_path").eq("id", docId).maybeSingle();
-  if (getErr || !doc){ alert("Errore: attestato non trovato."); return; }
-
-  const { error: delErr } = await sb.from("documenti_volontario").delete().eq("id", docId);
-  if (delErr){ alert("Errore: " + delErr.message); return; }
-
-  const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_DOC_VOLONTARI).remove([doc.storage_path]);
-  if (rmErr) console.warn("File non rimosso dallo storage:", doc.storage_path, rmErr.message);
-
-  const { error: errStato } = await sb.from("iscrizioni_corsi").update({ stato: "in_verifica" }).eq("id", iscrizioneId);
-  if (errStato){ alert("Errore: " + errStato.message); return; }
-
+async function rimuoviAttestatoIscrizione(docId){
+  if (!confirm("Rimuovere questo attestato? Il file verrà eliminato e l'iscrizione risulterà senza attestato rilasciato (lo stato non cambia).")) return;
+  await rimuoviAttestato(docId);
   caricaVolontariEdizione();
 }
 
@@ -3976,7 +4059,7 @@ async function caricaDocumentiVolontario(){
               <td>${tipiLabel[d.tipo]||d.tipo}</td>
               <td>${escapeHtml(d.nome_file)}</td>
               <td><a href="#" role="button" data-apri-file="${escapeHtml(d.storage_path)}" data-bucket="${STORAGE_BUCKET_DOC_VOLONTARI}">Apri</a></td>
-              <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}">Elimina</button></td>
+              <td><button class="row-del" data-id="${d.id}" data-path="${d.storage_path}" data-tipo="${escapeHtml(d.tipo)}">Elimina</button></td>
             </tr>
           `;
         }).join("")}
@@ -3985,6 +4068,13 @@ async function caricaDocumentiVolontario(){
   `;
   attaccaListenerApriFile(wrap);
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (b.dataset.tipo === "attestato"){
+      // l'attestato è legato a un'iscrizione: va tolto anche attestato_rilasciato
+      if (!confirm("Eliminare questo attestato? L'iscrizione collegata risulterà senza attestato rilasciato (lo stato non cambia).")) return;
+      await rimuoviAttestato(parseInt(b.dataset.id));
+      caricaDocumentiVolontario();
+      return;
+    }
     if (!confirm("Eliminare questo documento?")) return;
     const { error } = await sb.from("documenti_volontario").delete().eq("id", parseInt(b.dataset.id));
     if (error){ alert("Errore: " + error.message); return; }
@@ -3994,9 +4084,21 @@ async function caricaDocumentiVolontario(){
   }));
 }
 
-function mostraFormDocumentoVolontario(){
+async function mostraFormDocumentoVolontario(){
   const v = _modalVolontarioCorrente;
   const wrap = document.getElementById("documenti-volontario-list");
+
+  // Iscrizioni del volontario: un attestato va sempre collegato a una di queste
+  const { data: iscrizioni, error: errIsc } = await sb
+    .from("iscrizioni_corsi")
+    .select("id, stato, attestato_rilasciato, edizioni_corso(label, data_corso)")
+    .eq("volontario_id", v.id)
+    .order("id", { ascending:false });
+  if (errIsc){ alert("Errore: " + errIsc.message); return; }
+  const opzioniIscrizioni = (iscrizioni||[]).map(r =>
+    `<option value="${r.id}">${escapeHtml(r.edizioni_corso?.label || "Edizione senza nome")}${r.edizioni_corso?.data_corso ? " — " + formatDataIt(r.edizioni_corso.data_corso) : ""}${r.attestato_rilasciato ? " (ha già un attestato)" : ""}</option>`
+  ).join("");
+
   const form = document.createElement("div");
   form.className = "mini-form";
   form.innerHTML = `
@@ -4010,6 +4112,12 @@ function mostraFormDocumentoVolontario(){
             <option value="altro">Altro</option>
           </select>
         </div>
+        <div class="form-field" id="campo-iscrizione-attestato">
+          <label>Iscrizione a cui appartiene l'attestato *</label>
+          ${opzioniIscrizioni
+            ? `<select name="iscrizione_id"><option value="">— Seleziona iscrizione —</option>${opzioniIscrizioni}</select>`
+            : `<p style="font-size:12px;color:var(--rosso);margin:4px 0 0;">Il volontario non ha iscrizioni: per caricare un attestato iscrivilo prima a un'edizione.</p>`}
+        </div>
         <div class="form-field full"><label>File (PDF o immagine)</label><input type="file" name="file" accept=".pdf,image/*" required></div>
         <div class="form-field full"><label>Note</label><textarea name="note"></textarea></div>
       </div>
@@ -4021,11 +4129,35 @@ function mostraFormDocumentoVolontario(){
   `;
   wrap.prepend(form);
   document.getElementById("btn-cancel-documento-volontario").addEventListener("click", () => form.remove());
+  const selectTipo = form.querySelector('select[name="tipo"]');
+  const campoIscrizione = document.getElementById("campo-iscrizione-attestato");
+  selectTipo.addEventListener("change", () => {
+    campoIscrizione.style.display = selectTipo.value === "attestato" ? "" : "none";
+  });
   document.getElementById("form-documento-volontario").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.target);
     const file = fd.get("file");
     const btn = ev.target.querySelector(".btn-save");
+
+    if (fd.get("tipo") === "attestato"){
+      const iscrizioneId = parseInt(fd.get("iscrizione_id"));
+      if (!iscrizioneId){ alert("Seleziona l'iscrizione a cui appartiene l'attestato."); return; }
+      btn.disabled = true; btn.textContent = "Caricamento…";
+      const ris = await salvaAttestatoIscrizione({
+        iscrizioneId, volontarioId: v.id,
+        file, nomeFile: file.name,
+        cognome: v.cognome, nome: v.nome,
+        note: fd.get("note") || null
+      });
+      btn.disabled = false; btn.textContent = "Carica";
+      if (ris.saltato) return;
+      if (ris.errore){ alert("Errore: " + ris.errore); caricaDocumentiVolontario(); return; }
+      form.remove();
+      caricaDocumentiVolontario();
+      return;
+    }
+
     btn.disabled = true; btn.textContent = "Caricamento…";
 
     const path = `${pulisciNomeFile(`${v.cognome}_${v.nome}`)}/${Date.now()}_${pulisciNomeFile(file.name)}`;
