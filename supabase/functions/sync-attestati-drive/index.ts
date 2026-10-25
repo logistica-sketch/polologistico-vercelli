@@ -49,7 +49,8 @@ Deno.serve(async (req) => {
   let payload: Payload;
   try {
     payload = await req.json();
-  } catch {
+  } catch (err) {
+    await log("SYNC_DRIVE_ERRORE", null, null, { evento: "PAYLOAD", errore: "payload non valido: " + messaggio(err) });
     return json({ ok: false, error: "payload non valido" });
   }
 
@@ -78,9 +79,20 @@ Deno.serve(async (req) => {
 });
 
 async function gestisci(p: Payload) {
-  if (p.table && p.table !== "documenti_volontario") return;
-  if (p.type === "INSERT" && p.record?.tipo === "attestato") return await suInserimento(p.record);
-  if (p.type === "DELETE" && p.old_record?.tipo === "attestato") return await suEliminazione(p.old_record);
+  if (p.type === "INSERT" && p.record?.tipo === "attestato" && (!p.table || p.table === "documenti_volontario")) {
+    return await suInserimento(p.record);
+  }
+  if (p.type === "DELETE" && p.old_record?.tipo === "attestato" && (!p.table || p.table === "documenti_volontario")) {
+    return await suEliminazione(p.old_record);
+  }
+  // Evento che non riguarda un attestato (es. certificato medico): nessuna azione, ma lo registro
+  const riga = p.record ?? p.old_record ?? null;
+  await log("SYNC_DRIVE_OK", riga?.id ?? null, p.old_record ?? null, {
+    evento: p.type ?? null,
+    tabella_evento: p.table ?? null,
+    tipo_documento: riga?.tipo ?? null,
+    esito: "ignorato: non è un attestato su documenti_volontario",
+  });
 }
 
 /* ---------- INSERT: carica su Drive ---------- */
@@ -409,16 +421,29 @@ function nomeCartellaCorso(ed: any) {
 }
 
 /* ---------- Utility ---------- */
-async function log(operazione: string, recordId: unknown, prima: unknown, dopo: unknown) {
-  const { error } = await sb.from("log_attivita").insert({
+// Una riga in log_attivita per ogni esecuzione. operazione = SYNC_DRIVE_OK | SYNC_DRIVE_ERRORE
+// (richiede che il CHECK log_attivita_operazione_check ammetta questi due valori).
+// record_id è text. Se l'insert fallisce non si può loggare sul DB: l'errore completo
+// va nei log della funzione (Dashboard → Functions → sync-attestati-drive → Logs).
+async function log(operazione: "SYNC_DRIVE_OK" | "SYNC_DRIVE_ERRORE", recordId: unknown, prima: unknown, dopo: unknown) {
+  const riga = {
     utente_email: UTENTE_LOG,
     tabella: "documenti_volontario",
     operazione,
-    record_id: recordId,
-    dati_prima: prima,
-    dati_dopo: dopo,
-  });
-  if (error) console.error("log_attivita non scritto:", error.message, operazione, recordId);
+    record_id: recordId === null || recordId === undefined ? null : String(recordId),
+    dati_prima: prima ?? null,
+    dati_dopo: dopo ?? null,
+  };
+  try {
+    const { error } = await sb.from("log_attivita").insert(riga);
+    if (error) {
+      console.error("LOG_ATTIVITA_NON_SCRITTO", JSON.stringify({
+        codice: error.code, messaggio: error.message, dettagli: error.details, suggerimento: error.hint, riga,
+      }));
+    }
+  } catch (err) {
+    console.error("LOG_ATTIVITA_NON_SCRITTO", messaggio(err), JSON.stringify(riga));
+  }
 }
 
 function numero(v: unknown): number | null {
