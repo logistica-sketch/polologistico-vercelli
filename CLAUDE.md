@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Gestionale del Polo Logistico 1 RGPT/CAP Vercelli del Coordinamento delle Sezioni Piemontesi ANA (Associazione Nazionale Alpini) – Protezione Civile: manages vehicles (automezzi) and radio/telecom equipment (TLC). Italian-language UI throughout; comments and identifiers in the code are Italian.
 
-It is a static, no-build, single-page PWA: there is no bundler, package manager, or compile step. All application logic lives in one file, `index.html` (~5800 lines: markup + CSS classes + a single `<script>` block with the entire app). `stile.css` holds shared styles, `sw.js` is a minimal service worker (installability only, no offline API caching — see comments at the top of that file), and `manifest.json` is the PWA manifest.
+It is a static, no-build, single-page PWA: there is no bundler, package manager, or compile step. All application logic lives in one file, `index.html` (~5800 lines: markup + CSS classes + a single `<script>` block with the entire app). `stile.css` holds shared styles, `sw.js` is a minimal service worker (network-first for same-origin GETs only, refreshing a small shell cache; the app does not work offline, so navigations without network get `offline.html` — see comments at the top of that file; bump `CACHE_NAME` when the shell file list changes), and `manifest.json` is the PWA manifest (icons in `icons/`: `icon-*` for `any`, padded `maskable-*` for Android masks).
 
 The backend is Supabase (Postgres + Auth + Storage), used directly from the client via `@supabase/supabase-js` — there is no server-side code in this repo.
 

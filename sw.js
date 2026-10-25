@@ -1,9 +1,20 @@
-// Service worker minimo: serve solo a rendere l'app installabile come PWA.
-// Nessuna cache offline complessa: i dati arrivano sempre da Supabase online,
-// quindi non ha senso cacheare le risposte API. Cacheiamo solo lo shell statico.
+// Service worker: rende l'app installabile come PWA.
+// I dati arrivano sempre da Supabase online e le librerie dalle CDN, quindi
+// l'app non funziona offline: senza rete le navigazioni ricevono offline.html.
+// Cacheiamo solo lo shell statico dello stesso dominio.
 
-const CACHE_NAME = "polo-logistico-shell-v2";
-const SHELL_FILES = ["./index.html", "./manifest.json", "./stile.css"];
+const CACHE_NAME = "polo-logistico-shell-v3";
+const PAGINA_OFFLINE = "./offline.html";
+const SHELL_FILES = [
+  "./index.html",
+  "./manifest.json",
+  "./stile.css",
+  PAGINA_OFFLINE,
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/maskable-192.png",
+  "./icons/maskable-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -21,15 +32,30 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Network-first per index.html (così aggiornamenti dell'app si vedono subito),
-// fallback alla cache solo se offline.
+// Network-first (così gli aggiornamenti dell'app si vedono subito); ogni risposta
+// valida aggiorna la copia in cache. Se offline:
+//  - navigazione → pagina offline (l'app senza rete non può funzionare);
+//  - altri file → copia in cache, altrimenti Response.error().
 // Si intercettano solo le richieste dello stesso dominio: Supabase e CDN passano diretti.
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  if (new URL(event.request.url).origin !== self.location.origin) return;
+  const req = event.request;
+  if (req.method !== "GET") return;
+  if (new URL(req.url).origin !== self.location.origin) return;
+
   event.respondWith(
-    fetch(event.request).catch(() =>
-      caches.match(event.request).then((r) => r || Response.error())
-    )
+    fetch(req)
+      .then((resp) => {
+        if (resp.ok && resp.type === "basic") {
+          const copia = resp.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(req, copia)));
+        }
+        return resp;
+      })
+      .catch(async () => {
+        if (req.mode === "navigate") {
+          return (await caches.match(PAGINA_OFFLINE)) || Response.error();
+        }
+        return (await caches.match(req)) || Response.error();
+      })
   );
 });

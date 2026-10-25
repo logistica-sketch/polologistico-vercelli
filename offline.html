@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0b2545">
+<title>Polo Logistico — offline</title>
+<link rel="icon" href="icons/icon-192.png">
+<!-- Pagina servita dal service worker quando manca la rete: tutto inline, niente CDN -->
+<style>
+  :root{ --blu:#0b2545; --grigio:#5b6472; --sfondo:#f4f6f9; }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:var(--sfondo); color:var(--blu);
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    padding:24px;
+  }
+  .box{
+    background:#fff; border-radius:14px; box-shadow:0 4px 20px rgba(11,37,69,.08);
+    padding:32px 28px; max-width:380px; width:100%; text-align:center;
+  }
+  img{ width:96px; height:96px; margin-bottom:16px; }
+  h1{ font-size:20px; margin:0 0 10px; }
+  p{ font-size:14px; line-height:1.5; color:var(--grigio); margin:0 0 22px; }
+  button{
+    background:var(--blu); color:#fff; border:none; border-radius:8px;
+    padding:11px 22px; font-size:14px; font-weight:600; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="box">
+    <img src="icons/icon-192.png" alt="">
+    <h1>Sei offline</h1>
+    <p>Il gestionale del Polo Logistico funziona solo con la connessione a Internet.<br>Controlla la rete e riprova.</p>
+    <button onclick="location.reload()">Riprova</button>
+  </div>
+  <script>
+    // Appena torna la connessione ricarica da solo
+    window.addEventListener("online", () => location.reload());
+  </script>
+</body>
+</html>
