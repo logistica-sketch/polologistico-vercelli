@@ -71,3 +71,13 @@ Roles (`app_users.ruolo`): `it_admin`, `specialita`, `segreteria`, `standard`. `
 ### External libraries (all loaded via CDN `<script>` tags in `<head>`, no local copies/bundling)
 
 `@supabase/supabase-js@2.117.2`, `heic2any` (HEIC photo conversion), `jspdf` + `pdf-lib` (PDF generation/editing), `pdf.js` (PDF rendering for the Firma Documenti viewer), `xlsx` (Excel import/export), `jszip` (bulk ZIP import/export), `@tabler/icons-webfont@3.48.0` (icon font).
+
+### Sync attestati → Google Drive (server-side, outside the static app)
+
+Attestati (`documenti_volontario` with `tipo = 'attestato'`) are mirrored to Google Drive:
+
+- A Supabase **Database Webhook** on `documenti_volontario` (INSERT, DELETE; header `x-webhook-secret`) calls the Edge Function `supabase/functions/sync-attestati-drive/` (deployed with `--no-verify-jwt`).
+- The function resolves iscrizione → edizione → volontario, creates a 10-minute signed URL and calls the **Apps Script web app** in `apps-script/` (runs as the `logistica@` account). On INSERT the file lands in the edition's `ATTESTATI` folder (`edizioni_corso.drive_cartella_attestati_id`, created under `01_CORSI/<anno>/<corso>/` when empty) as `COGNOME NOME_CF.pdf`, and `drive_file_id` is saved on the document. On DELETE the Drive file is trashed (never permanently deleted).
+- Every outcome is written to `log_attivita` (`utente_email = 'sync-attestati-drive'`, `operazione` `SYNC_DRIVE_OK` / `SYNC_DRIVE_ERRORE`). The function answers the webhook immediately and works in background (`EdgeRuntime.waitUntil`), so sync errors never block the app.
+- Secrets are never in the repo: `WEBHOOK_SECRET`, `APPS_SCRIPT_SECRET`, `APPS_SCRIPT_URL` are Supabase function secrets; `APPS_SCRIPT_SECRET` is also an Apps Script *Script Property*. Apps Script `doPost` cannot read HTTP headers, so the secret travels in the JSON body; the web app answers with a 302 that the function follows with a GET.
+- Redeploy: `cd apps-script && clasp push && clasp deploy -i <deploymentId>` (keeps the same `/exec` URL; `clasp create` overwrites `appsscript.json`, restore it if you ever recreate the project) and `npx supabase@2.122.0 functions deploy sync-attestati-drive --no-verify-jwt --use-api`. `.clasp.json` and `supabase/.temp/` are git-ignored.
