@@ -11,6 +11,11 @@
 // Ogni esito finisce in log_attivita (SYNC_DRIVE_OK / SYNC_DRIVE_ERRORE).
 // Il lavoro vero gira in background (EdgeRuntime.waitUntil) e la risposta al
 // webhook è immediata: un errore di sync non blocca mai l'app.
+//
+// Backfill una tantum: POST {"backfill": true} (stesso header x-webhook-secret).
+// Collega gli attestati senza drive_file_id ai PDF già presenti nella cartella
+// ATTESTATI dell'edizione, abbinandoli per dimensione in byte. Nessuna scrittura
+// su Drive. Con {"backfill": true, "dryRun": true} mostra il risultato senza salvare.
 
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 
@@ -25,7 +30,15 @@ const sb = createClient(
 );
 
 type Riga = Record<string, unknown> & { id?: number };
-type Payload = { type?: string; table?: string; record?: Riga | null; old_record?: Riga | null };
+type Payload = {
+  type?: string;
+  table?: string;
+  record?: Riga | null;
+  old_record?: Riga | null;
+  backfill?: boolean;
+  dryRun?: boolean;
+};
+type FileDrive = { id: string; name: string; size: number };
 
 Deno.serve(async (req) => {
   const segreto = Deno.env.get("WEBHOOK_SECRET");
@@ -38,6 +51,16 @@ Deno.serve(async (req) => {
     payload = await req.json();
   } catch {
     return json({ ok: false, error: "payload non valido" });
+  }
+
+  // Backfill: lanciato a mano, risponde con il riepilogo (sincrono)
+  if (payload.backfill === true) {
+    try {
+      return json({ ok: true, ...(await backfill(payload.dryRun === true)) });
+    } catch (err) {
+      await log("SYNC_DRIVE_ERRORE", null, null, { evento: "BACKFILL", errore: messaggio(err) });
+      return json({ ok: false, error: messaggio(err) });
+    }
   }
 
   const lavoro = gestisci(payload).catch((err) =>
@@ -129,15 +152,203 @@ async function suInserimento(doc: Riga) {
 /* ---------- DELETE: cestina su Drive ---------- */
 async function suEliminazione(vecchio: Riga) {
   const docId = vecchio.id ?? null;
-  if (!vecchio.drive_file_id) {
+  if (vecchio.drive_file_id) {
+    await chiamaAppsScript({ action: "trash", fileId: vecchio.drive_file_id });
+    await log("SYNC_DRIVE_OK", docId, vecchio, { evento: "DELETE", cestinato: vecchio.drive_file_id });
+    return;
+  }
+
+  // Attestato mai collegato: provo l'abbinamento per dimensione nella cartella dell'edizione
+  const trovato = await cercaPerDimensione(vecchio);
+  if (!trovato.fileId) {
     await log("SYNC_DRIVE_ERRORE", docId, vecchio, {
       evento: "DELETE",
-      errore: "documento senza drive_file_id: se il file è su Drive va rimosso a mano",
+      errore: `documento senza drive_file_id, da rimuovere a mano: ${trovato.motivo}`,
     });
     return;
   }
-  await chiamaAppsScript({ action: "trash", fileId: vecchio.drive_file_id });
-  await log("SYNC_DRIVE_OK", docId, vecchio, { evento: "DELETE", cestinato: vecchio.drive_file_id });
+  await chiamaAppsScript({ action: "trash", fileId: trovato.fileId });
+  await log("SYNC_DRIVE_OK", docId, vecchio, {
+    evento: "DELETE",
+    cestinato: trovato.fileId,
+    abbinamento: `per dimensione (${trovato.size} byte)`,
+  });
+}
+
+// Dimensione da old_record se presente; altrimenti dallo storage, se il file
+// non è ancora stato rimosso (l'app cancella prima la riga e poi il file).
+async function cercaPerDimensione(vecchio: Riga): Promise<{ fileId?: string; size?: number; motivo: string }> {
+  let size = numero(vecchio.dimensione_bytes) ?? numero(vecchio.size);
+  if (size === null && vecchio.storage_path) {
+    size = await dimensioneStorage(String(vecchio.storage_path), new Map());
+  }
+  if (size === null) return { motivo: "dimensione non disponibile (file già rimosso dallo storage)" };
+  if (!vecchio.iscrizione_id) return { motivo: "attestato senza iscrizione_id" };
+
+  const { data: isc, error: errIsc } = await sb
+    .from("iscrizioni_corsi").select("edizione_corso_id").eq("id", vecchio.iscrizione_id).maybeSingle();
+  if (errIsc) return { motivo: "iscrizione: " + errIsc.message };
+  if (!isc) return { motivo: "iscrizione non trovata" };
+  const { data: ed, error: errEd } = await sb
+    .from("edizioni_corso").select("drive_cartella_attestati_id").eq("id", isc.edizione_corso_id).maybeSingle();
+  if (errEd) return { motivo: "edizione: " + errEd.message };
+  if (!ed?.drive_cartella_attestati_id) return { motivo: "edizione senza cartella Drive" };
+
+  const liberi = await fileDriveNonCollegati(String(ed.drive_cartella_attestati_id));
+  const stessi = liberi.filter((f) => f.size === size);
+  if (stessi.length !== 1) return { size, motivo: `${stessi.length} file su Drive con dimensione ${size} byte` };
+  return { fileId: stessi[0].id, size, motivo: "" };
+}
+
+/* ---------- BACKFILL: collega i file già presenti su Drive ---------- */
+async function backfill(dryRun: boolean) {
+  const { data: edizioni, error } = await sb
+    .from("edizioni_corso")
+    .select("id, label, drive_cartella_attestati_id")
+    .not("drive_cartella_attestati_id", "is", null)
+    .order("id");
+  if (error) throw new Error("edizioni: " + error.message);
+
+  const cacheCartelle = new Map<string, Promise<Map<string, number>>>();
+  const perEdizione = [];
+  for (const ed of edizioni ?? []) perEdizione.push(await backfillEdizione(ed, dryRun, cacheCartelle));
+
+  const totali = {
+    collegati: perEdizione.reduce((n, e) => n + e.collegati, 0),
+    ambigui: perEdizione.reduce((n, e) => n + e.ambigui.length, 0),
+    senza_corrispondenza: perEdizione.reduce((n, e) => n + e.senza_corrispondenza.length, 0),
+    errori: perEdizione.reduce((n, e) => n + e.errori.length, 0),
+  };
+  await log(totali.errori ? "SYNC_DRIVE_ERRORE" : "SYNC_DRIVE_OK", null, null, {
+    evento: "BACKFILL",
+    dryRun,
+    totali,
+    per_edizione: perEdizione.map((e) => ({
+      edizione: e.edizione,
+      collegati: e.collegati,
+      ambigui: e.ambigui.length,
+      senza_corrispondenza: e.senza_corrispondenza.length,
+      errori: e.errori.length,
+    })),
+  });
+  return { dryRun, totali, edizioni: perEdizione };
+}
+
+// deno-lint-ignore no-explicit-any
+async function backfillEdizione(ed: any, dryRun: boolean, cacheCartelle: Map<string, Promise<Map<string, number>>>) {
+  const esito = {
+    edizione: ed.label as string,
+    edizione_id: ed.id as number,
+    gia_collegati: 0,
+    collegati: 0,
+    ambigui: [] as Record<string, unknown>[],
+    senza_corrispondenza: [] as Record<string, unknown>[],
+    errori: [] as string[],
+    file_drive_non_abbinati: 0,
+  };
+
+  const { data: iscrizioni, error: errIsc } = await sb.from("iscrizioni_corsi").select("id").eq("edizione_corso_id", ed.id);
+  if (errIsc){ esito.errori.push("iscrizioni: " + errIsc.message); return esito; }
+  if (!iscrizioni?.length) return esito;
+
+  const { data: documenti, error: errDoc } = await sb
+    .from("documenti_volontario")
+    .select("id, nome_file, storage_path, drive_file_id")
+    .eq("tipo", "attestato")
+    .in("iscrizione_id", iscrizioni.map((i) => i.id));
+  if (errDoc){ esito.errori.push("documenti: " + errDoc.message); return esito; }
+
+  const daCollegare = (documenti ?? []).filter((d) => !d.drive_file_id);
+  esito.gia_collegati = (documenti ?? []).length - daCollegare.length;
+  if (daCollegare.length === 0) return esito;
+
+  // File della cartella non ancora collegati a nessun documento
+  const liberi = await fileDriveNonCollegati(String(ed.drive_cartella_attestati_id));
+
+  // Dimensione di ogni attestato dallo storage (metadata.size di storage.objects)
+  const conDimensione = await Promise.all(daCollegare.map(async (d) => {
+    try {
+      return { doc: d, size: await dimensioneStorage(String(d.storage_path), cacheCartelle) };
+    } catch (err) {
+      return { doc: d, size: null, errore: messaggio(err) };
+    }
+  }));
+
+  const filePerDimensione = raggruppa(liberi, (f) => f.size);
+  const docPerDimensione = raggruppa(conDimensione.filter((x) => x.size !== null), (x) => x.size as number);
+  const fileUsati = new Set<string>();
+
+  for (const { doc, size, errore } of conDimensione as { doc: Riga; size: number | null; errore?: string }[]) {
+    const descr = { documento_id: doc.id, nome_file: doc.nome_file, size };
+    if (size === null) {
+      esito.errori.push(`documento ${doc.id} (${doc.nome_file}): ${errore ?? "dimensione non trovata nello storage"}`);
+      continue;
+    }
+    const candidati = filePerDimensione.get(size) ?? [];
+    const stessaDimensione = docPerDimensione.get(size) ?? [];
+    if (candidati.length === 0) {
+      esito.senza_corrispondenza.push(descr);
+    } else if (candidati.length > 1 || stessaDimensione.length > 1) {
+      esito.ambigui.push({
+        ...descr,
+        motivo: candidati.length > 1
+          ? `${candidati.length} file su Drive con la stessa dimensione`
+          : `${stessaDimensione.length} attestati con la stessa dimensione`,
+        candidati: candidati.map((f) => f.name),
+      });
+    } else {
+      const file = candidati[0];
+      if (!dryRun) {
+        const { error } = await sb
+          .from("documenti_volontario")
+          .update({ drive_file_id: file.id })
+          .eq("id", doc.id)
+          .is("drive_file_id", null);
+        if (error){ esito.errori.push(`documento ${doc.id}: ${error.message}`); continue; }
+      }
+      fileUsati.add(file.id);
+      esito.collegati++;
+    }
+  }
+  esito.file_drive_non_abbinati = liberi.filter((f) => !fileUsati.has(f.id)).length;
+  return esito;
+}
+
+// PDF della cartella che non risultano già collegati a un documento
+async function fileDriveNonCollegati(folderId: string): Promise<FileDrive[]> {
+  const risposta = await chiamaAppsScript({ action: "list", folderId });
+  const files = ((risposta as { files?: FileDrive[] }).files ?? []).map((f) => ({ ...f, size: Number(f.size) }));
+  if (files.length === 0) return [];
+  const { data: collegati, error } = await sb
+    .from("documenti_volontario")
+    .select("drive_file_id")
+    .in("drive_file_id", files.map((f) => f.id));
+  if (error) throw new Error("documenti già collegati: " + error.message);
+  const usati = new Set((collegati ?? []).map((r) => r.drive_file_id));
+  return files.filter((f) => !usati.has(f.id));
+}
+
+// Dimensione in byte di un oggetto dello storage, via list() della sua cartella
+// (restituisce metadata.size di storage.objects). La cache evita list ripetute.
+async function dimensioneStorage(path: string, cache: Map<string, Promise<Map<string, number>>>) {
+  const i = path.lastIndexOf("/");
+  const cartella = i >= 0 ? path.slice(0, i) : "";
+  const nome = path.slice(i + 1);
+  if (!cache.has(cartella)) {
+    cache.set(cartella, (async () => {
+      const mappa = new Map<string, number>();
+      for (let da = 0; ; da += 1000) {
+        const { data, error } = await sb.storage.from(BUCKET).list(cartella, { limit: 1000, offset: da });
+        if (error) throw new Error(`storage list "${cartella}": ${error.message}`);
+        for (const o of data ?? []) {
+          const s = numero(o.metadata?.size);
+          if (s !== null) mappa.set(o.name, s);
+        }
+        if (!data || data.length < 1000) return mappa;
+      }
+    })());
+  }
+  return (await cache.get(cartella)!).get(nome) ?? null;
 }
 
 /* ---------- Apps Script ---------- */
@@ -208,6 +419,20 @@ async function log(operazione: string, recordId: unknown, prima: unknown, dopo: 
     dati_dopo: dopo,
   });
   if (error) console.error("log_attivita non scritto:", error.message, operazione, recordId);
+}
+
+function numero(v: unknown): number | null {
+  const n = typeof v === "string" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+function raggruppa<T>(elenco: T[], chiave: (x: T) => number) {
+  const mappa = new Map<number, T[]>();
+  for (const x of elenco) {
+    const k = chiave(x);
+    mappa.set(k, [...(mappa.get(k) ?? []), x]);
+  }
+  return mappa;
 }
 
 function messaggio(err: unknown) {

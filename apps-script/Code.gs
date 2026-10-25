@@ -12,6 +12,8 @@
  *           oppure, senza folderId: { ..., anno, nomeCorso }
  *           → { ok:true, fileId, folderId }   (folderId = cartella ATTESTATI)
  *   trash:  { secret, action:"trash", fileId } → { ok:true, fileId }
+ *   list:   { secret, action:"list", folderId }
+ *           → { ok:true, files:[{ id, name, size }] }  (solo PDF, niente scorciatoie/cartelle/cestino)
  * GET → { ok:true } per verificare che il servizio sia online.
  */
 
@@ -32,6 +34,7 @@ function doPost(e) {
 
     if (body.action === "upload") return risposta_(carica_(body));
     if (body.action === "trash") return risposta_(cestina_(body));
+    if (body.action === "list") return risposta_(elenca_(body));
     return risposta_({ ok: false, error: "azione sconosciuta: " + body.action });
   } catch (err) {
     return risposta_({ ok: false, error: String((err && err.message) || err) });
@@ -62,6 +65,20 @@ function cestina_(body) {
   if (!body.fileId) return { ok: false, error: "fileId obbligatorio" };
   DriveApp.getFileById(body.fileId).setTrashed(true); // cestino, mai cancellazione definitiva
   return { ok: true, fileId: body.fileId };
+}
+
+// PDF presenti nella cartella (non ricorsivo). getFilesByType esclude cartelle e
+// scorciatoie (le scorciatoie hanno un MIME type proprio); i file nel cestino si saltano.
+function elenca_(body) {
+  if (!body.folderId) return { ok: false, error: "folderId obbligatorio" };
+  const iteratore = DriveApp.getFolderById(body.folderId).getFilesByType(MimeType.PDF);
+  const files = [];
+  while (iteratore.hasNext()) {
+    const f = iteratore.next();
+    if (f.isTrashed()) continue;
+    files.push({ id: f.getId(), name: f.getName(), size: f.getSize() });
+  }
+  return { ok: true, files: files };
 }
 
 // 01_CORSI/<anno>/<nomeCorso>/ATTESTATI (crea ciò che manca, compresa SCANSIONI).
