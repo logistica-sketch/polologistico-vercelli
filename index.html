@@ -3430,6 +3430,7 @@ function renderModalEdizione(){
         <div class="modal-tabs">
           <div class="modal-tab ${_modalEdizioneTab==="dati"?"active":""}" data-tab="dati">Scheda</div>
           <div class="modal-tab ${_modalEdizioneTab==="volontari"?"active":""}" data-tab="volontari">Volontari iscritti</div>
+          <div class="modal-tab ${_modalEdizioneTab==="documenti"?"active":""}" data-tab="documenti">Documenti</div>
         </div>
       `}
       <div class="modal-body" id="modal-body"></div>
@@ -3445,6 +3446,141 @@ function renderModalEdizione(){
 
   if (isNuovo || _modalEdizioneTab === "dati") renderTabDatiEdizione();
   else if (_modalEdizioneTab === "volontari") renderTabVolontariEdizione();
+  else if (_modalEdizioneTab === "documenti") renderTabDocumentiEdizione();
+}
+
+/* ---------- TAB DOCUMENTI EDIZIONE ----------
+   Link alle cartelle Drive del corso (ATTESTATI / SCANSIONI: l'accesso lo
+   gestisce Drive), riepilogo attestati ed elenco iscritti in PDF/Excel. */
+function urlCartellaDrive(id){
+  return `https://drive.google.com/drive/folders/${encodeURIComponent(id)}`;
+}
+
+function renderTabDocumentiEdizione(){
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `<div id="documenti-edizione-body"><div class="loading-spin">Caricamento…</div></div>`;
+  caricaDocumentiEdizione();
+}
+
+async function caricaDocumentiEdizione(){
+  const e = _modalEdizioneCorrente;
+  const wrap = document.getElementById("documenti-edizione-body");
+  if (!wrap) return;
+
+  // Cartelle aggiornate dal DB (vengono compilate dalla sync Drive, la cache può essere vecchia)
+  const { data: ed, error: errEd } = await sb
+    .from("edizioni_corso")
+    .select("drive_cartella_attestati_id, drive_cartella_scansioni_id")
+    .eq("id", e.id)
+    .maybeSingle();
+  if (errEd){ wrap.innerHTML = `<p>Errore: ${escapeHtml(errEd.message)}</p>`; return; }
+
+  const { data: iscritti, error: errIsc } = await sb
+    .from("iscrizioni_corsi")
+    .select("id, stato, attestato_rilasciato, volontari_formazione(cognome, nome, codice_fiscale, sezione_ana)")
+    .eq("edizione_corso_id", e.id);
+  if (errIsc){ wrap.innerHTML = `<p>Errore: ${escapeHtml(errIsc.message)}</p>`; return; }
+  const elenco = (iscritti || []).sort((a,b) => {
+    const ca = (a.volontari_formazione?.cognome||"").localeCompare(b.volontari_formazione?.cognome||"");
+    return ca !== 0 ? ca : (a.volontari_formazione?.nome||"").localeCompare(b.volontari_formazione?.nome||"");
+  });
+
+  let suDrive = 0;
+  if (elenco.length){
+    const { data: docs, error: errDocs } = await sb
+      .from("documenti_volontario")
+      .select("id, drive_file_id")
+      .eq("tipo", "attestato")
+      .in("iscrizione_id", elenco.map(r => r.id));
+    if (errDocs){ wrap.innerHTML = `<p>Errore: ${escapeHtml(errDocs.message)}</p>`; return; }
+    suDrive = (docs || []).filter(d => d.drive_file_id).length;
+  }
+  const rilasciati = elenco.filter(r => r.attestato_rilasciato === true).length;
+
+  const pulsanteCartella = (id, etichetta) => id
+    ? `<a class="btn-add-mini" style="text-decoration:none;display:inline-block;" href="${urlCartellaDrive(id)}" target="_blank" rel="noopener">📂 Apri ${etichetta}</a>`
+    : `<span class="btn-add-mini" style="display:inline-block;background:var(--grigio-400);cursor:default;" title="Cartella non ancora collegata">📂 ${etichetta} non collegata</span>`;
+
+  wrap.innerHTML = `
+    <div class="section-title" style="margin-top:0;">Cartelle Drive del corso</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      ${pulsanteCartella(ed?.drive_cartella_attestati_id, "ATTESTATI")}
+      ${pulsanteCartella(ed?.drive_cartella_scansioni_id, "SCANSIONI")}
+    </div>
+    <p style="font-size:12px;color:var(--grigio-600);margin:0 0 18px;">Si aprono su Google Drive: serve l'accesso alla cartella condivisa dei corsi.</p>
+
+    <div class="section-title">Attestati</div>
+    <div class="report-stat-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;">
+      <div class="report-stat-box"><div class="report-stat-num">${elenco.length}</div><div class="report-stat-lbl">Iscritti</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${rilasciati}</div><div class="report-stat-lbl">Attestati rilasciati</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${suDrive}</div><div class="report-stat-lbl">Attestati su Drive</div></div>
+    </div>
+    ${rilasciati > suDrive ? `<p style="font-size:12.5px;color:var(--giallo);margin-top:-8px;">⚠️ ${rilasciati - suDrive} attestati rilasciati non risultano ancora copiati su Drive.</p>` : ""}
+
+    <div class="section-title">Elenco iscritti</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn-add-mini" id="btn-iscritti-pdf" ${elenco.length ? "" : "disabled"}>📄 Scarica PDF</button>
+      <button class="btn-add-mini" id="btn-iscritti-excel" style="background:var(--blu-700);" ${elenco.length ? "" : "disabled"}>📥 Scarica Excel</button>
+    </div>
+  `;
+
+  document.getElementById("btn-iscritti-pdf").addEventListener("click", () => esportaIscrittiEdizionePdf(e, elenco));
+  document.getElementById("btn-iscritti-excel").addEventListener("click", () => esportaIscrittiEdizioneExcel(e, elenco));
+}
+
+function righeIscrittiEdizione(elenco){
+  return elenco.map((r, i) => ({
+    "N.": i + 1,
+    Cognome: r.volontari_formazione?.cognome || "",
+    Nome: r.volontari_formazione?.nome || "",
+    "Codice fiscale": r.volontari_formazione?.codice_fiscale || "",
+    Sezione: r.volontari_formazione?.sezione_ana || "",
+    Stato: labelStatoIscrizione(r.stato),
+    Attestato: r.attestato_rilasciato ? "Sì" : "No"
+  }));
+}
+
+function esportaIscrittiEdizioneExcel(e, elenco){
+  const ws = XLSX.utils.json_to_sheet(righeIscrittiEdizione(elenco));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Iscritti");
+  XLSX.writeFile(wb, `Iscritti_${(e.label||"edizione").replace(/[^a-zA-Z0-9]/g,"_")}.xlsx`);
+}
+
+function esportaIscrittiEdizionePdf(e, elenco){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const righe = righeIscrittiEdizione(elenco);
+
+  doc.setFontSize(13);
+  doc.text(`Elenco iscritti — ${e.label || ""}`, 14, 14);
+  doc.setFontSize(8.5);
+  const info = [e.data_corso ? formatDataIt(e.data_corso) : null, e.sede || null, `${righe.length} iscritti`].filter(Boolean).join(" — ");
+  doc.text(`${info} — generato il ${formatDataIt(new Date().toISOString().slice(0,10))}`, 14, 20);
+
+  const colonne = [
+    { campo:"N.", w:9 }, { campo:"Cognome", w:34 }, { campo:"Nome", w:30 },
+    { campo:"Codice fiscale", w:38 }, { campo:"Sezione", w:30 }, { campo:"Stato", w:22 }, { campo:"Attestato", w:18 }
+  ];
+  let y = 30;
+  function intestazione(yPos){
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(8);
+    let x = 14;
+    colonne.forEach(c => { doc.text(c.campo, x, yPos); x += c.w; });
+    doc.setFont(undefined, "normal");
+    doc.line(14, yPos+2, 196, yPos+2);
+  }
+  intestazione(y);
+  y += 7;
+  righe.forEach(r => {
+    if (y > 285){ doc.addPage(); y = 18; intestazione(y); y += 7; }
+    let x = 14;
+    colonne.forEach(c => { doc.text(String(r[c.campo]).slice(0, Math.floor(c.w / 1.7)), x, y); x += c.w; });
+    y += 6;
+  });
+
+  doc.save(`Iscritti_${(e.label||"edizione").replace(/[^a-zA-Z0-9]/g,"_")}.pdf`);
 }
 
 function renderTabDatiEdizione(){

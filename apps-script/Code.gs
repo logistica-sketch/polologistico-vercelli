@@ -10,10 +10,13 @@
  * Azioni (POST, corpo JSON):
  *   upload: { secret, action:"upload", fileUrl, fileName, folderId }
  *           oppure, senza folderId: { ..., anno, nomeCorso }
- *           → { ok:true, fileId, folderId }   (folderId = cartella ATTESTATI)
+ *           → { ok:true, fileId, folderId, scansioniId }
+ *             (folderId = cartella ATTESTATI, scansioniId = SCANSIONI accanto, o null)
  *   trash:  { secret, action:"trash", fileId } → { ok:true, fileId }
  *   list:   { secret, action:"list", folderId }
  *           → { ok:true, files:[{ id, name, size }] }  (solo PDF, niente scorciatoie/cartelle/cestino)
+ *   cartelle: { secret, action:"cartelle", folderId }  (folderId = ATTESTATI)
+ *           → { ok:true, scansioniId }  (SCANSIONI nella stessa cartella del corso, o null; non crea nulla)
  * GET → { ok:true } per verificare che il servizio sia online.
  */
 
@@ -35,6 +38,7 @@ function doPost(e) {
     if (body.action === "upload") return risposta_(carica_(body));
     if (body.action === "trash") return risposta_(cestina_(body));
     if (body.action === "list") return risposta_(elenca_(body));
+    if (body.action === "cartelle") return risposta_(cartelle_(body));
     return risposta_({ ok: false, error: "azione sconosciuta: " + body.action });
   } catch (err) {
     return risposta_({ ok: false, error: String((err && err.message) || err) });
@@ -58,7 +62,20 @@ function carica_(body) {
   }
   const blob = resp.getBlob().setName(body.fileName);
   const file = cartella.createFile(blob);
-  return { ok: true, fileId: file.getId(), folderId: cartella.getId() };
+  return { ok: true, fileId: file.getId(), folderId: cartella.getId(), scansioniId: idScansioni_(cartella) };
+}
+
+function cartelle_(body) {
+  if (!body.folderId) return { ok: false, error: "folderId obbligatorio" };
+  return { ok: true, scansioniId: idScansioni_(DriveApp.getFolderById(body.folderId)) };
+}
+
+// ID di SCANSIONI nella stessa cartella del corso di ATTESTATI (null se non c'è). Non crea nulla.
+function idScansioni_(cartellaAttestati) {
+  const genitori = cartellaAttestati.getParents();
+  if (!genitori.hasNext()) return null;
+  const trovate = genitori.next().getFoldersByName("SCANSIONI");
+  return trovate.hasNext() ? trovate.next().getId() : null;
 }
 
 function cestina_(body) {

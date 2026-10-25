@@ -110,7 +110,7 @@ async function suInserimento(doc: Riga) {
 
   const { data: ed, error: errEd } = await sb
     .from("edizioni_corso")
-    .select("id, label, sede, data_corso, drive_cartella_attestati_id, catalogo_corsi(codice)")
+    .select("id, label, sede, data_corso, drive_cartella_attestati_id, drive_cartella_scansioni_id, catalogo_corsi(codice)")
     .eq("id", isc.edizione_corso_id)
     .single();
   if (errEd) throw new Error("edizione: " + errEd.message);
@@ -152,12 +152,24 @@ async function suInserimento(doc: Riga) {
   const { error: errAgg } = await sb.from("documenti_volontario").update({ drive_file_id: esito.fileId }).eq("id", docId);
   if (errAgg) throw new Error(`file caricato (${esito.fileId}), ma drive_file_id non salvato: ${errAgg.message}`);
 
+  // Cartella SCANSIONI del corso (per la scheda Documenti dell'app): non bloccante
+  let avvisoScansioni: string | null = null;
+  if (!ed.drive_cartella_scansioni_id && esito.scansioniId) {
+    const { error } = await sb
+      .from("edizioni_corso")
+      .update({ drive_cartella_scansioni_id: esito.scansioniId })
+      .eq("id", ed.id)
+      .is("drive_cartella_scansioni_id", null);
+    if (error) avvisoScansioni = "cartella SCANSIONI non salvata: " + error.message;
+  }
+
   await log("SYNC_DRIVE_OK", docId, null, {
     evento: "INSERT",
     drive_file_id: esito.fileId,
     drive_cartella_id: esito.folderId,
     nome_file_drive: fileName,
     edizione: ed.label,
+    ...(avvisoScansioni ? { avviso: avvisoScansioni } : {}),
   });
 }
 
@@ -216,7 +228,7 @@ async function cercaPerDimensione(vecchio: Riga): Promise<{ fileId?: string; siz
 async function backfill(dryRun: boolean) {
   const { data: edizioni, error } = await sb
     .from("edizioni_corso")
-    .select("id, label, drive_cartella_attestati_id")
+    .select("id, label, drive_cartella_attestati_id, drive_cartella_scansioni_id")
     .not("drive_cartella_attestati_id", "is", null)
     .order("id");
   if (error) throw new Error("edizioni: " + error.message);
@@ -257,7 +269,26 @@ async function backfillEdizione(ed: any, dryRun: boolean, cacheCartelle: Map<str
     senza_corrispondenza: [] as Record<string, unknown>[],
     errori: [] as string[],
     file_drive_non_abbinati: 0,
+    cartella_scansioni: (ed.drive_cartella_scansioni_id ? "già collegata" : "non trovata") as string,
   };
+
+  // Cartella SCANSIONI accanto ad ATTESTATI (per la scheda Documenti dell'app): solo lettura su Drive
+  if (!ed.drive_cartella_scansioni_id) {
+    try {
+      const { scansioniId } = await chiamaAppsScript({ action: "cartelle", folderId: ed.drive_cartella_attestati_id });
+      if (scansioniId) {
+        if (!dryRun) {
+          const { error } = await sb.from("edizioni_corso").update({ drive_cartella_scansioni_id: scansioniId })
+            .eq("id", ed.id).is("drive_cartella_scansioni_id", null);
+          if (error) throw new Error(error.message);
+        }
+        esito.cartella_scansioni = "collegata";
+      }
+    } catch (err) {
+      esito.errori.push("cartella SCANSIONI: " + messaggio(err));
+    }
+  }
+
 
   const { data: iscrizioni, error: errIsc } = await sb.from("iscrizioni_corsi").select("id").eq("edizione_corso_id", ed.id);
   if (errIsc){ esito.errori.push("iscrizioni: " + errIsc.message); return esito; }
@@ -386,7 +417,7 @@ async function chiamaAppsScript(richiesta: Record<string, unknown>) {
 
   const testo = await resp.text();
   if (!resp.ok) throw new Error(`Apps Script: HTTP ${resp.status}`);
-  let esito: { ok?: boolean; error?: string; fileId?: string; folderId?: string };
+  let esito: { ok?: boolean; error?: string; fileId?: string; folderId?: string; scansioniId?: string | null };
   try {
     esito = JSON.parse(testo);
   } catch {
