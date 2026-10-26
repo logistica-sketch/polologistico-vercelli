@@ -606,3 +606,4 @@ input,select,textarea{font-family:inherit;}
   .es-due-colonne{grid-template-columns:1fr;}
   .es-barra{grid-template-columns:100px 1fr 30px;}
 }
+.es-input-mail{width:100%;min-width:180px;padding:6px 8px;border:1px solid var(--grigio-400);border-radius:6px;font-size:12.5px;}

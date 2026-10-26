@@ -6183,6 +6183,24 @@ async function renderImpostazioni(){
     `;
   }
 
+  const puoGestireEsercitazioni = esercitazioniCompleto();
+  if (puoGestireEsercitazioni){
+    html += `
+      <div class="section-title" style="margin-top:28px;">Esercitazioni – patenti</div>
+      <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Le patenti che le Sezioni possono indicare per ogni volontario.</p>
+      <div id="es-patenti-list"></div>
+      <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-patente-es">+ Nuova patente</button></div>
+
+      <div class="section-title" style="margin-top:28px;">Esercitazioni – abilitazioni</div>
+      <div id="es-abilitazioni-list"></div>
+      <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-abilitazione-es">+ Nuova abilitazione</button></div>
+
+      <div class="section-title" style="margin-top:28px;">Sezioni ANA – mail Protezione Civile</div>
+      <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Indirizzi usati per inviare alle Sezioni il link delle adesioni alle esercitazioni.</p>
+      <div id="sezioni-ana-mail-list"></div>
+    `;
+  }
+
   // Altre sezioni future (es. Automezzi) si aggiungono qui con lo stesso pattern:
   // if (userCanSee("automezzi")) { html += `...`; }
 
@@ -6200,6 +6218,79 @@ async function renderImpostazioni(){
     await renderListaMarcheTlc();
     document.getElementById("btn-nuova-marca-tlc").addEventListener("click", aggiungiMarcaTlc);
   }
+
+  if (puoGestireEsercitazioni){
+    await renderListaVociEsercitazione("esercitazioni_patenti", "es-patenti-list", "patente");
+    document.getElementById("btn-nuova-patente-es").addEventListener("click", () => aggiungiVoceEsercitazione("esercitazioni_patenti", "es-patenti-list", "patente", "es. B, C, CE…"));
+    await renderListaVociEsercitazione("esercitazioni_abilitazioni", "es-abilitazioni-list", "abilitazione");
+    document.getElementById("btn-nuova-abilitazione-es").addEventListener("click", () => aggiungiVoceEsercitazione("esercitazioni_abilitazioni", "es-abilitazioni-list", "abilitazione", "es. MMT, TRIS…"));
+    await renderMailSezioniAna();
+  }
+}
+
+/* ---------- Impostazioni: liste Esercitazioni e mail PC delle Sezioni ---------- */
+async function renderListaVociEsercitazione(tabella, wrapId, etichetta){
+  const { data, error } = await sb.from(tabella).select("id, nome").order("ordine").order("nome");
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || data.length === 0){ wrap.innerHTML = `<div class="storico-empty">Nessuna voce definita.</div>`; return; }
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Nome</th><th></th></tr></thead>
+      <tbody>
+        ${data.map(v => `<tr><td>${escapeHtml(v.nome)}</td><td><button class="row-del" data-id="${v.id}" data-nome="${escapeHtml(v.nome)}">Elimina</button></td></tr>`).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm(`Eliminare la ${etichetta} "${b.dataset.nome}"? Non sarà più selezionabile; i volontari già iscritti la conservano.`)) return;
+    const { error } = await sb.from(tabella).delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
+    renderListaVociEsercitazione(tabella, wrapId, etichetta);
+  }));
+}
+
+async function aggiungiVoceEsercitazione(tabella, wrapId, etichetta, esempio){
+  const nome = prompt(`Nome nuova ${etichetta} (${esempio}):`);
+  if (!nome || !nome.trim()) return;
+  const { data: ultime, error: errOrd } = await sb.from(tabella).select("ordine").order("ordine", { ascending:false }).limit(1);
+  if (errOrd){ alert("Errore: " + errOrd.message); return; }
+  const { error } = await sb.from(tabella).insert({ nome: nome.trim().toUpperCase(), ordine: (ultime?.[0]?.ordine || 0) + 1 });
+  if (error){ alert(error.code === "23505" ? `Questa ${etichetta} esiste già.` : "Errore: " + error.message); return; }
+  renderListaVociEsercitazione(tabella, wrapId, etichetta);
+}
+
+async function renderMailSezioniAna(){
+  const { data, error } = await sb.from("sezioni_ana").select("nome, in_cap, in_rgpt, email_pc").order("ordine");
+  const wrap = document.getElementById("sezioni-ana-mail-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Sezione</th><th>CAP</th><th>1° RGPT</th><th>Mail PC</th><th></th></tr></thead>
+      <tbody>
+        ${(data || []).map(s => `
+          <tr>
+            <td>${escapeHtml(s.nome)}</td>
+            <td>${s.in_cap ? "✓" : "—"}</td>
+            <td>${s.in_rgpt ? "✓" : "—"}</td>
+            <td><input type="email" class="es-input-mail" data-sezione="${escapeHtml(s.nome)}" value="${escapeHtml(s.email_pc || "")}" maxlength="120"></td>
+            <td><button class="row-del" style="color:var(--blu-500);" data-salva-mail="${escapeHtml(s.nome)}">Salva</button></td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
+  `;
+  wrap.querySelectorAll("[data-salva-mail]").forEach(b => b.addEventListener("click", async () => {
+    const input = [...wrap.querySelectorAll(".es-input-mail")].find(i => i.dataset.sezione === b.dataset.salvaMail);
+    const mail = input.value.trim().toLowerCase();
+    if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)){ alert("Indirizzo mail non valido."); return; }
+    const { error } = await sb.from("sezioni_ana").update({ email_pc: mail || null }).eq("nome", b.dataset.salvaMail);
+    if (error){ alert("Errore: " + error.message); return; }
+    input.value = mail;
+    b.textContent = "✓ Salvata";
+    setTimeout(() => { b.textContent = "Salva"; }, 1500);
+  }));
 }
 
 const STORAGE_BUCKET_FIRME_PERSONALI = "firme-personali";
