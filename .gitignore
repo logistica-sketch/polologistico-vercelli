@@ -8,3 +8,4 @@ export-attestati/
 supabase/.temp/
 supabase/.branches/
 supabase/**/.env*
+BRIEF_ESERCITAZIONI.md
