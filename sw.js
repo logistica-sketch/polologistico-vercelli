@@ -40,12 +40,14 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-  if (new URL(req.url).origin !== self.location.origin) return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
 
   event.respondWith(
     fetch(req)
       .then((resp) => {
-        if (resp.ok && resp.type === "basic") {
+        // Gli URL con parametri (es. adesione.html?t=<token>) non vanno mai in cache
+        if (resp.ok && resp.type === "basic" && !url.search) {
           const copia = resp.clone();
           event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(req, copia)));
         }

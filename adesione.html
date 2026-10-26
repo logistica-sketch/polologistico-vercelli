@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0b2545">
+<title>Adesione esercitazione – Polo Logistico</title>
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="stile.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2.117.2"></script>
+<!--
+  Pagina pubblica per le Sezioni: nessun login, il link contiene il token (?t=).
+  Usa SOLO le RPC adesione_get / adesione_salva / adesione_nessuna (anon non legge le tabelle).
+  La bozza non ancora inviata resta in localStorage su questo dispositivo.
+-->
+<style>
+  body{ background:var(--grigio-100); }
+  .pagina{ max-width:640px; margin:0 auto; padding:16px 14px 110px; }
+  .testata{
+    background:linear-gradient(135deg,var(--blu-900),var(--blu-500)); color:#fff;
+    border-radius:var(--radius); padding:18px 18px 16px; margin-bottom:14px;
+  }
+  .testata .org{ font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; color:#b9cbe4; }
+  .testata h1{ font-size:20px; margin:4px 0 8px; line-height:1.25; }
+  .testata .riga{ font-size:13.5px; margin-top:3px; color:#e6edf7; }
+  .testata .sezione{
+    display:inline-block; margin-top:10px; background:rgba(255,255,255,.16);
+    padding:5px 11px; border-radius:999px; font-weight:700; font-size:13px;
+  }
+  .scheda{ background:#fff; border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; margin-bottom:14px; }
+  .scheda h2{ font-size:15px; margin:0 0 10px; color:var(--blu-900); }
+  .aiuto{ font-size:12.5px; color:var(--grigio-600); margin:0 0 10px; line-height:1.45; }
+  .messaggio{ border-radius:var(--radius); padding:16px; font-size:14px; line-height:1.5; margin-bottom:14px; }
+  .messaggio h2{ font-size:16px; margin:0 0 6px; }
+  .msg-errore{ background:var(--rosso-bg); color:var(--rosso); }
+  .msg-ok{ background:var(--verde-bg); color:var(--verde); }
+  .msg-info{ background:#e8eef7; color:var(--blu-500); }
+  .msg-avviso{ background:var(--giallo-bg); color:var(--giallo); }
+  .vol{ display:flex; align-items:center; gap:10px; padding:11px 0; border-bottom:1px solid var(--grigio-200); }
+  .vol:last-child{ border-bottom:none; }
+  .vol .chi{ flex:1; min-width:0; }
+  .vol .nome{ font-weight:700; font-size:14px; color:var(--blu-900); }
+  .vol .dett{ font-size:12px; color:var(--grigio-600); margin-top:2px; overflow-wrap:anywhere; }
+  .vol button{ border:none; background:none; font-size:13px; font-weight:600; padding:8px 6px; cursor:pointer; }
+  .b-modifica{ color:var(--blu-500); }
+  .b-togli{ color:var(--rosso); }
+  .vuoto{ text-align:center; color:var(--grigio-600); font-size:13px; padding:14px 0; }
+  label.campo{ display:block; font-size:12.5px; font-weight:600; color:var(--grigio-800); margin:12px 0 5px; }
+  input.testo{
+    width:100%; font-size:16px; padding:11px 12px; border:1px solid var(--grigio-400);
+    border-radius:8px; font-family:var(--font); background:#fff;
+  }
+  input.testo:focus{ outline:none; border-color:var(--blu-500); }
+  input.cf{ text-transform:uppercase; font-family:ui-monospace,Menlo,Consolas,monospace; letter-spacing:.5px; }
+  .errore-campo{ color:var(--rosso); font-size:12px; margin-top:4px; min-height:1em; }
+  .pulsanti{ display:flex; flex-wrap:wrap; gap:7px; }
+  .pill{
+    border:1.5px solid var(--grigio-400); background:#fff; color:var(--grigio-800);
+    border-radius:999px; padding:8px 14px; font-size:13.5px; font-weight:600; cursor:pointer;
+    min-height:38px; font-family:var(--font);
+  }
+  .pill.on{ background:var(--blu-500); border-color:var(--blu-500); color:#fff; }
+  .giorno{ margin-bottom:10px; }
+  .giorno .data{ font-size:12.5px; font-weight:700; color:var(--blu-900); margin-bottom:5px; text-transform:capitalize; }
+  .azioni{ display:flex; gap:8px; margin-top:16px; }
+  .azioni button, .grande{
+    flex:1; border:none; border-radius:9px; padding:13px 14px; font-size:15px; font-weight:700;
+    cursor:pointer; font-family:var(--font);
+  }
+  .primario{ background:var(--blu-500); color:#fff; }
+  .primario:disabled{ opacity:.6; }
+  .secondario{ background:#fff; color:var(--grigio-800); border:1.5px solid var(--grigio-400) !important; }
+  .pericolo{ background:#fff; color:var(--rosso); border:1.5px solid var(--rosso) !important; }
+  .barra-invio{
+    position:fixed; left:0; right:0; bottom:0; background:#fff; box-shadow:0 -2px 10px rgba(11,37,69,.1);
+    padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  }
+  .barra-invio .dentro{ max-width:640px; margin:0 auto; display:flex; gap:8px; }
+  .barra-invio button{ flex:1; }
+  .riepilogo-num{ display:flex; gap:10px; margin:10px 0 4px; }
+  .riepilogo-num div{ flex:1; background:var(--grigio-100); border-radius:8px; padding:10px; text-align:center; }
+  .riepilogo-num strong{ display:block; font-size:22px; color:var(--blu-900); }
+  .riepilogo-num span{ font-size:11.5px; color:var(--grigio-600); }
+  .caricamento{ text-align:center; color:var(--grigio-600); padding:50px 0; font-size:14px; }
+  .piede{ text-align:center; font-size:11px; color:var(--grigio-600); margin-top:18px; }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <div id="app"><div class="caricamento">Caricamento…</div></div>
+  <div class="piede">Polo Logistico 1° RGPT/CAP Vercelli · ANA Protezione Civile</div>
+</div>
+<div class="barra-invio" id="barra-invio" style="display:none;">
+  <div class="dentro">
+    <button class="grande pericolo" id="btn-non-partecipa">La Sezione non partecipa</button>
+    <button class="grande primario" id="btn-invia">Invia adesione</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const SUPABASE_URL = "https://hzovguvwnadoptwrdyub.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6b3ZndXZ3bmFkb3B0d3JkeXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NjM3OTAsImV4cCI6MjA5NzUzOTc5MH0.wUyxlGUU6rVM2AC4YLtkTb2D4XPQuAzpTnfWYEMoDdE";
+  const MAX_VOLONTARI = 150;
+  const TIPI = ["pranzo", "cena", "pernotto"];
+  const LABEL_TIPO = { pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  const ENTI = { CAP:"CAP", "1RGPT":"1° RGPT" };
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession:false, autoRefreshToken:false, detectSessionInUrl:false }
+  });
+
+  const token = (new URLSearchParams(location.search).get("t") || "").trim();
+  const CHIAVE_BOZZA = "adesione_bozza_" + token;
+
+  const app = document.getElementById("app");
+  const barra = document.getElementById("barra-invio");
+
+  // stato pagina
+  let dati = null;          // risposta di adesione_get
+  let volontari = [];       // elenco in lavorazione
+  let modifica = null;      // indice del volontario in modifica (null = nuovo)
+  let formAperto = false;
+  let formBozza = null;     // campi del form non ancora aggiunti all'elenco
+  let vista = "elenco";     // elenco | conferma | chiuso
+  let invioInCorso = false;
+
+  /* ---------- utilità ---------- */
+  function esc(s){
+    if (s === null || s === undefined) return "";
+    return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+  }
+  function dataIt(iso){
+    if (!iso) return "";
+    const [a, m, g] = String(iso).slice(0,10).split("-");
+    return `${g}/${m}/${a}`;
+  }
+  function dataOraIt(iso){
+    if (!iso) return "";
+    return new Date(iso).toLocaleString("it-IT", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+  }
+  function giornoLungo(iso){
+    return new Date(iso + "T00:00:00").toLocaleDateString("it-IT", { weekday:"long", day:"numeric", month:"long" });
+  }
+  // stesso controllo di cf_valido() sul database
+  function cfValido(cf){
+    if (!/^[A-Z]{6}[0-9LMNPQRSTUV]{2}[ABCDEHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$/.test(cf || "")) return false;
+    const dispari = [1,0,5,7,9,13,15,17,19,21,2,4,18,20,11,3,6,8,12,14,16,10,22,25,24,23];
+    let s = 0;
+    for (let i = 0; i < 15; i++){
+      const c = cf[i];
+      const v = /[0-9]/.test(c) ? c.charCodeAt(0) - 48 : c.charCodeAt(0) - 65;
+      s += (i % 2 === 0) ? dispari[v] : v;
+    }
+    return cf[15] === String.fromCharCode(65 + s % 26);
+  }
+  function pulisciCf(v){ return String(v || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 16); }
+  function messaggioErrore(err){
+    const m = (err && err.message) ? err.message : "";
+    if (/Failed to fetch|NetworkError|network/i.test(m)) return "Connessione assente o instabile. Controlla la rete e riprova: i dati inseriti restano salvati su questo telefono.";
+    return m || "Si è verificato un errore. Riprova tra qualche minuto.";
+  }
+
+  /* ---------- bozza locale (localStorage, solo su questo dispositivo) ---------- */
+  function salvaBozza(){
+    try{
+      localStorage.setItem(CHIAVE_BOZZA, JSON.stringify({ volontari, form: formAperto ? leggiForm() : null, modifica, salvata: Date.now() }));
+    }catch(e){ /* storage non disponibile: si continua senza bozza */ }
+  }
+  function leggiBozza(){
+    try{ const v = localStorage.getItem(CHIAVE_BOZZA); return v ? JSON.parse(v) : null; }catch(e){ return null; }
+  }
+  function cancellaBozza(){
+    try{ localStorage.removeItem(CHIAVE_BOZZA); }catch(e){}
+  }
+  function normalizzaVolontari(lista){
+    return (lista || []).map(v => ({
+      cognome: v.cognome || "", nome: v.nome || "", codice_fiscale: v.codice_fiscale || "",
+      cellulare: v.cellulare || "", note: v.note || null,
+      patenti: v.patenti || [], abilitazioni: v.abilitazioni || [],
+      servizi: (v.servizi || []).map(Number)
+    }));
+  }
+  function stessoElenco(a, b){ return JSON.stringify(a) === JSON.stringify(b); }
+
+  /* ---------- caricamento ---------- */
+  async function carica(){
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)){
+      return mostraBlocco("Link non valido", "Il link che hai aperto non è completo. Usa il link ricevuto per mail dal Polo Logistico, oppure chiedine uno nuovo.", "errore");
+    }
+    const { data, error } = await sb.rpc("adesione_get", { p_token: token });
+    if (error) return mostraBlocco("Impossibile aprire l'adesione", messaggioErrore(error), "errore");
+    dati = data;
+
+    const inviati = normalizzaVolontari(dati.volontari);
+    const bozza = dati.modificabile ? leggiBozza() : null;
+    if (!dati.modificabile) cancellaBozza();
+
+    if (bozza && (!stessoElenco(normalizzaVolontari(bozza.volontari), inviati) || bozza.form)){
+      volontari = normalizzaVolontari(bozza.volontari);
+      if (bozza.form){ formAperto = true; formBozza = bozza.form; modifica = bozza.modifica ?? null; }
+      vista = "elenco";
+      disegna({ bozzaRipresa: true });
+      return;
+    }
+    volontari = inviati;
+    vista = !dati.modificabile ? "chiuso" : (dati.stato_sezione === "in_attesa" ? "elenco" : "conferma");
+    disegna();
+  }
+
+  function mostraBlocco(titolo, testo, tipo){
+    barra.style.display = "none";
+    app.innerHTML = `
+      <div class="messaggio msg-${tipo}"><h2>${esc(titolo)}</h2>${esc(testo)}</div>`;
+  }
+
+  /* ---------- disegno ---------- */
+  function testata(){
+    const e = dati.esercitazione;
+    const date = e.data_fine && e.data_fine !== e.data_inizio ? `${dataIt(e.data_inizio)} – ${dataIt(e.data_fine)}` : dataIt(e.data_inizio);
+    return `
+      <div class="testata">
+        <div class="org">Esercitazione ${esc(ENTI[e.ente] || e.ente)}</div>
+        <h1>${esc(e.titolo)}</h1>
+        <div class="riga">📅 ${esc(date)}</div>
+        ${e.luogo ? `<div class="riga">📍 ${esc(e.luogo)}</div>` : ""}
+        ${e.chiusura_adesioni ? `<div class="riga">⏳ Adesioni entro il ${esc(dataOraIt(e.chiusura_adesioni))}</div>` : ""}
+        <div class="sezione">Sezione ${esc(dati.sezione)}</div>
+      </div>
+      ${e.descrizione ? `<div class="scheda"><p class="aiuto" style="margin:0;white-space:pre-line;color:var(--grigio-800);">${esc(e.descrizione)}</p></div>` : ""}`;
+  }
+
+  function servizioPerId(id){ return (dati.servizi || []).find(s => s.id === id); }
+  function riassuntoServizi(v){
+    const s = v.servizi.map(servizioPerId).filter(Boolean);
+    const pasti = s.filter(x => x.tipo !== "pernotto").length;
+    const notti = s.filter(x => x.tipo === "pernotto").length;
+    return [pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "nessun servizio";
+  }
+
+  function disegna(opz){
+    opz = opz || {};
+    if (vista === "chiuso") return disegnaChiuso();
+    if (vista === "conferma") return disegnaConferma(opz);
+    disegnaElenco(opz);
+  }
+
+  function disegnaChiuso(){
+    barra.style.display = "none";
+    const e = dati.esercitazione;
+    const motivo = e.stato === "aperta" ? "Il termine per le adesioni è scaduto." : "Le adesioni per questa esercitazione sono chiuse.";
+    let riepilogo = "";
+    if (dati.stato_sezione === "risposto") riepilogo = `La vostra Sezione ha inviato l'adesione per <strong>${volontari.length}</strong> volontari${dati.risposto_at ? ` (${esc(dataOraIt(dati.risposto_at))})` : ""}.`;
+    else if (dati.stato_sezione === "non_partecipa") riepilogo = "La vostra Sezione ha indicato che non partecipa.";
+    else riepilogo = "La vostra Sezione non ha inviato l'adesione.";
+    app.innerHTML = testata() + `
+      <div class="messaggio msg-avviso"><h2>Adesioni chiuse</h2>${esc(motivo)}<br>${riepilogo}<br>Per modifiche contattate il Polo Logistico.</div>`;
+  }
+
+  function disegnaConferma(opz){
+    barra.style.display = "none";
+    const nonPartecipa = dati.stato_sezione === "non_partecipa";
+    const pasti = volontari.reduce((n, v) => n + v.servizi.map(servizioPerId).filter(s => s && s.tipo !== "pernotto").length, 0);
+    const notti = volontari.reduce((n, v) => n + v.servizi.map(servizioPerId).filter(s => s && s.tipo === "pernotto").length, 0);
+    app.innerHTML = testata() + `
+      <div class="messaggio msg-ok">
+        <h2>${opz.appenaInviato ? "Grazie, adesione ricevuta!" : (nonPartecipa ? "Risposta registrata" : "Adesione inviata")}</h2>
+        ${nonPartecipa ? "Avete indicato che la Sezione <strong>non partecipa</strong>." : `Volontari iscritti: <strong>${volontari.length}</strong>.`}
+        ${dati.risposto_at ? `<br><span style="font-size:12.5px;">Ultimo invio: ${esc(dataOraIt(dati.risposto_at))}</span>` : ""}
+      </div>
+      ${nonPartecipa ? "" : `
+      <div class="scheda">
+        <h2>Riepilogo</h2>
+        <div class="riepilogo-num">
+          <div><strong>${volontari.length}</strong><span>volontari</span></div>
+          <div><strong>${pasti}</strong><span>pasti</span></div>
+          <div><strong>${notti}</strong><span>pernotti</span></div>
+        </div>
+        ${volontari.map(v => `
+          <div class="vol"><div class="chi">
+            <div class="nome">${esc(v.cognome)} ${esc(v.nome)}</div>
+            <div class="dett">${esc(riassuntoServizi(v))}${v.patenti.length ? " · Patenti " + esc(v.patenti.join(", ")) : ""}${v.abilitazioni.length ? " · " + esc(v.abilitazioni.join(", ")) : ""}</div>
+          </div></div>`).join("")}
+      </div>`}
+      <p class="aiuto" style="text-align:center;">Fino alla chiusura delle adesioni potete riaprire questo link e modificare la risposta.</p>
+      <div class="azioni"><button class="primario" id="btn-riapri">${nonPartecipa ? "Cambia risposta" : "Modifica adesione"}</button></div>`;
+    document.getElementById("btn-riapri").addEventListener("click", () => {
+      vista = "elenco";
+      if (nonPartecipa) volontari = [];
+      disegna();
+      window.scrollTo(0, 0);
+    });
+  }
+
+  function disegnaElenco(opz){
+    const avvisi = [];
+    if (opz.bozzaRipresa) avvisi.push(`<div class="messaggio msg-info">Abbiamo ripreso i dati che avevate inserito su questo telefono e <strong>non ancora inviato</strong>.
+      <div style="margin-top:8px;"><button class="pill" id="btn-scarta-bozza">Scarta e ricomincia dall'ultimo invio</button></div></div>`);
+    if (opz.errore) avvisi.push(`<div class="messaggio msg-errore" id="box-errore"><h2>Invio non riuscito</h2>${esc(opz.errore)}</div>`);
+
+    app.innerHTML = testata() + avvisi.join("") + `
+      <div class="scheda">
+        <h2>Volontari della Sezione (${volontari.length})</h2>
+        <p class="aiuto">Aggiungete tutti i volontari che partecipano, poi premete <strong>Invia adesione</strong>. Potete modificare l'elenco fino alla chiusura.</p>
+        <div id="lista-volontari">
+          ${volontari.length ? volontari.map((v, i) => `
+            <div class="vol">
+              <div class="chi">
+                <div class="nome">${esc(v.cognome)} ${esc(v.nome)}</div>
+                <div class="dett">${esc(v.codice_fiscale)} · ${esc(riassuntoServizi(v))}</div>
+              </div>
+              <button class="b-modifica" data-modifica="${i}">Modifica</button>
+              <button class="b-togli" data-togli="${i}">Togli</button>
+            </div>`).join("") : `<div class="vuoto">Nessun volontario inserito.</div>`}
+        </div>
+        <div id="box-form">${formAperto ? "" : `<div class="azioni"><button class="secondario" id="btn-aggiungi">+ Aggiungi volontario</button></div>`}</div>
+      </div>`;
+
+    barra.style.display = formAperto ? "none" : "block";
+
+    const scarta = document.getElementById("btn-scarta-bozza");
+    if (scarta) scarta.addEventListener("click", () => {
+      if (!confirm("Scartare le modifiche non inviate e tornare all'ultimo invio?")) return;
+      cancellaBozza();
+      volontari = normalizzaVolontari(dati.volontari);
+      formAperto = false; formBozza = null; modifica = null;
+      vista = dati.stato_sezione === "in_attesa" ? "elenco" : "conferma";
+      disegna();
+    });
+    app.querySelectorAll("[data-modifica]").forEach(b => b.addEventListener("click", () => apriForm(parseInt(b.dataset.modifica, 10))));
+    app.querySelectorAll("[data-togli]").forEach(b => b.addEventListener("click", () => {
+      const v = volontari[parseInt(b.dataset.togli, 10)];
+      if (!confirm(`Togliere ${v.cognome} ${v.nome} dall'elenco?`)) return;
+      volontari.splice(parseInt(b.dataset.togli, 10), 1);
+      salvaBozza();
+      disegna();
+    }));
+    const agg = document.getElementById("btn-aggiungi");
+    if (agg) agg.addEventListener("click", () => apriForm(null));
+    if (formAperto) disegnaForm(formBozza);
+    if (opz.errore){ const box = document.getElementById("box-errore"); if (box) box.scrollIntoView({ behavior:"smooth", block:"center" }); }
+  }
+
+  /* ---------- form volontario ---------- */
+  function apriForm(indice){
+    if (indice === null && volontari.length >= MAX_VOLONTARI){
+      alert(`Si possono inserire al massimo ${MAX_VOLONTARI} volontari.`);
+      return;
+    }
+    modifica = indice;
+    formAperto = true;
+    formBozza = indice === null ? null : { ...volontari[indice] };
+    disegna();
+    salvaBozza();
+    const box = document.getElementById("box-form");
+    if (box) box.scrollIntoView({ behavior:"smooth", block:"start" });
+  }
+
+  function chiudiForm(){
+    formAperto = false; formBozza = null; modifica = null;
+    salvaBozza();
+    disegna();
+  }
+
+  function disegnaForm(v){
+    v = v || { cognome:"", nome:"", codice_fiscale:"", cellulare:"", patenti:[], abilitazioni:[], servizi:[], note:null };
+    const giorni = [...new Set((dati.servizi || []).map(s => s.giorno))];
+    const pills = (lista, scelti, gruppo) => lista.map(x =>
+      `<button type="button" class="pill ${scelti.includes(x) ? "on" : ""}" data-gruppo="${gruppo}" data-valore="${esc(x)}" aria-pressed="${scelti.includes(x)}">${esc(x)}</button>`).join("");
+    const box = document.getElementById("box-form");
+    box.innerHTML = `
+      <form id="form-volontario" novalidate style="border-top:1px solid var(--grigio-200);margin-top:10px;padding-top:6px;">
+        <h2 style="margin-top:10px;">${modifica === null ? "Nuovo volontario" : "Modifica volontario"}</h2>
+        <label class="campo" for="f-cognome">Cognome *</label>
+        <input class="testo" id="f-cognome" name="cognome" autocomplete="off" autocapitalize="characters" maxlength="80" value="${esc(v.cognome)}">
+        <label class="campo" for="f-nome">Nome *</label>
+        <input class="testo" id="f-nome" name="nome" autocomplete="off" autocapitalize="characters" maxlength="80" value="${esc(v.nome)}">
+        <label class="campo" for="f-cf">Codice fiscale *</label>
+        <input class="testo cf" id="f-cf" name="codice_fiscale" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" value="${esc(v.codice_fiscale)}">
+        <div class="errore-campo" id="err-cf"></div>
+        <label class="campo" for="f-cell">Cellulare</label>
+        <input class="testo" id="f-cell" name="cellulare" type="tel" inputmode="tel" autocomplete="off" maxlength="30" value="${esc(v.cellulare)}">
+        ${(dati.patenti || []).length ? `<label class="campo">Patenti</label><div class="pulsanti">${pills(dati.patenti, v.patenti, "patenti")}</div>` : ""}
+        ${(dati.abilitazioni || []).length ? `<label class="campo">Abilitazioni</label><div class="pulsanti">${pills(dati.abilitazioni, v.abilitazioni, "abilitazioni")}</div>` : ""}
+        ${giorni.length ? `
+          <label class="campo">Pasti e pernotti</label>
+          <div style="margin-bottom:8px;"><button type="button" class="pill" id="btn-tutti-servizi">Seleziona tutti</button></div>
+          ${giorni.map(g => `
+            <div class="giorno">
+              <div class="data">${esc(giornoLungo(g))}</div>
+              <div class="pulsanti">${TIPI.map(t => {
+                const s = dati.servizi.find(x => x.giorno === g && x.tipo === t);
+                return s ? `<button type="button" class="pill ${v.servizi.includes(s.id) ? "on" : ""}" data-gruppo="servizi" data-valore="${s.id}" aria-pressed="${v.servizi.includes(s.id)}">${LABEL_TIPO[t]}</button>` : "";
+              }).join("")}</div>
+            </div>`).join("")}` : ""}
+        <div class="errore-campo" id="err-form" style="margin-top:10px;"></div>
+        <div class="azioni">
+          <button type="button" class="secondario" id="btn-annulla-form">Annulla</button>
+          <button type="submit" class="primario">${modifica === null ? "Aggiungi all'elenco" : "Salva"}</button>
+        </div>
+      </form>`;
+    const form = document.getElementById("form-volontario");
+    const cf = document.getElementById("f-cf");
+
+    cf.addEventListener("input", () => {
+      const pos = cf.selectionStart;
+      cf.value = pulisciCf(cf.value);
+      try{ cf.setSelectionRange(pos, pos); }catch(e){}
+      const err = document.getElementById("err-cf");
+      err.textContent = cf.value.length === 16 && !cfValido(cf.value) ? "Codice fiscale non valido: controlla i caratteri." : "";
+    });
+    form.querySelectorAll(".pill[data-gruppo]").forEach(p => p.addEventListener("click", () => {
+      p.classList.toggle("on");
+      p.setAttribute("aria-pressed", p.classList.contains("on"));
+      salvaBozza();
+    }));
+    const tutti = document.getElementById("btn-tutti-servizi");
+    if (tutti) tutti.addEventListener("click", () => {
+      const pills = [...form.querySelectorAll('.pill[data-gruppo="servizi"]')];
+      const accendi = pills.some(p => !p.classList.contains("on"));
+      pills.forEach(p => { p.classList.toggle("on", accendi); p.setAttribute("aria-pressed", accendi); });
+      salvaBozza();
+    });
+    form.querySelectorAll("input").forEach(i => i.addEventListener("change", salvaBozza));
+    document.getElementById("btn-annulla-form").addEventListener("click", chiudiForm);
+    form.addEventListener("submit", (ev) => { ev.preventDefault(); confermaForm(); });
+  }
+
+  function leggiForm(){
+    const form = document.getElementById("form-volontario");
+    if (!form) return formBozza;
+    const scelti = g => [...form.querySelectorAll(`.pill.on[data-gruppo="${g}"]`)].map(p => p.dataset.valore);
+    const precedente = modifica !== null ? volontari[modifica] : null;
+    return {
+      cognome: form.cognome.value.trim().toUpperCase(),
+      nome: form.nome.value.trim().toUpperCase(),
+      codice_fiscale: pulisciCf(form.codice_fiscale.value),
+      cellulare: form.cellulare.value.trim(),
+      patenti: scelti("patenti"),
+      abilitazioni: scelti("abilitazioni"),
+      servizi: scelti("servizi").map(Number),
+      note: precedente ? precedente.note : null   // le note le gestisce il Polo: si conservano
+    };
+  }
+
+  function confermaForm(){
+    const v = leggiForm();
+    const err = document.getElementById("err-form");
+    const errori = [];
+    if (!v.cognome || !v.nome) errori.push("Cognome e nome sono obbligatori.");
+    if (!cfValido(v.codice_fiscale)) errori.push("Il codice fiscale non è valido.");
+    if (volontari.some((x, i) => i !== modifica && x.codice_fiscale === v.codice_fiscale)) errori.push("Questo codice fiscale è già nell'elenco.");
+    if (errori.length){ err.textContent = errori.join(" "); return; }
+    if (modifica === null) volontari.push(v); else volontari[modifica] = v;
+    volontari.sort((a, b) => a.cognome.localeCompare(b.cognome) || a.nome.localeCompare(b.nome));
+    chiudiForm();
+  }
+
+  /* ---------- invio ---------- */
+  async function invia(){
+    if (invioInCorso) return;
+    if (formAperto){ alert("Completate o annullate prima il volontario che state inserendo."); return; }
+    if (!volontari.length){ alert('Inserite almeno un volontario, oppure usate "La Sezione non partecipa".'); return; }
+    if (volontari.length > MAX_VOLONTARI){ alert(`Si possono inviare al massimo ${MAX_VOLONTARI} volontari.`); return; }
+    if (!confirm(`Inviare l'adesione con ${volontari.length} volontari?`)) return;
+    await esegui("adesione_salva", { p_token: token, p_volontari: volontari });
+  }
+
+  async function nonPartecipa(){
+    if (invioInCorso) return;
+    const testo = volontari.length || dati.stato_sezione === "risposto"
+      ? "Confermate che la Sezione NON partecipa? L'elenco dei volontari inviato finora verrà cancellato."
+      : "Confermate che la Sezione NON partecipa a questa esercitazione?";
+    if (!confirm(testo)) return;
+    await esegui("adesione_nessuna", { p_token: token });
+  }
+
+  async function esegui(funzione, parametri){
+    invioInCorso = true;
+    const bInvia = document.getElementById("btn-invia");
+    const bNo = document.getElementById("btn-non-partecipa");
+    bInvia.disabled = bNo.disabled = true;
+    const testoInvia = bInvia.textContent;
+    bInvia.textContent = "Invio…";
+    const { error } = await sb.rpc(funzione, parametri);
+    bInvia.disabled = bNo.disabled = false;
+    bInvia.textContent = testoInvia;
+    invioInCorso = false;
+    if (error){
+      disegna({ errore: messaggioErrore(error) });
+      return;
+    }
+    cancellaBozza();
+    const { data, error: errGet } = await sb.rpc("adesione_get", { p_token: token });
+    if (errGet) return mostraBlocco("Adesione inviata", "L'invio è riuscito, ma non è stato possibile ricaricare il riepilogo. Riaprite il link per vederlo.", "ok");
+    dati = data;
+    volontari = normalizzaVolontari(dati.volontari);
+    vista = dati.modificabile ? "conferma" : "chiuso";
+    disegna({ appenaInviato: true });
+    window.scrollTo(0, 0);
+  }
+
+  document.getElementById("btn-invia").addEventListener("click", invia);
+  document.getElementById("btn-non-partecipa").addEventListener("click", nonPartecipa);
+  window.addEventListener("pagehide", () => { if (dati && dati.modificabile && vista === "elenco") salvaBozza(); });
+
+  carica().catch(err => mostraBlocco("Impossibile aprire l'adesione", messaggioErrore(err), "errore"));
+})();
+</script>
+</body>
+</html>
