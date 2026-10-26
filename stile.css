@@ -549,3 +549,22 @@ input,select,textarea{font-family:inherit;}
 .report-stat-box{ background:var(--grigio-100,#f3f4f6); border-radius:8px; padding:14px; text-align:center; }
 .report-stat-num{ font-size:26px; font-weight:700; color:var(--blu-900); }
 .report-stat-lbl{ font-size:11.5px; color:var(--grigio-600); margin-top:2px; }
+
+/* ---------- Esercitazioni ---------- */
+.es-aiuto{font-size:12px;color:var(--grigio-600);margin:-6px 0 10px;}
+.es-badge{
+  display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;
+  white-space:nowrap;background:var(--grigio-200);color:var(--grigio-800);
+}
+.es-stato-bozza{background:var(--grigio-200);color:var(--grigio-800);}
+.es-stato-aperta{background:var(--verde-bg);color:var(--verde);}
+.es-stato-chiusa{background:var(--giallo-bg);color:var(--giallo);}
+.es-stato-conclusa{background:#e8eef7;color:var(--blu-500);}
+.es-tabella-click tbody tr{cursor:pointer;}
+.es-tabella-click tbody tr:hover td{background:var(--grigio-100);}
+.es-griglia-servizi{max-width:420px;}
+.es-griglia-servizi th, .es-griglia-servizi td{text-align:center;}
+.es-griglia-servizi th:first-child, .es-griglia-servizi td:first-child{text-align:left;}
+.es-sezioni-check{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px 12px;}
+.es-sezioni-check label{display:flex;align-items:center;gap:6px;font-size:12.5px;}
+.es-sezioni-check input{width:auto;}

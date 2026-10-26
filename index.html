@@ -120,6 +120,7 @@ const MENU = [
   { route: "formazione",   label: "Formazione",    icon: "ti-school",      permesso: "formazione" },
   { route: "firma",        label: "Firma Documenti", icon: "ti-signature", permesso: "firma_documenti" },
   { route: "libromatricola", label: "Libro Matricola", icon: "ti-book",    permesso: "libro_matricola" },
+  { route: "esercitazioni", label: "Esercitazioni", icon: "ti-flag",     permesso: "esercitazioni" },
   { route: "utenti",       label: "Gestione Utenti", icon: "ti-users",     permesso: "_solo_it_admin" },
   { route: "impostazioni", label: "Impostazioni",  icon: "ti-settings",    permesso: "_almeno_una_sezione" },
 ];
@@ -471,6 +472,7 @@ const PAGE_TITLES = {
   formazione: ["Formazione", "Corsi e volontari"],
   firma: ["Firma Documenti", "Carica PDF, apponi la firma e scarica"],
   libromatricola: ["Libro Matricola", "Mezzi assicurati e polizze"],
+  esercitazioni: ["Esercitazioni", "Adesioni delle Sezioni, pasti e pernotti"],
   utenti: ["Gestione Utenti", "Utenti abilitati e relativi permessi"],
   impostazioni: ["Impostazioni", "Configurazioni per modulo"]
 };
@@ -500,6 +502,7 @@ function router(){
   else if (route === "formazione") renderFormazione();
   else if (route === "firma") renderFirmaDocumenti();
   else if (route === "libromatricola") renderLibroMatricola();
+  else if (route === "esercitazioni") renderEsercitazioni();
   else if (route === "utenti") renderGestioneUtenti();
   else if (route === "impostazioni") renderImpostazioni();
 }
@@ -2729,6 +2732,7 @@ const PAGINE_PERMESSO = [
   { key:"formazione", label:"Formazione" },
   { key:"firma_documenti", label:"Firma Documenti" },
   { key:"libro_matricola", label:"Libro Matricola" },
+  { key:"esercitazioni", label:"Esercitazioni", livelli:true },
   { key:"impostazioni", label:"Impostazioni" }
 ];
 
@@ -5228,6 +5232,397 @@ function apriModalExportPerSezione(sezioni){
   });
 }
 
+
+/* ============================================================
+   MODULO ESERCITAZIONI
+   Livelli permesso 'esercitazioni': completo (gestione, CF e cellulare)
+   / base (sola lettura, adesioni dalla vista v_adesioni_base).
+   Il token del link pubblico NON è leggibile da tabella: si ottiene solo
+   con la RPC esercitazione_link() (riservata a completo).
+   ============================================================ */
+let _esercitazioniCache = [];
+let _esercitazioniFiltro = { search:"", stato:"" };
+const ENTI_ESERCITAZIONE = { CAP:"CAP", "1RGPT":"1° RGPT" };
+const STATI_ESERCITAZIONE = { bozza:"Bozza", aperta:"Adesioni aperte", chiusa:"Adesioni chiuse", conclusa:"Conclusa" };
+const STATI_SEZIONE_ESERCITAZIONE = { risposto:"Risposto", in_attesa:"In attesa", non_partecipa:"Non partecipa" };
+const TIPI_SERVIZIO = ["pranzo", "cena", "pernotto"];
+const LABEL_SERVIZIO = { pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+const MAX_GIORNI_ESERCITAZIONE = 31;
+
+function esercitazioniCompleto(){ return livelloPermesso("esercitazioni") === "completo"; }
+
+// Codice fiscale: formato + carattere di controllo (stessa regola di cf_valido() sul DB)
+function cfValido(cf){
+  if (!/^[A-Z]{6}[0-9LMNPQRSTUV]{2}[ABCDEHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$/.test(cf || "")) return false;
+  const dispari = [1,0,5,7,9,13,15,17,19,21,2,4,18,20,11,3,6,8,12,14,16,10,22,25,24,23];
+  let s = 0;
+  for (let i = 0; i < 15; i++){
+    const c = cf[i];
+    const v = /[0-9]/.test(c) ? c.charCodeAt(0) - 48 : c.charCodeAt(0) - 65;
+    s += (i % 2 === 0) ? dispari[v] : v;
+  }
+  return cf[15] === String.fromCharCode(65 + s % 26);
+}
+
+// Date ISO (yyyy-mm-dd) dal primo all'ultimo giorno compresi
+function giorniTra(inizio, fine){
+  const out = [];
+  if (!inizio || !fine) return out;
+  const d = new Date(inizio + "T00:00:00Z");
+  const f = new Date(fine + "T00:00:00Z");
+  while (d <= f && out.length <= MAX_GIORNI_ESERCITAZIONE){
+    out.push(d.toISOString().slice(0,10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function labelGiornoBreve(iso){
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("it-IT", { weekday:"short", day:"2-digit", month:"2-digit" });
+}
+
+// timestamptz <-> valore di <input type="datetime-local"> (ora locale)
+function isoAInputLocale(iso){
+  if (!iso) return "";
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function inputLocaleAIso(v){ return v ? new Date(v).toISOString() : null; }
+
+function formatDataOraIt(iso){
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("it-IT", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+
+function badgeStatoEsercitazione(stato){
+  return `<span class="es-badge es-stato-${escapeHtml(stato)}">${STATI_ESERCITAZIONE[stato] || escapeHtml(stato)}</span>`;
+}
+
+// Adesioni: "completo" legge la tabella (con CF/cellulare), "base" la vista senza dati personali.
+// Restituisce righe normalizzate: { id, sezione_id, cognome, nome, codice_fiscale?, cellulare?, patenti, abilitazioni, note?, servizi:[id] }
+async function caricaAdesioniEsercitazione(esercitazioneId){
+  if (esercitazioniCompleto()){
+    const { data, error } = await caricaTutteLeRighe(() => sb
+      .from("adesioni")
+      .select("id, esercitazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, adesione_servizi(servizio_id)")
+      .eq("esercitazione_id", esercitazioneId));
+    if (error) return { data:null, error };
+    return { data: data.map(a => ({
+      id:a.id, sezione_id:a.esercitazione_sezione_id, volontario_id:a.volontario_id,
+      cognome:a.cognome, nome:a.nome, codice_fiscale:a.codice_fiscale, cellulare:a.cellulare,
+      patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], note:a.note,
+      servizi:(a.adesione_servizi || []).map(x => x.servizio_id)
+    })), error:null };
+  }
+  const { data, error } = await caricaTutteLeRighe(() => sb
+    .from("v_adesioni_base")
+    .select("id, esercitazione_sezione_id, cognome, nome, patenti, abilitazioni, servizi")
+    .eq("esercitazione_id", esercitazioneId));
+  if (error) return { data:null, error };
+  return { data: data.map(a => ({
+    id:a.id, sezione_id:a.esercitazione_sezione_id, cognome:a.cognome, nome:a.nome,
+    patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], servizi:a.servizi || []
+  })), error:null };
+}
+
+/* ---------- LISTA ---------- */
+async function renderEsercitazioni(){
+  const content = document.getElementById("page-content");
+  const completo = esercitazioniCompleto();
+
+  const [{ data: esercitazioni, error }, { data: sezioni, error: errSez }] = await Promise.all([
+    sb.from("esercitazioni").select("*").order("data_inizio", { ascending:false }),
+    caricaTutteLeRighe(() => sb.from("esercitazione_sezioni").select("id, esercitazione_id, stato"))
+  ]);
+  if (error || errSez){
+    content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml((error||errSez).message)}</p></div>`;
+    return;
+  }
+  const { data: adesioni, error: errAd } = await caricaTutteLeRighe(() =>
+    sb.from(completo ? "adesioni" : "v_adesioni_base").select("id, esercitazione_id"));
+  if (errAd){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(errAd.message)}</p></div>`; return; }
+
+  _esercitazioniCache = (esercitazioni || []).map(e => {
+    const sez = sezioni.filter(s => s.esercitazione_id === e.id);
+    return {
+      ...e,
+      n_sezioni: sez.length,
+      n_risposte: sez.filter(s => s.stato !== "in_attesa").length,
+      n_volontari: adesioni.filter(a => a.esercitazione_id === e.id).length
+    };
+  });
+
+  content.innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="es-search" placeholder="Cerca per titolo o luogo…" value="${escapeHtml(_esercitazioniFiltro.search)}">
+      <select id="es-filtro-stato">
+        <option value="">Tutti gli stati</option>
+        ${Object.entries(STATI_ESERCITAZIONE).map(([k,l]) => `<option value="${k}" ${_esercitazioniFiltro.stato===k?"selected":""}>${l}</option>`).join("")}
+      </select>
+      ${completo ? `<button class="btn-add" id="es-btn-nuova">+ Nuova esercitazione</button>` : ""}
+    </div>
+    <div class="results-count" id="es-results-count"></div>
+    <div id="es-list"></div>
+  `;
+  document.getElementById("es-search").addEventListener("input", e => { _esercitazioniFiltro.search = e.target.value; renderEsercitazioniList(); });
+  document.getElementById("es-filtro-stato").addEventListener("change", e => { _esercitazioniFiltro.stato = e.target.value; renderEsercitazioniList(); });
+  if (completo) document.getElementById("es-btn-nuova").addEventListener("click", () => apriModalEsercitazione(null));
+  renderEsercitazioniList();
+}
+
+function renderEsercitazioniList(){
+  const f = _esercitazioniFiltro;
+  const q = f.search.trim().toLowerCase();
+  const elenco = _esercitazioniCache.filter(e =>
+    (!f.stato || e.stato === f.stato) &&
+    (!q || (e.titolo||"").toLowerCase().includes(q) || (e.luogo||"").toLowerCase().includes(q)));
+  document.getElementById("es-results-count").textContent = `${elenco.length} esercitazioni`;
+  const wrap = document.getElementById("es-list");
+  if (elenco.length === 0){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">🏕️</div>${_esercitazioniCache.length ? "Nessuna esercitazione corrisponde ai filtri." : "Nessuna esercitazione creata."}</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div class="stat-card" style="padding:6px 10px;overflow-x:auto;">
+      <table class="storico-table es-tabella-click">
+        <thead><tr><th>Titolo</th><th>Ente</th><th>Date</th><th>Stato</th><th>Sezioni risposto</th><th>Volontari</th></tr></thead>
+        <tbody>
+          ${elenco.map(e => `
+            <tr data-id="${e.id}">
+              <td><strong>${escapeHtml(e.titolo)}</strong>${e.luogo ? `<div style="font-size:11.5px;color:var(--grigio-600);">${escapeHtml(e.luogo)}</div>` : ""}</td>
+              <td>${ENTI_ESERCITAZIONE[e.ente] || escapeHtml(e.ente)}</td>
+              <td>${formatDataIt(e.data_inizio)}${e.data_fine !== e.data_inizio ? ` → ${formatDataIt(e.data_fine)}` : ""}</td>
+              <td>${badgeStatoEsercitazione(e.stato)}</td>
+              <td>${e.n_risposte}/${e.n_sezioni}</td>
+              <td>${e.n_volontari}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+  wrap.querySelectorAll("tr[data-id]").forEach(tr => tr.addEventListener("click", () => apriCruscottoEsercitazione(parseInt(tr.dataset.id))));
+}
+
+/* ---------- NUOVA / MODIFICA ---------- */
+async function apriModalEsercitazione(id){
+  if (!esercitazioniCompleto()){ alert("Il tuo livello di accesso non permette questa operazione."); return; }
+
+  const { data: sezioniAna, error: errSa } = await sb.from("sezioni_ana").select("nome, in_cap, in_rgpt, ordine").order("ordine");
+  if (errSa){ alert("Errore: " + errSa.message); return; }
+
+  let es = null, servizi = [], invitate = [];
+  if (id){
+    const [r1, r2, r3] = await Promise.all([
+      sb.from("esercitazioni").select("*").eq("id", id).maybeSingle(),
+      sb.from("esercitazione_servizi").select("id, giorno, tipo").eq("esercitazione_id", id),
+      sb.from("esercitazione_sezioni").select("id, sezione, stato").eq("esercitazione_id", id)
+    ]);
+    const err = r1.error || r2.error || r3.error;
+    if (err){ alert("Errore: " + err.message); return; }
+    if (!r1.data){ alert("Esercitazione non trovata."); return; }
+    es = r1.data; servizi = r2.data || []; invitate = r3.data || [];
+  }
+
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box modal-box-lg">
+      <div class="modal-head">
+        <h3>${es ? "Modifica esercitazione" : "Nuova esercitazione"}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-esercitazione">
+          <div class="form-grid">
+            <div class="form-field full"><label>Titolo *</label><input name="titolo" required maxlength="150" value="${escapeHtml(es?.titolo||"")}"></div>
+            <div class="form-field">
+              <label>Ente *</label>
+              <select name="ente" required>
+                ${Object.entries(ENTI_ESERCITAZIONE).map(([k,l]) => `<option value="${k}" ${es?.ente===k?"selected":""}>${l}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-field"><label>Luogo</label><input name="luogo" maxlength="150" value="${escapeHtml(es?.luogo||"")}"></div>
+            <div class="form-field"><label>Data inizio *</label><input type="date" name="data_inizio" required value="${es?.data_inizio||""}"></div>
+            <div class="form-field"><label>Data fine *</label><input type="date" name="data_fine" required value="${es?.data_fine||""}"></div>
+            <div class="form-field"><label>Chiusura adesioni</label><input type="datetime-local" name="chiusura_adesioni" value="${isoAInputLocale(es?.chiusura_adesioni)}"></div>
+            <div class="form-field">
+              <label>Stato</label>
+              <select name="stato">
+                ${Object.entries(STATI_ESERCITAZIONE).map(([k,l]) => `<option value="${k}" ${(es?.stato||"bozza")===k?"selected":""}>${l}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-field full"><label>Descrizione</label><textarea name="descrizione" maxlength="2000">${escapeHtml(es?.descrizione||"")}</textarea></div>
+          </div>
+
+          <div class="section-title" style="margin-top:20px;">Servizi per giorno</div>
+          <p class="es-aiuto">Le Sezioni potranno indicare, per ogni volontario, solo i servizi spuntati qui.</p>
+          <div id="es-servizi-griglia"></div>
+
+          <div class="section-title" style="margin-top:20px;">Sezioni invitate</div>
+          <p class="es-aiuto">Precompilate in base all'ente; puoi aggiungerne o toglierne. Ogni Sezione riceve il proprio link.</p>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button type="button" class="btn-add-mini" id="es-sez-da-ente">Seleziona in base all'ente</button>
+            <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" id="es-sez-nessuna">Togli tutte</button>
+          </div>
+          <div class="es-sezioni-check" id="es-sezioni-check">
+            ${sezioniAna.map(s => `
+              <label><input type="checkbox" name="sezione" value="${escapeHtml(s.nome)}"
+                ${(es ? invitate.some(i => i.sezione === s.nome) : s.in_cap) ? "checked" : ""}> ${escapeHtml(s.nome)}</label>`).join("")}
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn-cancel" id="btn-annulla-esercitazione">Annulla</button>
+            <button type="submit" class="btn-save">Salva</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  document.getElementById("btn-annulla-esercitazione").addEventListener("click", chiudiModal);
+
+  const form = document.getElementById("form-esercitazione");
+
+  // Griglia servizi: ricostruita quando cambiano le date, mantenendo le spunte già fatte
+  const spunte = new Map(); // "giorno|tipo" -> bool
+  servizi.forEach(s => spunte.set(`${s.giorno}|${s.tipo}`, true));
+  const precompila = !es; // nuova esercitazione: pranzo e cena ogni giorno, pernotto tutte le notti tranne l'ultimo giorno
+  function disegnaServizi(){
+    const giorni = giorniTra(form.data_inizio.value, form.data_fine.value);
+    const box = document.getElementById("es-servizi-griglia");
+    if (!giorni.length){ box.innerHTML = `<div class="storico-empty">Indica le date per vedere i giorni.</div>`; return; }
+    if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ box.innerHTML = `<div class="storico-empty">Massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.</div>`; return; }
+    box.innerHTML = `
+      <table class="storico-table es-griglia-servizi">
+        <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${giorni.map((g, i) => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
+            const k = `${g}|${t}`;
+            if (!spunte.has(k) && precompila) spunte.set(k, t !== "pernotto" || i < giorni.length - 1);
+            return `<td><input type="checkbox" data-servizio="${k}" ${spunte.get(k) ? "checked" : ""}></td>`;
+          }).join("")}</tr>`).join("")}
+        </tbody>
+      </table>`;
+    box.querySelectorAll("[data-servizio]").forEach(c => c.addEventListener("change", () => spunte.set(c.dataset.servizio, c.checked)));
+  }
+  form.data_inizio.addEventListener("change", () => {
+    if (form.data_inizio.value && (!form.data_fine.value || form.data_fine.value < form.data_inizio.value)) form.data_fine.value = form.data_inizio.value;
+    disegnaServizi();
+  });
+  form.data_fine.addEventListener("change", disegnaServizi);
+  disegnaServizi();
+
+  function selezionaDaEnte(){
+    const ente = form.ente.value;
+    form.querySelectorAll('input[name="sezione"]').forEach(c => {
+      const s = sezioniAna.find(x => x.nome === c.value);
+      c.checked = ente === "CAP" ? !!s?.in_cap : !!s?.in_rgpt;
+    });
+  }
+  document.getElementById("es-sez-da-ente").addEventListener("click", selezionaDaEnte);
+  document.getElementById("es-sez-nessuna").addEventListener("click", () => form.querySelectorAll('input[name="sezione"]').forEach(c => c.checked = false));
+  if (!es) form.ente.addEventListener("change", selezionaDaEnte);
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const btn = form.querySelector(".btn-save");
+    const giorni = giorniTra(form.data_inizio.value, form.data_fine.value);
+    if (!giorni.length){ alert("La data di fine non può essere precedente alla data di inizio."); return; }
+    if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ alert(`Un'esercitazione può durare al massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.`); return; }
+    const serviziVoluti = [];
+    giorni.forEach(g => TIPI_SERVIZIO.forEach(t => { if (spunte.get(`${g}|${t}`)) serviziVoluti.push({ giorno:g, tipo:t }); }));
+    const sezioniVolute = [...form.querySelectorAll('input[name="sezione"]:checked')].map(c => c.value);
+    if (!sezioniVolute.length){ alert("Seleziona almeno una Sezione da invitare."); return; }
+
+    const payload = {
+      titolo: form.titolo.value.trim(),
+      ente: form.ente.value,
+      luogo: form.luogo.value.trim() || null,
+      data_inizio: form.data_inizio.value,
+      data_fine: form.data_fine.value,
+      chiusura_adesioni: inputLocaleAIso(form.chiusura_adesioni.value),
+      stato: form.stato.value,
+      descrizione: form.descrizione.value.trim() || null
+    };
+    btn.disabled = true; btn.textContent = "Salvataggio…";
+    const esito = await salvaEsercitazione(es, payload, servizi, serviziVoluti, invitate, sezioniVolute);
+    btn.disabled = false; btn.textContent = "Salva";
+    if (!esito) return;
+    chiudiModal();
+    renderEsercitazioni();
+    apriCruscottoEsercitazione(esito);
+  });
+}
+
+// Salva testata + differenze di servizi e Sezioni invitate. Ritorna l'id o null (errore già mostrato).
+async function salvaEsercitazione(es, payload, serviziAttuali, serviziVoluti, invitateAttuali, sezioniVolute){
+  const chiave = s => `${s.giorno}|${s.tipo}`;
+  const voluti = new Set(serviziVoluti.map(chiave));
+  const daTogliereServizi = serviziAttuali.filter(s => !voluti.has(chiave(s)));
+  const daAggiungereServizi = serviziVoluti.filter(s => !serviziAttuali.some(a => chiave(a) === chiave(s)));
+  const daTogliereSezioni = invitateAttuali.filter(s => !sezioniVolute.includes(s.sezione));
+  const daAggiungereSezioni = sezioniVolute.filter(n => !invitateAttuali.some(s => s.sezione === n));
+
+  // Conferme: togliere servizi o Sezioni cancella anche le scelte/adesioni collegate
+  if (daTogliereServizi.length){
+    const { count, error } = await sb.from("adesione_servizi").select("servizio_id", { count:"exact", head:true })
+      .in("servizio_id", daTogliereServizi.map(s => s.id));
+    if (error){ alert("Errore: " + error.message); return null; }
+    if (count && !confirm(`Stai togliendo ${daTogliereServizi.length} servizi già scelti da ${count} volontari: le loro scelte per quei servizi verranno cancellate. Continuare?`)) return null;
+  }
+  const sezioniConRisposta = daTogliereSezioni.filter(s => s.stato !== "in_attesa");
+  if (sezioniConRisposta.length && !confirm(`Stai togliendo Sezioni che hanno già risposto (${sezioniConRisposta.map(s => s.sezione).join(", ")}): le loro adesioni verranno cancellate. Continuare?`)) return null;
+
+  let id = es?.id;
+  if (id){
+    const { error } = await sb.from("esercitazioni").update(payload).eq("id", id);
+    if (error){ alert("Errore: " + error.message); return null; }
+  } else {
+    const { data, error } = await sb.from("esercitazioni").insert(payload).select("id").single();
+    if (error){ alert("Errore: " + error.message); return null; }
+    id = data.id;
+  }
+
+  if (daTogliereServizi.length){
+    const { error } = await sb.from("esercitazione_servizi").delete().in("id", daTogliereServizi.map(s => s.id));
+    if (error){ alert("Esercitazione salvata, ma errore sui servizi: " + error.message); return id; }
+  }
+  if (daAggiungereServizi.length){
+    const { error } = await sb.from("esercitazione_servizi").insert(daAggiungereServizi.map(s => ({ esercitazione_id:id, giorno:s.giorno, tipo:s.tipo })));
+    if (error){ alert("Esercitazione salvata, ma errore sui servizi: " + error.message); return id; }
+  }
+  if (daTogliereSezioni.length){
+    const { error } = await sb.from("esercitazione_sezioni").delete().in("id", daTogliereSezioni.map(s => s.id));
+    if (error){ alert("Esercitazione salvata, ma errore sulle Sezioni: " + error.message); return id; }
+  }
+  if (daAggiungereSezioni.length){
+    // niente select('*'): il token non è leggibile, si ottiene con esercitazione_link()
+    const { error } = await sb.from("esercitazione_sezioni").insert(daAggiungereSezioni.map(n => ({ esercitazione_id:id, sezione:n }))).select("id");
+    if (error){ alert("Esercitazione salvata, ma errore sulle Sezioni: " + error.message); return id; }
+  }
+  return id;
+}
+
+async function eliminaEsercitazione(id){
+  if (!esercitazioniCompleto()) return;
+  const es = _esercitazioniCache.find(e => e.id === id);
+  if (!confirm(`Eliminare definitivamente l'esercitazione "${es?.titolo || ""}"? Verranno cancellate anche tutte le adesioni delle Sezioni.`)) return;
+  const { error } = await sb.from("esercitazioni").delete().eq("id", id);
+  if (error){ alert("Errore: " + error.message); return; }
+  chiudiModal();
+  renderEsercitazioni();
+}
+
+/* ---------- CRUSCOTTO ---------- */
+// Provvisorio (tappa 1): apre la modifica. Il cruscotto completo arriva nella tappa 2.
+function apriCruscottoEsercitazione(id){
+  if (esercitazioniCompleto()) apriModalEsercitazione(id);
+}
 
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
