@@ -610,3 +610,9 @@ input,select,textarea{font-family:inherit;}
 .es-campi-griglia{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 14px;}
 .es-campi-griglia label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;font-weight:600;color:var(--grigio-800);}
 .es-campi-griglia select{padding:6px 8px;border:1px solid var(--grigio-400);border-radius:6px;font-size:12.5px;}
+.es-extra-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.es-extra-form select,.es-extra-form input{padding:7px 9px;border:1px solid var(--grigio-400);border-radius:6px;font-size:12.5px;}
+.es-extra-form input[name="quantita"]{width:100px;}
+.es-extra-form input[name="descrizione"]{flex:1;min-width:160px;}
+.es-cucina-giorno{font-size:14px;color:var(--blu-900);margin:18px 0 6px;text-transform:capitalize;}
+.es-cucina-tabella td:nth-child(n+2):nth-child(-n+5),.es-cucina-tabella th:nth-child(n+2):nth-child(-n+5){text-align:center;}

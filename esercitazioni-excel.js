@@ -15,8 +15,8 @@
   "use strict";
 
   const EXCELJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
-  const TIPI = ["pranzo", "cena", "pernotto"];
-  const LABEL_TIPO = { pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  const TIPI = ["colazione", "pranzo", "cena", "pernotto"];
+  const LABEL_TIPO = { colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
   const LIVELLO_DEFAULT = "facoltativo";
   const RIGHE_MODELLO = 150;
   const FOGLIO = "Volontari";
@@ -36,7 +36,17 @@
     return caricamento;
   }
 
-  function livello(campi, k){ return (campi && campi[k]) || LIVELLO_DEFAULT; }
+  // come sul DB: un campo assente vale "facoltativo", tranne le esigenze ("non richiesto")
+  function livello(campi, k){ return (campi && campi[k]) || (k === "esigenze" ? "non_richiesto" : LIVELLO_DEFAULT); }
+
+  function serviziOrdinati(cfg){
+    return [...(cfg.servizi || [])].sort((a, b) => a.giorno.localeCompare(b.giorno) || TIPI.indexOf(a.tipo) - TIPI.indexOf(b.tipo));
+  }
+  function giornoPrima(iso){
+    const d = new Date(iso + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
   function attivo(campi, k){ return livello(campi, k) !== "non_richiesto"; }
   function obbligatorio(campi, k){ return livello(campi, k) === "obbligatorio"; }
 
@@ -70,7 +80,11 @@
     if (attivo(c, "cellulare")) out.push({ chiave:"cellulare", titolo:"Cellulare" + stella("cellulare"), tipo:"testo", larghezza:16 });
     if (attivo(c, "patenti")) (cfg.patenti || []).forEach(p => out.push({ chiave:"patente:" + p, titolo:"Patente " + p, tipo:"sino", larghezza:11 }));
     if (attivo(c, "abilitazioni")) (cfg.abilitazioni || []).forEach(p => out.push({ chiave:"abilitazione:" + p, titolo:p, tipo:"sino", larghezza:11 }));
-    if (attivo(c, "servizi")) (cfg.servizi || []).forEach(s => out.push({ chiave:"servizio:" + s.id, titolo:`${etichettaGiorno(s.giorno)} ${LABEL_TIPO[s.tipo] || s.tipo}`, tipo:"sino", larghezza:14 }));
+    if (attivo(c, "servizi")) serviziOrdinati(cfg).forEach(s => out.push({ chiave:"servizio:" + s.id, titolo:`${etichettaGiorno(s.giorno)} ${LABEL_TIPO[s.tipo] || s.tipo}`, tipo:"sino", larghezza:14, servizio:s }));
+    if (attivo(c, "esigenze")){
+      (cfg.esigenze || []).forEach(e => out.push({ chiave:"esigenza:" + e.nome, titolo:e.nome + (e.con_nota ? " (scrivi nella nota)" : ""), tipo:"sino", larghezza:13 }));
+      out.push({ chiave:"esigenze_note", titolo:"Nota esigenze alimentari", tipo:"testo", larghezza:28 });
+    }
     if (attivo(c, "note")) out.push({ chiave:"note", titolo:"Note" + stella("note"), tipo:"testo", larghezza:30 });
     return out;
   }
@@ -79,8 +93,15 @@
     const [tipo, chiave] = col.chiave.includes(":") ? col.chiave.split(/:(.*)/s) : [col.chiave, null];
     if (tipo === "patente") return (v.patenti || []).includes(chiave) ? "SI" : "NO";
     if (tipo === "abilitazione") return (v.abilitazioni || []).includes(chiave) ? "SI" : "NO";
+    if (tipo === "esigenza") return (v.esigenze || []).includes(chiave) ? "SI" : "NO";
     if (tipo === "servizio") return (v.servizi || []).map(String).includes(chiave) ? "SI" : "NO";
     return v[tipo] || "";
+  }
+
+  function letteraColonna(n){
+    let s = "";
+    while (n > 0){ const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+    return s;
   }
 
   async function scaricaModello(cfg){
@@ -99,12 +120,28 @@
     testa.height = 32;
     testa.eachCell(cella => { cella.fill = { type:"pattern", pattern:"solid", fgColor:{ argb:"FF1D4E89" } }; });
 
+    // Colazione del giorno X+1 collegata al pernotto della notte X (stessa regola dei moduli):
+    // la cella ha una formula che segue il pernotto, ma si può sovrascrivere scegliendo SI/NO.
+    const pernottoPrima = new Map(); // indice colonna colazione -> indice colonna pernotto della notte prima
+    cols.forEach((c, i) => {
+      if (!c.servizio || c.servizio.tipo !== "colazione") return;
+      const j = cols.findIndex(x => x.servizio && x.servizio.tipo === "pernotto" && x.servizio.giorno === giornoPrima(c.servizio.giorno));
+      if (j >= 0) pernottoPrima.set(i, j);
+    });
+
     (cfg.volontari || []).forEach(v => ws.addRow(cols.map(c => valoreCella(c, v))));
     for (let r = 2; r <= RIGHE_MODELLO + 1; r++){
       const riga = ws.getRow(r);
       cols.forEach((c, i) => {
         const cella = riga.getCell(i + 1);
         if (c.tipo === "sino"){
+          if (pernottoPrima.has(i)){
+            const rifPernotto = `${letteraColonna(pernottoPrima.get(i) + 1)}${r}`;
+            const regola = String(riga.getCell(pernottoPrima.get(i) + 1).value || "") === "SI" ? "SI" : "NO";
+            const attuale = cella.value === null || cella.value === undefined || cella.value === "" ? regola : cella.value;
+            // formula solo se il valore coincide con la regola (righe vuote o già coerenti)
+            if (attuale === regola) cella.value = { formula:`IF(${rifPernotto}="SI","SI","NO")`, result:regola };
+          }
           if (cella.value === null || cella.value === undefined || cella.value === "") cella.value = "NO";
           cella.alignment = { horizontal:"center" };
           cella.dataValidation = { type:"list", allowBlank:true, formulae:['"SI,NO"'], showErrorMessage:true,
@@ -128,7 +165,9 @@
       ["• Le colonne con * sono obbligatorie. Cognome, nome e codice fiscale servono sempre.", false],
       ["• Codice fiscale: 16 caratteri, senza spazi.", false],
       ["• Nelle colonne con il menu a tendina scegliete SI oppure NO.", false],
-      ...(attivo(cfg.campi, "servizi") ? [["• Pasti e pernotti: SI per ogni pasto o notte a cui il volontario partecipa." + (obbligatorio(cfg.campi, "servizi") ? " Almeno uno è obbligatorio." : ""), false]] : []),
+      ...(attivo(cfg.campi, "servizi") ? [["• Pasti e pernotti: SI per ogni pasto o notte a cui il volontario partecipa." + (obbligatorio(cfg.campi, "servizi") ? " Almeno uno è obbligatorio." : ""), false],
+                                         ["• La colazione si imposta da sola a SI se il volontario pernotta la notte prima; potete comunque cambiarla.", false]] : []),
+      ...(attivo(cfg.campi, "esigenze") ? [["• Esigenze alimentari: SI dove serve. Per allergie e \"altro\" scrivete il dettaglio nella colonna \"Nota esigenze alimentari\".", false]] : []),
       ...(obbligatorio(cfg.campi, "patenti") ? [["• Patenti: indicate SI per almeno una patente.", false]] : []),
       ...(obbligatorio(cfg.campi, "abilitazioni") ? [["• Abilitazioni: indicate SI per almeno un'abilitazione.", false]] : []),
       [`• Massimo ${cfg.maxVolontari || RIGHE_MODELLO} volontari.`, false],
@@ -237,7 +276,8 @@
         codice_fiscale: (val.codice_fiscale || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase(),
         cellulare: attivo(campi, "cellulare") ? (val.cellulare || "") : "",
         note: attivo(campi, "note") ? ((val.note || "") || null) : null,
-        patenti: [], abilitazioni: [], servizi: []
+        esigenze_note: attivo(campi, "esigenze") ? ((val.esigenze_note || "") || null) : null,
+        patenti: [], abilitazioni: [], servizi: [], esigenze: []
       };
       if (!v.cognome) errori.push("cognome mancante");
       if (!v.nome) errori.push("nome mancante");
@@ -258,8 +298,12 @@
         const [tipo, k] = chiave.split(/:(.*)/s);
         if (tipo === "patente") v.patenti.push(k);
         else if (tipo === "abilitazione") v.abilitazioni.push(k);
+        else if (tipo === "esigenza") v.esigenze.push(k);
         else if (tipo === "servizio") v.servizi.push(Number(k));
       });
+      if (v.esigenze_note && v.esigenze_note.length > 300) errori.push("nota esigenze troppo lunga");
+      const conNota = (cfg.esigenze || []).filter(e => e.con_nota).map(e => e.nome);
+      if (v.esigenze.some(e => conNota.includes(e)) && !v.esigenze_note) errori.push("descrivere l'esigenza alimentare nella nota");
       if (obbligatorio(campi, "cellulare") && !v.cellulare) errori.push("cellulare obbligatorio");
       if (obbligatorio(campi, "note") && !v.note) errori.push("note obbligatorie");
       if (obbligatorio(campi, "patenti") && !v.patenti.length) errori.push("indicare almeno una patente");

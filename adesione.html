@@ -107,8 +107,8 @@
   const SUPABASE_URL = "https://hzovguvwnadoptwrdyub.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6b3ZndXZ3bmFkb3B0d3JkeXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NjM3OTAsImV4cCI6MjA5NzUzOTc5MH0.wUyxlGUU6rVM2AC4YLtkTb2D4XPQuAzpTnfWYEMoDdE";
   const MAX_VOLONTARI = 150;
-  const TIPI = ["pranzo", "cena", "pernotto"];
-  const LABEL_TIPO = { pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  const TIPI = ["colazione", "pranzo", "cena", "pernotto"];
+  const LABEL_TIPO = { colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
   const ENTI = { CAP:"CAP", "1RGPT":"1° RGPT" };
 
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -183,6 +183,7 @@
       cognome: v.cognome || "", nome: v.nome || "", codice_fiscale: v.codice_fiscale || "",
       cellulare: v.cellulare || "", note: v.note || null,
       patenti: v.patenti || [], abilitazioni: v.abilitazioni || [],
+      esigenze: v.esigenze || [], esigenze_note: v.esigenze_note || null,
       servizi: (v.servizi || []).map(Number)
     }));
   }
@@ -236,7 +237,16 @@
   }
 
   // Campi configurati sull'esercitazione: non_richiesto | facoltativo | obbligatorio
-  function livello(k){ return (dati.campi && dati.campi[k]) || "facoltativo"; }
+  // come sul DB: campo assente = facoltativo, tranne le esigenze (non richieste)
+  function livello(k){ return (dati.campi && dati.campi[k]) || (k === "esigenze" ? "non_richiesto" : "facoltativo"); }
+  function esigenzeConNota(){ return (dati.esigenze || []).filter(e => e.con_nota).map(e => e.nome); }
+  // pernotto della notte X → colazione del giorno X+1 (se prevista)
+  function colazioneDopo(servizioPernotto){
+    const d = new Date(servizioPernotto.giorno + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 1);
+    const g = d.toISOString().slice(0, 10);
+    return (dati.servizi || []).find(s => s.giorno === g && s.tipo === "colazione");
+  }
   function attivo(k){ return livello(k) !== "non_richiesto"; }
   function obblig(k){ return livello(k) === "obbligatorio"; }
   function asterisco(k){ return obblig(k) ? " *" : ""; }
@@ -255,6 +265,7 @@
     if (attivo("servizi") && (dati.servizi || []).length) parti.push(riassuntoServizi(v));
     if (attivo("patenti") && v.patenti.length) parti.push("Patenti " + v.patenti.join(", "));
     if (attivo("abilitazioni") && v.abilitazioni.length) parti.push(v.abilitazioni.join(", "));
+    if (attivo("esigenze") && v.esigenze.length) parti.push("🍽 " + v.esigenze.join(", "));
     return parti.join(" · ");
   }
 
@@ -383,7 +394,7 @@
       titolo: e.titolo, sezione: dati.sezione,
       date: e.data_fine && e.data_fine !== e.data_inizio ? `${dataIt(e.data_inizio)} – ${dataIt(e.data_fine)}` : dataIt(e.data_inizio),
       campi: dati.campi || {}, patenti: dati.patenti || [], abilitazioni: dati.abilitazioni || [],
-      servizi: dati.servizi || [], volontari, maxVolontari: MAX_VOLONTARI
+      servizi: dati.servizi || [], esigenze: dati.esigenze || [], volontari, maxVolontari: MAX_VOLONTARI
     };
   }
 
@@ -443,6 +454,8 @@
         patenti: attivo("patenti") ? v.patenti : prec.patenti,
         abilitazioni: attivo("abilitazioni") ? v.abilitazioni : prec.abilitazioni,
         servizi: attivo("servizi") ? v.servizi : prec.servizi,
+        esigenze: attivo("esigenze") ? v.esigenze : prec.esigenze,
+        esigenze_note: attivo("esigenze") ? v.esigenze_note : prec.esigenze_note,
         note: attivo("note") ? v.note : prec.note
       };
       aggiornati++;
@@ -474,7 +487,8 @@
   }
 
   function disegnaForm(v){
-    v = v || { cognome:"", nome:"", codice_fiscale:"", cellulare:"", patenti:[], abilitazioni:[], servizi:[], note:null };
+    v = v || { cognome:"", nome:"", codice_fiscale:"", cellulare:"", patenti:[], abilitazioni:[], servizi:[], esigenze:[], esigenze_note:null, note:null };
+    v.esigenze = v.esigenze || [];
     const giorni = [...new Set((dati.servizi || []).map(s => s.giorno))];
     const pills = (lista, scelti, gruppo) => lista.map(x =>
       `<button type="button" class="pill ${scelti.includes(x) ? "on" : ""}" data-gruppo="${gruppo}" data-valore="${esc(x)}" aria-pressed="${scelti.includes(x)}">${esc(x)}</button>`).join("");
@@ -507,7 +521,13 @@
                 const s = dati.servizi.find(x => x.giorno === g && x.tipo === t);
                 return s ? `<button type="button" class="pill ${v.servizi.includes(s.id) ? "on" : ""}" data-gruppo="servizi" data-valore="${s.id}" aria-pressed="${v.servizi.includes(s.id)}">${LABEL_TIPO[t]}</button>` : "";
               }).join("")}</div>
-            </div>`).join("")}` : ""}
+            </div>`).join("")}
+          <p class="aiuto" style="margin-top:4px;">Se scegliete il pernotto, la colazione del mattino dopo si seleziona da sola (potete toglierla).</p>` : ""}
+        ${attivo("esigenze") && (dati.esigenze || []).length ? `
+          <label class="campo">Esigenze alimentari</label>
+          <div class="pulsanti">${pills((dati.esigenze || []).map(e => e.nome), v.esigenze, "esigenze")}</div>
+          <label class="campo" for="f-esig-note">Nota esigenze alimentari${esigenzeConNota().length ? ` <span style="font-weight:400;color:var(--grigio-600);">(obbligatoria per ${esc(esigenzeConNota().join(" e ").toLowerCase())})</span>` : ""}</label>
+          <input class="testo" id="f-esig-note" name="esigenze_note" autocomplete="off" maxlength="300" placeholder="es. allergico alle arachidi" value="${esc(v.esigenze_note || "")}">` : ""}
         <div class="errore-campo" id="err-form" style="margin-top:10px;"></div>
         <div class="azioni">
           <button type="button" class="secondario" id="btn-annulla-form">Annulla</button>
@@ -524,9 +544,16 @@
       const err = document.getElementById("err-cf");
       err.textContent = cf.value.length === 16 && !cfValido(cf.value) ? "Codice fiscale non valido: controlla i caratteri." : "";
     });
+    const accendi = (p, on) => { p.classList.toggle("on", on); p.setAttribute("aria-pressed", on); };
     form.querySelectorAll(".pill[data-gruppo]").forEach(p => p.addEventListener("click", () => {
-      p.classList.toggle("on");
-      p.setAttribute("aria-pressed", p.classList.contains("on"));
+      accendi(p, !p.classList.contains("on"));
+      // pernotto della notte X spuntato → colazione del giorno X+1 spuntata (resta modificabile)
+      if (p.dataset.gruppo === "servizi" && p.classList.contains("on")){
+        const s = servizioPerId(Number(p.dataset.valore));
+        const col = s && s.tipo === "pernotto" ? colazioneDopo(s) : null;
+        const pCol = col ? form.querySelector(`.pill[data-gruppo="servizi"][data-valore="${col.id}"]`) : null;
+        if (pCol) accendi(pCol, true);
+      }
       salvaBozza();
     }));
     const tutti = document.getElementById("btn-tutti-servizi");
@@ -555,6 +582,8 @@
       patenti: attivo("patenti") ? scelti("patenti") : (precedente ? precedente.patenti : []),
       abilitazioni: attivo("abilitazioni") ? scelti("abilitazioni") : (precedente ? precedente.abilitazioni : []),
       servizi: attivo("servizi") ? scelti("servizi").map(Number) : (precedente ? precedente.servizi : []),
+      esigenze: form.esigenze_note ? scelti("esigenze") : (precedente ? (precedente.esigenze || []) : []),
+      esigenze_note: form.esigenze_note ? (form.esigenze_note.value.trim() || null) : (precedente ? precedente.esigenze_note : null),
       note: form.note ? (form.note.value.trim() || null) : (precedente ? precedente.note : null)
     };
   }
@@ -569,6 +598,8 @@
     if (obblig("patenti") && !v.patenti.length) errori.push("Indicate almeno una patente.");
     if (obblig("abilitazioni") && !v.abilitazioni.length) errori.push("Indicate almeno un'abilitazione.");
     if (obblig("servizi") && (dati.servizi || []).length && !v.servizi.length) errori.push("Indicate almeno un pasto o pernotto.");
+    if (attivo("esigenze") && (v.esigenze || []).some(e => esigenzeConNota().includes(e)) && !v.esigenze_note)
+      errori.push("Descrivete l'esigenza alimentare nella nota (es. a cosa è allergico).");
     return errori;
   }
 

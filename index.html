@@ -5246,20 +5246,34 @@ let _esercitazioniFiltro = { search:"", stato:"" };
 const ENTI_ESERCITAZIONE = { CAP:"CAP", "1RGPT":"1° RGPT" };
 const STATI_ESERCITAZIONE = { bozza:"Bozza", aperta:"Adesioni aperte", chiusa:"Adesioni chiuse", conclusa:"Conclusa" };
 const STATI_SEZIONE_ESERCITAZIONE = { risposto:"Risposto", in_attesa:"In attesa", non_partecipa:"Non partecipa" };
-const TIPI_SERVIZIO = ["pranzo", "cena", "pernotto"];
-const LABEL_SERVIZIO = { pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+// Ordine nel giorno: colazione, pranzo, cena, pernotto
+const TIPI_SERVIZIO = ["colazione", "pranzo", "cena", "pernotto"];
+const LABEL_SERVIZIO = { colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
 const MAX_GIORNI_ESERCITAZIONE = 31;
 // Campi configurabili per esercitazione (colonna esercitazioni.campi). Cognome, nome e CF sono sempre obbligatori.
+// Esigenze alimentari: solo non richiesto / facoltativo (chi non ha esigenze non indica nulla).
 const CAMPI_ESERCITAZIONE = [
   { k:"cellulare", label:"Cellulare" },
   { k:"patenti", label:"Patenti" },
   { k:"abilitazioni", label:"Abilitazioni" },
   { k:"servizi", label:"Pasti e pernotti" },
+  { k:"esigenze", label:"Esigenze alimentari", senzaObbligatorio:true },
   { k:"note", label:"Note" }
 ];
 const LIVELLI_CAMPO = { non_richiesto:"Non richiesto", facoltativo:"Facoltativo", obbligatorio:"Obbligatorio" };
-const CAMPI_DEFAULT = { cellulare:"facoltativo", patenti:"facoltativo", abilitazioni:"facoltativo", servizi:"facoltativo", note:"non_richiesto" };
-function livelloCampo(es, k){ return (es && es.campi && es.campi[k]) || CAMPI_DEFAULT[k] || "facoltativo"; }
+const CAMPI_DEFAULT = { cellulare:"facoltativo", patenti:"facoltativo", abilitazioni:"facoltativo", servizi:"facoltativo", esigenze:"facoltativo", note:"non_richiesto" };
+// Valori per una nuova esercitazione: CAMPI_DEFAULT. Su un'esercitazione salvata un campo assente vale
+// "facoltativo", tranne le esigenze ("non richiesto"), come fa adesione_salva sul database.
+function livelloCampo(es, k){
+  if (es && es.campi) return es.campi[k] || (k === "esigenze" ? "non_richiesto" : "facoltativo");
+  return CAMPI_DEFAULT[k] || "facoltativo";
+}
+// pernotto della notte X → colazione del giorno X+1
+function giornoDopo(iso){
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
 function campoAttivo(es, k){ return livelloCampo(es, k) !== "non_richiesto"; }
 function campoObbligatorio(es, k){ return livelloCampo(es, k) === "obbligatorio"; }
 
@@ -5320,13 +5334,14 @@ async function caricaAdesioniEsercitazione(esercitazioneId){
   if (esercitazioniCompleto()){
     const { data, error } = await caricaTutteLeRighe(() => sb
       .from("adesioni")
-      .select("id, esercitazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, adesione_servizi(servizio_id)")
+      .select("id, esercitazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, esigenze, esigenze_note, adesione_servizi(servizio_id)")
       .eq("esercitazione_id", esercitazioneId));
     if (error) return { data:null, error };
     return { data: data.map(a => ({
       id:a.id, sezione_id:a.esercitazione_sezione_id, volontario_id:a.volontario_id,
       cognome:a.cognome, nome:a.nome, codice_fiscale:a.codice_fiscale, cellulare:a.cellulare,
       patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], note:a.note,
+      esigenze:a.esigenze || [], esigenze_note:a.esigenze_note,
       servizi:(a.adesione_servizi || []).map(x => x.servizio_id)
     })), error:null };
   }
@@ -5337,7 +5352,7 @@ async function caricaAdesioniEsercitazione(esercitazioneId){
   if (error) return { data:null, error };
   return { data: data.map(a => ({
     id:a.id, sezione_id:a.esercitazione_sezione_id, cognome:a.cognome, nome:a.nome,
-    patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], servizi:a.servizi || []
+    patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], esigenze:[], servizi:a.servizi || []
   })), error:null };
 }
 
@@ -5479,13 +5494,14 @@ async function apriModalEsercitazione(id){
             ${CAMPI_ESERCITAZIONE.map(c => `
               <label>${c.label}
                 <select name="campo_${c.k}">
-                  ${Object.entries(LIVELLI_CAMPO).map(([v,l]) => `<option value="${v}" ${livelloCampo(es, c.k)===v?"selected":""}>${l}</option>`).join("")}
+                  ${Object.entries(LIVELLI_CAMPO).filter(([v]) => !(c.senzaObbligatorio && v === "obbligatorio"))
+                    .map(([v,l]) => `<option value="${v}" ${livelloCampo(es, c.k)===v?"selected":""}>${l}</option>`).join("")}
                 </select>
               </label>`).join("")}
           </div>
 
           <div class="section-title" style="margin-top:20px;">Servizi per giorno</div>
-          <p class="es-aiuto">Le Sezioni potranno indicare, per ogni volontario, solo i servizi spuntati qui.</p>
+          <p class="es-aiuto">Le Sezioni potranno indicare, per ogni volontario, solo i servizi spuntati qui. La colazione segue il pernotto della notte prima (modificabile).</p>
           <div id="es-servizi-griglia"></div>
 
           <div class="section-title" style="margin-top:20px;">Sezioni invitate</div>
@@ -5517,7 +5533,9 @@ async function apriModalEsercitazione(id){
   // Griglia servizi: ricostruita quando cambiano le date, mantenendo le spunte già fatte
   const spunte = new Map(); // "giorno|tipo" -> bool
   servizi.forEach(s => spunte.set(`${s.giorno}|${s.tipo}`, true));
-  const precompila = !es; // nuova esercitazione: pranzo e cena ogni giorno, pernotto tutte le notti tranne l'ultimo giorno
+  // nuova esercitazione: pranzo e cena ogni giorno, pernotto tutte le notti tranne l'ultimo giorno,
+  // colazione nei giorni preceduti da una notte con pernotto (di norma dal 2° giorno)
+  const precompila = !es;
   function disegnaServizi(){
     const giorni = giorniTra(form.data_inizio.value, form.data_fine.value);
     const box = document.getElementById("es-servizi-griglia");
@@ -5529,12 +5547,26 @@ async function apriModalEsercitazione(id){
         <tbody>
           ${giorni.map((g, i) => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
             const k = `${g}|${t}`;
-            if (!spunte.has(k) && precompila) spunte.set(k, t !== "pernotto" || i < giorni.length - 1);
+            if (!spunte.has(k) && precompila){
+              if (t === "colazione") spunte.set(k, i > 0 && !!spunte.get(`${giorni[i-1]}|pernotto`));
+              else if (t === "pernotto") spunte.set(k, i < giorni.length - 1);
+              else spunte.set(k, true);
+            }
             return `<td><input type="checkbox" data-servizio="${k}" ${spunte.get(k) ? "checked" : ""}></td>`;
           }).join("")}</tr>`).join("")}
         </tbody>
       </table>`;
-    box.querySelectorAll("[data-servizio]").forEach(c => c.addEventListener("change", () => spunte.set(c.dataset.servizio, c.checked)));
+    box.querySelectorAll("[data-servizio]").forEach(c => c.addEventListener("change", () => {
+      spunte.set(c.dataset.servizio, c.checked);
+      // pernotto della notte X → colazione del giorno X+1 (resta modificabile)
+      const [g, t] = c.dataset.servizio.split("|");
+      if (t !== "pernotto") return;
+      const kCol = `${giornoDopo(g)}|colazione`;
+      const cCol = box.querySelector(`[data-servizio="${kCol}"]`);
+      if (!cCol) return;
+      cCol.checked = c.checked;
+      spunte.set(kCol, c.checked);
+    }));
   }
   form.data_inizio.addEventListener("change", () => {
     if (form.data_inizio.value && (!form.data_fine.value || form.data_fine.value < form.data_inizio.value)) form.data_fine.value = form.data_inizio.value;
@@ -5651,18 +5683,25 @@ async function eliminaEsercitazione(id){
 }
 
 /* ---------- CRUSCOTTO ---------- */
-let _cruscotto = null; // { es, servizi, sezioni, adesioni, patenti, abilitazioni, tab, filtro }
+let _cruscotto = null; // { es, servizi, sezioni, adesioni, ospiti, extra, cucina, patenti, abilitazioni, esigenze, tab, filtro }
 
 async function apriCruscottoEsercitazione(id, tab){
-  const [r1, r2, r3, r4, r5, ad] = await Promise.all([
+  const completo = esercitazioniCompleto();
+  const vuoto = Promise.resolve({ data:[], error:null });
+  const [r1, r2, r3, r4, r5, ad, r6, r7, r8, r9] = await Promise.all([
     sb.from("esercitazioni").select("*").eq("id", id).maybeSingle(),
     sb.from("esercitazione_servizi").select("id, giorno, tipo").eq("esercitazione_id", id),
     sb.from("esercitazione_sezioni").select("id, sezione, stato, risposto_at").eq("esercitazione_id", id),
     sb.from("esercitazioni_patenti").select("nome").order("ordine").order("nome"),
     sb.from("esercitazioni_abilitazioni").select("nome").order("ordine").order("nome"),
-    caricaAdesioniEsercitazione(id)
+    caricaAdesioniEsercitazione(id),
+    sb.from("esercitazioni_esigenze").select("nome, con_nota").order("ordine").order("nome"),
+    // cucina: totali volontari + ospiti + extra ed esigenze, senza dati personali (anche livello base)
+    sb.rpc("esercitazione_cucina", { p_esercitazione_id: id }),
+    completo ? sb.from("esercitazione_ospiti").select("id, nome, ente_ruolo, note, esigenze, esigenze_note, esercitazione_ospiti_servizi(servizio_id)").eq("esercitazione_id", id).order("nome") : vuoto,
+    completo ? sb.from("esercitazione_extra").select("id, servizio_id, quantita, descrizione").eq("esercitazione_id", id).order("id") : vuoto
   ]);
-  const err = r1.error || r2.error || r3.error || r4.error || r5.error || ad.error;
+  const err = r1.error || r2.error || r3.error || r4.error || r5.error || ad.error || r6.error || r7.error || r8.error || r9.error;
   if (err){ alert("Errore: " + err.message); return; }
   if (!r1.data){ alert("Esercitazione non trovata."); return; }
 
@@ -5677,6 +5716,10 @@ async function apriCruscottoEsercitazione(id, tab){
                      .sort((a,b) => a.sezione.localeCompare(b.sezione) || a.cognome.localeCompare(b.cognome) || a.nome.localeCompare(b.nome)),
     patenti: (r4.data || []).map(p => p.nome),
     abilitazioni: (r5.data || []).map(p => p.nome),
+    esigenze: r6.data || [],
+    cucina: r7.data || { servizi:[], esigenze:[] },
+    ospiti: (r8.data || []).map(o => ({ ...o, esigenze:o.esigenze || [], servizi:(o.esercitazione_ospiti_servizi || []).map(x => x.servizio_id) })),
+    extra: r9.data || [],
     tab: tab || (stessaEsercitazione ? _cruscotto.tab : null) || "riepilogo",
     filtro: stessaEsercitazione ? _cruscotto.filtro : { search:"", sezione:"" }
   };
@@ -5697,7 +5740,9 @@ function renderCruscottoEsercitazione(){
         <button class="modal-close" id="modal-close-btn">✕</button>
       </div>
       <div class="modal-tabs">
-        ${[["riepilogo","Riepilogo"],["volontari",`Volontari (${c.adesioni.length})`],["sezioni","Sezioni"]].map(([k,l]) =>
+        ${[["riepilogo","Riepilogo"], ["volontari",`Volontari (${c.adesioni.length})`],
+           ...(completo ? [["ospiti",`Ospiti (${c.ospiti.length})`]] : []),
+           ["cucina","Cucina"], ["sezioni","Sezioni"]].map(([k,l]) =>
           `<div class="modal-tab ${c.tab===k?"active":""}" data-tab="${k}">${l}</div>`).join("")}
       </div>
       <div class="modal-body">
@@ -5729,15 +5774,23 @@ function renderCruscottoEsercitazione(){
     document.getElementById("es-btn-elimina").addEventListener("click", () => eliminaEsercitazione(c.es.id));
   }
   if (c.tab === "volontari") renderTabVolontariEsercitazione();
+  else if (c.tab === "ospiti" && completo) renderTabOspitiEsercitazione();
+  else if (c.tab === "cucina") renderTabCucinaEsercitazione();
   else if (c.tab === "sezioni") renderTabSezioniEsercitazione();
   else renderTabRiepilogoEsercitazione();
 }
 
-// Numeri del cruscotto (usati anche dall'export Excel)
+// Numeri del cruscotto (usati anche dall'export Excel).
+// Pasti e posti letto: totali della cucina = volontari + ospiti + extra.
 function calcolaRiepilogoEsercitazione(c){
   const servizioPerId = new Map(c.servizi.map(s => [s.id, s]));
   const perServizio = new Map(c.servizi.map(s => [s.id, 0]));
-  c.adesioni.forEach(a => a.servizi.forEach(id => { if (perServizio.has(id)) perServizio.set(id, perServizio.get(id) + 1); }));
+  const cucinaPerId = new Map(((c.cucina && c.cucina.servizi) || []).map(s => [s.id, s]));
+  if (cucinaPerId.size){
+    c.servizi.forEach(s => { const k = cucinaPerId.get(s.id); if (k) perServizio.set(s.id, k.volontari + k.ospiti + k.extra); });
+  } else {
+    c.adesioni.forEach(a => a.servizi.forEach(id => { if (perServizio.has(id)) perServizio.set(id, perServizio.get(id) + 1); }));
+  }
 
   const giorni = [...new Set(c.servizi.map(s => s.giorno))];
   const perGiorno = giorni.map(g => {
@@ -5786,7 +5839,7 @@ function renderTabRiepilogoEsercitazione(){
   const r = calcolaRiepilogoEsercitazione(c);
   const body = document.getElementById("es-tab-body");
   const cella = v => v === null ? `<span style="color:var(--grigio-400);">—</span>` : v;
-  const conServizi = campoAttivo(c.es, "servizi");
+  const conServizi = c.servizi.length > 0; // con ospiti ed extra i pasti contano anche se i servizi non sono chiesti alle Sezioni
   const conPatenti = campoAttivo(c.es, "patenti");
   const conAbil = campoAttivo(c.es, "abilitazioni");
   body.innerHTML = `
@@ -5794,7 +5847,7 @@ function renderTabRiepilogoEsercitazione(){
       <div class="report-stat-box"><div class="report-stat-num">${r.volontari}</div><div class="report-stat-lbl">Volontari</div></div>
       <div class="report-stat-box"><div class="report-stat-num">${r.sezioniRisposto}/${r.sezioniTotali}</div><div class="report-stat-lbl">Sezioni che hanno inviato l'adesione</div></div>
       ${conServizi ? `
-      <div class="report-stat-box"><div class="report-stat-num">${r.pasti}</div><div class="report-stat-lbl">Pasti totali</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${r.pasti}</div><div class="report-stat-lbl">Pasti totali (con ospiti ed extra)</div></div>
       <div class="report-stat-box"><div class="report-stat-num">${r.postiLetto}</div><div class="report-stat-lbl">Posti letto (notte più piena)</div></div>` : ""}
     </div>
 
@@ -5892,7 +5945,7 @@ function configExcelSezione(s){
     titolo: c.es.titolo, sezione: s.sezione,
     date: c.es.data_fine !== c.es.data_inizio ? `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}` : formatDataIt(c.es.data_inizio),
     campi: c.es.campi || CAMPI_DEFAULT, patenti: c.patenti, abilitazioni: c.abilitazioni, servizi: c.servizi,
-    volontari: c.adesioni.filter(a => a.sezione_id === s.id), maxVolontari: 150
+    esigenze: c.esigenze, volontari: c.adesioni.filter(a => a.sezione_id === s.id), maxVolontari: 150
   };
 }
 
@@ -5932,7 +5985,8 @@ async function caricaExcelSezione(ev){
     // elenco completo della Sezione = iscritti attuali aggiornati con il file
     const attuali = c.adesioni.filter(a => a.sezione_id === s.id).map(a => ({
       cognome:a.cognome, nome:a.nome, codice_fiscale:a.codice_fiscale, cellulare:a.cellulare || "",
-      patenti:a.patenti, abilitazioni:a.abilitazioni, servizi:a.servizi, note:a.note || null
+      patenti:a.patenti, abilitazioni:a.abilitazioni, servizi:a.servizi, note:a.note || null,
+      esigenze:a.esigenze || [], esigenze_note:a.esigenze_note || null
     }));
     validi.forEach(v => {
       const i = attuali.findIndex(x => x.codice_fiscale === v.codice_fiscale);
@@ -5943,6 +5997,8 @@ async function caricaExcelSezione(ev){
         patenti: campoAttivo(c.es, "patenti") ? v.patenti : attuali[i].patenti,
         abilitazioni: campoAttivo(c.es, "abilitazioni") ? v.abilitazioni : attuali[i].abilitazioni,
         servizi: campoAttivo(c.es, "servizi") ? v.servizi : attuali[i].servizi,
+        esigenze: campoAttivo(c.es, "esigenze") ? v.esigenze : attuali[i].esigenze,
+        esigenze_note: campoAttivo(c.es, "esigenze") ? v.esigenze_note : attuali[i].esigenze_note,
         note: campoAttivo(c.es, "note") ? v.note : attuali[i].note
       };
     });
@@ -5982,6 +6038,7 @@ function disegnaListaVolontariEsercitazione(){
           ${completo ? "<th>Codice fiscale</th>" : ""}
           ${completo && att("cellulare") ? "<th>Cellulare</th>" : ""}
           ${att("patenti") ? "<th>Patenti</th>" : ""}${att("abilitazioni") ? "<th>Abilitazioni</th>" : ""}${att("servizi") ? "<th>Servizi</th>" : ""}
+          ${completo && att("esigenze") ? "<th>Esigenze alimentari</th>" : ""}
           ${completo ? "<th></th>" : ""}
         </tr></thead>
         <tbody>
@@ -5994,6 +6051,7 @@ function disegnaListaVolontariEsercitazione(){
               ${att("patenti") ? `<td>${escapeHtml(a.patenti.join(", ") || "—")}</td>` : ""}
               ${att("abilitazioni") ? `<td>${escapeHtml(a.abilitazioni.join(", ") || "—")}</td>` : ""}
               ${att("servizi") ? `<td>${descriviServiziAdesione(a)}</td>` : ""}
+              ${completo && att("esigenze") ? `<td>${descriviEsigenze(a)}</td>` : ""}
               ${completo ? `<td style="white-space:nowrap;">
                 <button class="row-del" style="color:var(--blu-500);" data-modifica="${a.id}">Modifica</button>
                 <button class="row-del" data-elimina="${a.id}">Elimina</button></td>` : ""}
@@ -6005,6 +6063,53 @@ function disegnaListaVolontariEsercitazione(){
   if (!completo) return;
   wrap.querySelectorAll("[data-modifica]").forEach(b => b.addEventListener("click", () => mostraFormVolontarioEsercitazione(parseInt(b.dataset.modifica))));
   wrap.querySelectorAll("[data-elimina]").forEach(b => b.addEventListener("click", () => eliminaAdesioneEsercitazione(parseInt(b.dataset.elimina))));
+}
+
+/* ---------- Pezzi di form condivisi (volontari e ospiti) ---------- */
+function htmlGrigliaServiziScelta(c, scelti){
+  const giorni = [...new Set(c.servizi.map(s => s.giorno))];
+  if (!giorni.length) return `<div class="es-aiuto">Nessun servizio previsto.</div>`;
+  return `<table class="storico-table es-griglia-servizi">
+    <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
+    <tbody>${giorni.map(g => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
+      const s = c.servizi.find(x => x.giorno === g && x.tipo === t);
+      return `<td>${s ? `<input type="checkbox" name="servizi" value="${s.id}" ${(scelti || []).includes(s.id) ? "checked" : ""}>` : "—"}</td>`;
+    }).join("")}</tr>`).join("")}</tbody>
+  </table>
+  <div class="es-aiuto" style="margin:6px 0 0;">Spuntando il pernotto, la colazione del mattino dopo si spunta da sola (modificabile).</div>`;
+}
+
+// pernotto della notte X spuntato → colazione del giorno X+1 spuntata (resta modificabile a mano)
+function collegaColazioneAutomatica(contenitore, c){
+  contenitore.querySelectorAll('input[name="servizi"]').forEach(cb => cb.addEventListener("change", () => {
+    if (!cb.checked) return;
+    const s = c.servizi.find(x => x.id === Number(cb.value));
+    if (!s || s.tipo !== "pernotto") return;
+    const col = c.servizi.find(x => x.giorno === giornoDopo(s.giorno) && x.tipo === "colazione");
+    const cbCol = col ? contenitore.querySelector(`input[name="servizi"][value="${col.id}"]`) : null;
+    if (cbCol) cbCol.checked = true;
+  }));
+}
+
+function htmlEsigenzeScelta(c, scelte, nota){
+  const conNota = c.esigenze.filter(e => e.con_nota).map(e => e.nome);
+  return `
+    <div class="form-field full"><label>Esigenze alimentari</label>
+      <div class="es-sezioni-check">${c.esigenze.map(e => `<label><input type="checkbox" name="esigenze" value="${escapeHtml(e.nome)}" ${(scelte || []).includes(e.nome) ? "checked" : ""}> ${escapeHtml(e.nome)}</label>`).join("") || "—"}</div>
+    </div>
+    <div class="form-field full"><label>Nota esigenze alimentari${conNota.length ? ` (obbligatoria per ${escapeHtml(conNota.join(" e ").toLowerCase())})` : ""}</label>
+      <input name="esigenze_note" maxlength="300" placeholder="es. allergico alle arachidi" value="${escapeHtml(nota || "")}">
+    </div>`;
+}
+
+function erroreEsigenze(c, esigenze, nota){
+  const conNota = c.esigenze.filter(e => e.con_nota).map(e => e.nome);
+  return esigenze.some(e => conNota.includes(e)) && !nota ? "Descrivi l'esigenza alimentare nella nota (es. a cosa è allergico)." : null;
+}
+
+function descriviEsigenze(x){
+  if (!x.esigenze || !x.esigenze.length) return "—";
+  return escapeHtml(x.esigenze.join(", ")) + (x.esigenze_note ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(x.esigenze_note)}</div>` : "");
 }
 
 function mostraFormVolontarioEsercitazione(adesioneId){
@@ -6037,14 +6142,9 @@ function mostraFormVolontarioEsercitazione(adesioneId){
             <div class="es-sezioni-check">${c.abilitazioni.map(p => `<label><input type="checkbox" name="abilitazioni" value="${escapeHtml(p)}" ${a?.abilitazioni.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
           </div>` : ""}
           ${att("servizi") ? `<div class="form-field full"><label>Servizi${ast("servizi")}</label>
-            ${giorni.length ? `<table class="storico-table es-griglia-servizi">
-              <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
-              <tbody>${giorni.map(g => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
-                const s = c.servizi.find(x => x.giorno === g && x.tipo === t);
-                return `<td>${s ? `<input type="checkbox" name="servizi" value="${s.id}" ${a?.servizi.includes(s.id) ? "checked" : ""}>` : "—"}</td>`;
-              }).join("")}</tr>`).join("")}</tbody>
-            </table>` : `<div class="es-aiuto">Nessun servizio previsto.</div>`}
+            ${htmlGrigliaServiziScelta(c, a?.servizi)}
           </div>` : ""}
+          ${att("esigenze") ? htmlEsigenzeScelta(c, a?.esigenze, a?.esigenze_note) : ""}
         </div>
         <div id="es-vol-errore" style="color:var(--rosso);font-size:12.5px;margin-top:8px;display:none;"></div>
         <div class="form-actions">
@@ -6055,6 +6155,7 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     </div>
   `;
   box.scrollIntoView({ behavior:"smooth", block:"nearest" });
+  collegaColazioneAutomatica(box, c);
   document.getElementById("es-vol-annulla").addEventListener("click", () => { box.innerHTML = ""; });
   document.getElementById("form-adesione-admin").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -6074,6 +6175,10 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     if (ob("patenti") && !valori("patenti").length){ mostraErrore("Indica almeno una patente."); return; }
     if (ob("abilitazioni") && !valori("abilitazioni").length){ mostraErrore("Indica almeno un'abilitazione."); return; }
     if (ob("servizi") && c.servizi.length && !servizi.length){ mostraErrore("Indica almeno un pasto o pernotto."); return; }
+    if (att("esigenze")){
+      const errEsig = erroreEsigenze(c, valori("esigenze"), f.esigenze_note.value.trim());
+      if (errEsig){ mostraErrore(errEsig); return; }
+    }
 
     // Collegamento facoltativo all'anagrafica Formazione (se l'utente può leggerla)
     let volontarioId = a?.volontario_id ?? null;
@@ -6094,6 +6199,10 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     if (att("note")) payload.note = f.note.value.trim() || null;
     if (att("patenti")) payload.patenti = valori("patenti");
     if (att("abilitazioni")) payload.abilitazioni = valori("abilitazioni");
+    if (att("esigenze")){
+      payload.esigenze = valori("esigenze");
+      payload.esigenze_note = f.esigenze_note.value.trim() || null;
+    }
     const btn = f.querySelector(".btn-save");
     btn.disabled = true;
 
@@ -6131,6 +6240,237 @@ async function eliminaAdesioneEsercitazione(adesioneId){
   const { error } = await sb.from("adesioni").delete().eq("id", adesioneId);
   if (error){ alert("Errore: " + error.message); return; }
   apriCruscottoEsercitazione(_cruscotto.es.id, "volontari");
+}
+
+/* ---------- Scheda Ospiti (solo completo): ospiti con nome + extra solo conteggi ---------- */
+function etichettaServizio(s){ return `${labelGiornoBreve(s.giorno)} ${LABEL_SERVIZIO[s.tipo] || s.tipo}`; }
+
+function renderTabOspitiEsercitazione(){
+  const c = _cruscotto;
+  const body = document.getElementById("es-tab-body");
+  const servizioPerId = new Map(c.servizi.map(s => [s.id, s]));
+  body.innerHTML = `
+    <div class="toolbar" style="margin-bottom:10px;">
+      <div class="section-title" style="margin:0;flex:1;">Ospiti</div>
+      <button class="btn-add" id="es-osp-nuovo">+ Aggiungi ospite</button>
+    </div>
+    <p class="es-aiuto">Persone esterne che usufruiscono di pasti o pernotti (autorità, relatori…). Niente codice fiscale. Vengono conteggiate nel report Cucina.</p>
+    <div id="es-osp-form"></div>
+    ${c.ospiti.length ? `
+    <div style="overflow-x:auto;">
+      <table class="storico-table">
+        <thead><tr><th>Nome</th><th>Ente / ruolo</th><th>Servizi</th><th>Esigenze alimentari</th><th>Note</th><th></th></tr></thead>
+        <tbody>${c.ospiti.map(o => `
+          <tr>
+            <td><strong>${escapeHtml(o.nome)}</strong></td>
+            <td>${escapeHtml(o.ente_ruolo || "—")}</td>
+            <td>${descriviServiziAdesione(o)}</td>
+            <td>${descriviEsigenze(o)}</td>
+            <td>${escapeHtml(o.note || "—")}</td>
+            <td style="white-space:nowrap;">
+              <button class="row-del" style="color:var(--blu-500);" data-osp-modifica="${o.id}">Modifica</button>
+              <button class="row-del" data-osp-elimina="${o.id}">Elimina</button>
+            </td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : `<div class="storico-empty">Nessun ospite.</div>`}
+
+    <div class="section-title" style="margin-top:24px;">Extra (solo conteggi, senza nomi)</div>
+    <p class="es-aiuto">Per numeri rapidi, es. "3 autorità al pranzo di sabato".</p>
+    ${c.servizi.length ? `
+    <form id="es-extra-form" class="es-extra-form">
+      <select name="servizio_id" required>
+        <option value="">Servizio…</option>
+        ${c.servizi.map(s => `<option value="${s.id}">${escapeHtml(etichettaServizio(s))}</option>`).join("")}
+      </select>
+      <input type="number" name="quantita" min="1" max="1000" required placeholder="Quantità">
+      <input name="descrizione" maxlength="150" required placeholder="Descrizione (es. autorità)">
+      <button type="submit" class="btn-add-mini">Aggiungi</button>
+    </form>` : `<div class="es-aiuto">Prima definisci i servizi dell'esercitazione.</div>`}
+    ${c.extra.length ? `
+    <table class="storico-table" style="margin-top:10px;">
+      <thead><tr><th>Servizio</th><th>Quantità</th><th>Descrizione</th><th></th></tr></thead>
+      <tbody>${c.extra.map(x => `
+        <tr>
+          <td>${escapeHtml(servizioPerId.get(x.servizio_id) ? etichettaServizio(servizioPerId.get(x.servizio_id)) : "—")}</td>
+          <td>${x.quantita}</td>
+          <td>${escapeHtml(x.descrizione)}</td>
+          <td><button class="row-del" data-extra-elimina="${x.id}">Elimina</button></td>
+        </tr>`).join("")}
+      </tbody>
+    </table>` : ""}
+  `;
+  document.getElementById("es-osp-nuovo").addEventListener("click", () => mostraFormOspiteEsercitazione(null));
+  body.querySelectorAll("[data-osp-modifica]").forEach(b => b.addEventListener("click", () => mostraFormOspiteEsercitazione(parseInt(b.dataset.ospModifica))));
+  body.querySelectorAll("[data-osp-elimina]").forEach(b => b.addEventListener("click", async () => {
+    const o = c.ospiti.find(x => x.id === parseInt(b.dataset.ospElimina));
+    if (!confirm(`Togliere l'ospite ${o ? o.nome : ""}?`)) return;
+    const { error } = await sb.from("esercitazione_ospiti").delete().eq("id", o.id);
+    if (error){ alert("Errore: " + error.message); return; }
+    apriCruscottoEsercitazione(c.es.id, "ospiti");
+  }));
+  body.querySelectorAll("[data-extra-elimina]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Togliere questa riga di extra?")) return;
+    const { error } = await sb.from("esercitazione_extra").delete().eq("id", parseInt(b.dataset.extraElimina));
+    if (error){ alert("Errore: " + error.message); return; }
+    apriCruscottoEsercitazione(c.es.id, "ospiti");
+  }));
+  const fx = document.getElementById("es-extra-form");
+  if (fx) fx.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const quantita = parseInt(fx.quantita.value, 10);
+    if (!fx.servizio_id.value || !(quantita >= 1 && quantita <= 1000) || !fx.descrizione.value.trim()){ alert("Indica servizio, quantità (1–1000) e descrizione."); return; }
+    const { error } = await sb.from("esercitazione_extra").insert({
+      esercitazione_id: c.es.id, servizio_id: parseInt(fx.servizio_id.value), quantita, descrizione: fx.descrizione.value.trim()
+    });
+    if (error){ alert("Errore: " + error.message); return; }
+    apriCruscottoEsercitazione(c.es.id, "ospiti");
+  });
+}
+
+function mostraFormOspiteEsercitazione(ospiteId){
+  const c = _cruscotto;
+  const o = ospiteId ? c.ospiti.find(x => x.id === ospiteId) : null;
+  const box = document.getElementById("es-osp-form");
+  box.innerHTML = `
+    <div class="mini-form">
+      <form id="form-ospite">
+        <div class="form-grid">
+          <div class="form-field"><label>Nome e cognome *</label><input name="nome" required maxlength="120" value="${escapeHtml(o?.nome || "")}"></div>
+          <div class="form-field"><label>Ente / ruolo</label><input name="ente_ruolo" maxlength="150" placeholder="es. Prefettura, relatore" value="${escapeHtml(o?.ente_ruolo || "")}"></div>
+          <div class="form-field full"><label>Note</label><input name="note" maxlength="500" value="${escapeHtml(o?.note || "")}"></div>
+          <div class="form-field full"><label>Servizi</label>${htmlGrigliaServiziScelta(c, o?.servizi)}</div>
+          ${htmlEsigenzeScelta(c, o?.esigenze, o?.esigenze_note)}
+        </div>
+        <div id="es-osp-errore" style="color:var(--rosso);font-size:12.5px;margin-top:8px;display:none;"></div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" id="es-osp-annulla">Annulla</button>
+          <button type="submit" class="btn-save">${o ? "Salva modifiche" : "Aggiungi"}</button>
+        </div>
+      </form>
+    </div>`;
+  box.scrollIntoView({ behavior:"smooth", block:"nearest" });
+  collegaColazioneAutomatica(box, c);
+  document.getElementById("es-osp-annulla").addEventListener("click", () => { box.innerHTML = ""; });
+  document.getElementById("form-ospite").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    const errBox = document.getElementById("es-osp-errore");
+    const mostraErrore = m => { errBox.textContent = m; errBox.style.display = "block"; };
+    const valori = sel => [...f.querySelectorAll(`input[name="${sel}"]:checked`)].map(x => x.value);
+    const nome = f.nome.value.trim();
+    if (!nome){ mostraErrore("Il nome è obbligatorio."); return; }
+    const esigenze = valori("esigenze");
+    const esigenzeNote = f.esigenze_note.value.trim() || null;
+    const errEsig = erroreEsigenze(c, esigenze, esigenzeNote);
+    if (errEsig){ mostraErrore(errEsig); return; }
+    const payload = {
+      esercitazione_id: c.es.id, nome, ente_ruolo: f.ente_ruolo.value.trim() || null,
+      note: f.note.value.trim() || null, esigenze, esigenze_note: esigenzeNote
+    };
+    const btn = f.querySelector(".btn-save");
+    btn.disabled = true;
+    let id = o?.id;
+    const r = id
+      ? await sb.from("esercitazione_ospiti").update(payload).eq("id", id)
+      : await sb.from("esercitazione_ospiti").insert(payload).select("id").single();
+    if (r.error){ btn.disabled = false; mostraErrore("Errore: " + r.error.message); return; }
+    if (!id) id = r.data.id;
+
+    // servizi: solo le differenze
+    const servizi = valori("servizi").map(Number);
+    const prima = o?.servizi || [];
+    const daTogliere = prima.filter(s => !servizi.includes(s));
+    const daAggiungere = servizi.filter(s => !prima.includes(s));
+    if (daTogliere.length){
+      const { error } = await sb.from("esercitazione_ospiti_servizi").delete().eq("ospite_id", id).in("servizio_id", daTogliere);
+      if (error){ btn.disabled = false; mostraErrore("Ospite salvato, ma errore sui servizi: " + error.message); return; }
+    }
+    if (daAggiungere.length){
+      const { error } = await sb.from("esercitazione_ospiti_servizi").insert(daAggiungere.map(s => ({ ospite_id:id, servizio_id:s, esercitazione_id:c.es.id })));
+      if (error){ btn.disabled = false; mostraErrore("Ospite salvato, ma errore sui servizi: " + error.message); return; }
+    }
+    apriCruscottoEsercitazione(c.es.id, "ospiti");
+  });
+}
+
+/* ---------- Scheda Cucina (anche livello base): dati da esercitazione_cucina() ---------- */
+function righeCucina(c){
+  return ((c.cucina && c.cucina.servizi) || []).map(s => ({
+    ...s,
+    totale: s.volontari + s.ospiti + s.extra,
+    esigenzeTesto: Object.entries(s.esigenze || {}).sort((a,b) => b[1] - a[1]).map(([k,n]) => `${k} ${n}`).join(" · "),
+    extraTesto: (s.extra_dettaglio || []).map(x => `${x.descrizione} ${x.quantita}`).join(", ")
+  }));
+}
+
+// HTML della cucina, usato sia a schermo sia per la stampa (perStampa = stili semplici, niente classi dell'app)
+function htmlCucina(c, perStampa){
+  const righe = righeCucina(c);
+  if (!righe.length) return `<div class="storico-empty">Nessun servizio previsto.</div>`;
+  const giorni = [...new Set(righe.map(r => r.giorno))];
+  const cl = perStampa ? "" : ` class="storico-table es-cucina-tabella"`;
+  return giorni.map(g => {
+    const delGiorno = righe.filter(r => r.giorno === g);
+    return `
+      <h3 class="${perStampa ? "" : "es-cucina-giorno"}">${escapeHtml(new Date(g + "T00:00:00").toLocaleDateString("it-IT", { weekday:"long", day:"numeric", month:"long", year:"numeric" }))}</h3>
+      <table${cl}>
+        <thead><tr><th>Servizio</th><th>Volontari</th><th>Ospiti</th><th>Extra</th><th>Totale</th><th>Esigenze alimentari</th></tr></thead>
+        <tbody>${delGiorno.map(r => `
+          <tr>
+            <td><strong>${LABEL_SERVIZIO[r.tipo] || escapeHtml(r.tipo)}</strong></td>
+            <td>${r.volontari}</td>
+            <td>${r.ospiti}</td>
+            <td>${r.extra}${r.extraTesto ? `<div style="font-size:11px;color:#8a93a3;">${escapeHtml(r.extraTesto)}</div>` : ""}</td>
+            <td><strong>${r.totale}</strong>${r.tipo === "pernotto" ? " posti letto" : ""}</td>
+            <td>${r.tipo === "pernotto" ? "—" : escapeHtml(r.esigenzeTesto || "—")}</td>
+          </tr>
+          ${r.tipo !== "pernotto" && (r.con_nota || []).length ? `
+          <tr><td></td><td colspan="5" style="font-size:12px;">
+            ${r.con_nota.map(p => `⚠️ <strong>${escapeHtml(p.nome)}</strong> (${escapeHtml(p.provenienza || (p.tipo === "ospite" ? "ospite" : "—"))}): ${escapeHtml((p.esigenze || []).join(", "))}${p.nota ? ` – ${escapeHtml(p.nota)}` : ""}`).join("<br>")}
+          </td></tr>` : ""}`).join("")}
+        </tbody>
+      </table>`;
+  }).join("");
+}
+
+function renderTabCucinaEsercitazione(){
+  const c = _cruscotto;
+  const body = document.getElementById("es-tab-body");
+  body.innerHTML = `
+    <div class="toolbar" style="margin-bottom:6px;">
+      <p class="es-aiuto" style="margin:0;flex:1;">Totali per servizio: volontari + ospiti + extra. I nomi compaiono solo per le esigenze da segnalare (allergie, altro).</p>
+      <button class="btn-add" id="es-cucina-stampa">🖨 Stampa</button>
+    </div>
+    ${htmlCucina(c, false)}
+  `;
+  document.getElementById("es-cucina-stampa").addEventListener("click", stampaCucinaEsercitazione);
+}
+
+function stampaCucinaEsercitazione(){
+  const c = _cruscotto;
+  const w = window.open("", "_blank");
+  if (!w){ alert("Il browser ha bloccato la finestra di stampa: consenti i popup per questo sito."); return; }
+  const date = c.es.data_fine !== c.es.data_inizio ? `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}` : formatDataIt(c.es.data_inizio);
+  w.document.write(`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Cucina – ${escapeHtml(c.es.titolo)}</title>
+    <style>
+      @page { size: A4; margin: 14mm; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 11.5pt; color: #111; }
+      h1 { font-size: 16pt; margin: 0 0 2px; }
+      .sub { font-size: 10pt; color: #555; margin-bottom: 12px; }
+      h3 { font-size: 12.5pt; margin: 16px 0 6px; text-transform: capitalize; border-bottom: 1.5px solid #333; padding-bottom: 2px; }
+      table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+      th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; vertical-align: top; }
+      th { background: #eee; font-size: 10pt; }
+      td:nth-child(2), td:nth-child(3), td:nth-child(4), td:nth-child(5) { text-align: center; }
+    </style></head><body>
+    <h1>Cucina – ${escapeHtml(c.es.titolo)}</h1>
+    <div class="sub">${escapeHtml(date)}${c.es.luogo ? " · " + escapeHtml(c.es.luogo) : ""} · stampato il ${escapeHtml(formatDataOraIt(new Date().toISOString()))}</div>
+    ${htmlCucina(c, true)}
+    <script>window.onload = function(){ window.print(); };<\/script>
+    </body></html>`);
+  w.document.close();
 }
 
 /* ---------- Scheda Sezioni: link pubblici (token solo via esercitazione_link) ---------- */
@@ -6257,6 +6597,10 @@ function esportaEsercitazioneExcel(){
     if (att("patenti")) riga.Patenti = a.patenti.join(", ");
     if (att("abilitazioni")) riga.Abilitazioni = a.abilitazioni.join(", ");
     if (att("servizi")) c.servizi.forEach(s => { riga[etichettaServizio(s)] = a.servizi.includes(s.id) ? "X" : ""; });
+    if (completo && att("esigenze")){
+      riga["Esigenze alimentari"] = (a.esigenze || []).join(", ");
+      riga["Nota esigenze"] = a.esigenze_note || "";
+    }
     if (completo && att("note")) riga.Note = a.note || "";
     return riga;
   });
@@ -6275,8 +6619,8 @@ function esportaEsercitazioneExcel(){
     ["Volontari", r.volontari],
     ["Sezioni che hanno inviato l'adesione", `${r.sezioniRisposto}/${r.sezioniTotali}`],
     ["Sezioni che non partecipano", r.sezioniNonPartecipa],
-    ...(att("servizi") ? [
-      ["Pasti totali", r.pasti],
+    ...(c.servizi.length ? [
+      ["Pasti totali (con ospiti ed extra)", r.pasti],
       ["Pernotti totali", r.pernotti],
       ["Posti letto (notte più piena)", r.postiLetto],
       [],
@@ -6289,9 +6633,28 @@ function esportaEsercitazioneExcel(){
     ...(att("patenti") ? [[], ["Patente", "Volontari"], ...r.patenti.map(p => [p.nome, p.n])] : []),
     ...(att("abilitazioni") ? [[], ["Abilitazione", "Volontari"], ...r.abilitazioni.map(p => [p.nome, p.n])] : [])
   ];
+  // Foglio Cucina: per ogni servizio volontari + ospiti + extra, esigenze per tipo e persone da segnalare
+  const nomiEsigenze = c.esigenze.map(e => e.nome);
+  const aoaCucina = [
+    ["Giorno", "Servizio", "Volontari", "Ospiti", "Extra", "Dettaglio extra", "Totale", ...nomiEsigenze, "Da segnalare"],
+    ...righeCucina(c).map(s => [
+      labelGiornoBreve(s.giorno), LABEL_SERVIZIO[s.tipo] || s.tipo, s.volontari, s.ospiti, s.extra, s.extraTesto, s.totale,
+      ...nomiEsigenze.map(n => s.tipo === "pernotto" ? "" : ((s.esigenze || {})[n] || 0)),
+      s.tipo === "pernotto" ? "" : (s.con_nota || []).map(p => `${p.nome} (${p.provenienza || p.tipo}): ${(p.esigenze || []).join(", ")}${p.nota ? " – " + p.nota : ""}`).join("; ")
+    ])
+  ];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsVolontari, "Volontari");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Riepilogo");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaCucina), "Cucina");
+  if (completo && c.ospiti.length){
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(c.ospiti.map(o => {
+      const riga = { Nome: o.nome, "Ente / ruolo": o.ente_ruolo || "", "Esigenze alimentari": (o.esigenze || []).join(", "), "Nota esigenze": o.esigenze_note || "", Note: o.note || "" };
+      c.servizi.forEach(s => { riga[etichettaServizio(s)] = o.servizi.includes(s.id) ? "X" : ""; });
+      return riga;
+    })), "Ospiti");
+  }
   XLSX.writeFile(wb, `Esercitazione_${(c.es.titolo || "").replace(/[^a-zA-Z0-9]+/g, "_").slice(0,60)}_${c.es.data_inizio}.xlsx`);
 }
 
@@ -6343,6 +6706,11 @@ async function renderImpostazioni(){
       <div id="es-abilitazioni-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-abilitazione-es">+ Nuova abilitazione</button></div>
 
+      <div class="section-title" style="margin-top:28px;">Esercitazioni – esigenze alimentari</div>
+      <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Le voci "con nota" (es. allergie) chiedono di descrivere l'esigenza: nel report Cucina compaiono con nome e nota della persona.</p>
+      <div id="es-esigenze-list"></div>
+      <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-esigenza-es">+ Nuova esigenza</button></div>
+
       <div class="section-title" style="margin-top:28px;">Sezioni ANA – mail Protezione Civile</div>
       <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Indirizzi usati per inviare alle Sezioni il link delle adesioni alle esercitazioni.</p>
       <div id="sezioni-ana-mail-list"></div>
@@ -6372,8 +6740,51 @@ async function renderImpostazioni(){
     document.getElementById("btn-nuova-patente-es").addEventListener("click", () => aggiungiVoceEsercitazione("esercitazioni_patenti", "es-patenti-list", "patente", "es. B, C, CE…"));
     await renderListaVociEsercitazione("esercitazioni_abilitazioni", "es-abilitazioni-list", "abilitazione");
     document.getElementById("btn-nuova-abilitazione-es").addEventListener("click", () => aggiungiVoceEsercitazione("esercitazioni_abilitazioni", "es-abilitazioni-list", "abilitazione", "es. MMT, TRIS…"));
+    await renderListaEsigenzeEsercitazione();
+    document.getElementById("btn-nuova-esigenza-es").addEventListener("click", aggiungiEsigenzaEsercitazione);
     await renderMailSezioniAna();
   }
+}
+
+async function renderListaEsigenzeEsercitazione(){
+  const { data, error } = await sb.from("esercitazioni_esigenze").select("id, nome, con_nota").order("ordine").order("nome");
+  const wrap = document.getElementById("es-esigenze-list");
+  if (!wrap) return;
+  if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+  if (!data || !data.length){ wrap.innerHTML = `<div class="storico-empty">Nessuna voce definita.</div>`; return; }
+  wrap.innerHTML = `
+    <table class="storico-table">
+      <thead><tr><th>Nome</th><th>Con nota</th><th></th></tr></thead>
+      <tbody>${data.map(v => `
+        <tr>
+          <td>${escapeHtml(v.nome)}</td>
+          <td><input type="checkbox" data-con-nota="${v.id}" ${v.con_nota ? "checked" : ""} title="Chiede la nota e mostra il nome in cucina"></td>
+          <td><button class="row-del" data-id="${v.id}" data-nome="${escapeHtml(v.nome)}">Elimina</button></td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+  wrap.querySelectorAll("[data-con-nota]").forEach(cb => cb.addEventListener("change", async () => {
+    const { error } = await sb.from("esercitazioni_esigenze").update({ con_nota: cb.checked }).eq("id", parseInt(cb.dataset.conNota));
+    if (error){ alert("Errore: " + error.message); cb.checked = !cb.checked; }
+  }));
+  wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm(`Eliminare l'esigenza "${b.dataset.nome}"? Non sarà più selezionabile; chi l'ha già indicata la conserva.`)) return;
+    const { error } = await sb.from("esercitazioni_esigenze").delete().eq("id", parseInt(b.dataset.id));
+    if (error){ alert("Errore: " + error.message); return; }
+    renderListaEsigenzeEsercitazione();
+  }));
+}
+
+async function aggiungiEsigenzaEsercitazione(){
+  const nome = prompt("Nome nuova esigenza alimentare (es. Vegano, Senza lattosio…):");
+  if (!nome || !nome.trim()) return;
+  const conNota = confirm("Per questa esigenza serve una nota (es. a cosa è allergico) e la cucina deve vedere il nome della persona?\n\nOK = sì, Annulla = no");
+  const { data: ultime, error: errOrd } = await sb.from("esercitazioni_esigenze").select("ordine").order("ordine", { ascending:false }).limit(1);
+  if (errOrd){ alert("Errore: " + errOrd.message); return; }
+  const n = nome.trim();
+  const { error } = await sb.from("esercitazioni_esigenze").insert({ nome: n.charAt(0).toUpperCase() + n.slice(1), con_nota: conNota, ordine: (ultime?.[0]?.ordine || 0) + 1 });
+  if (error){ alert(error.code === "23505" ? "Questa esigenza esiste già." : "Errore: " + error.message); return; }
+  renderListaEsigenzeEsercitazione();
 }
 
 /* ---------- Impostazioni: liste Esercitazioni e mail PC delle Sezioni ---------- */
