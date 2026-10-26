@@ -5619,9 +5619,532 @@ async function eliminaEsercitazione(id){
 }
 
 /* ---------- CRUSCOTTO ---------- */
-// Provvisorio (tappa 1): apre la modifica. Il cruscotto completo arriva nella tappa 2.
-function apriCruscottoEsercitazione(id){
-  if (esercitazioniCompleto()) apriModalEsercitazione(id);
+let _cruscotto = null; // { es, servizi, sezioni, adesioni, patenti, abilitazioni, tab, filtro }
+
+async function apriCruscottoEsercitazione(id, tab){
+  const [r1, r2, r3, r4, r5, ad] = await Promise.all([
+    sb.from("esercitazioni").select("*").eq("id", id).maybeSingle(),
+    sb.from("esercitazione_servizi").select("id, giorno, tipo").eq("esercitazione_id", id),
+    sb.from("esercitazione_sezioni").select("id, sezione, stato, risposto_at").eq("esercitazione_id", id),
+    sb.from("esercitazioni_patenti").select("nome").order("ordine").order("nome"),
+    sb.from("esercitazioni_abilitazioni").select("nome").order("ordine").order("nome"),
+    caricaAdesioniEsercitazione(id)
+  ]);
+  const err = r1.error || r2.error || r3.error || r4.error || r5.error || ad.error;
+  if (err){ alert("Errore: " + err.message); return; }
+  if (!r1.data){ alert("Esercitazione non trovata."); return; }
+
+  const ordineTipo = t => TIPI_SERVIZIO.indexOf(t);
+  const sezioni = (r3.data || []).sort((a,b) => a.sezione.localeCompare(b.sezione));
+  const stessaEsercitazione = _cruscotto && _cruscotto.es.id === id;
+  _cruscotto = {
+    es: r1.data,
+    servizi: (r2.data || []).sort((a,b) => a.giorno.localeCompare(b.giorno) || ordineTipo(a.tipo) - ordineTipo(b.tipo)),
+    sezioni,
+    adesioni: ad.data.map(a => ({ ...a, sezione: sezioni.find(s => s.id === a.sezione_id)?.sezione || "—" }))
+                     .sort((a,b) => a.sezione.localeCompare(b.sezione) || a.cognome.localeCompare(b.cognome) || a.nome.localeCompare(b.nome)),
+    patenti: (r4.data || []).map(p => p.nome),
+    abilitazioni: (r5.data || []).map(p => p.nome),
+    tab: tab || (stessaEsercitazione ? _cruscotto.tab : null) || "riepilogo",
+    filtro: stessaEsercitazione ? _cruscotto.filtro : { search:"", sezione:"" }
+  };
+  renderCruscottoEsercitazione();
+}
+
+function renderCruscottoEsercitazione(){
+  const c = _cruscotto;
+  const completo = esercitazioniCompleto();
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box modal-box-lg">
+      <div class="modal-head">
+        <h3>${escapeHtml(c.es.titolo)} ${badgeStatoEsercitazione(c.es.stato)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-tabs">
+        ${[["riepilogo","Riepilogo"],["volontari",`Volontari (${c.adesioni.length})`],["sezioni","Sezioni"]].map(([k,l]) =>
+          `<div class="modal-tab ${c.tab===k?"active":""}" data-tab="${k}">${l}</div>`).join("")}
+      </div>
+      <div class="modal-body">
+        <div class="es-testata">
+          <div>
+            <strong>${ENTI_ESERCITAZIONE[c.es.ente] || escapeHtml(c.es.ente)}</strong> ·
+            ${formatDataIt(c.es.data_inizio)}${c.es.data_fine !== c.es.data_inizio ? ` → ${formatDataIt(c.es.data_fine)}` : ""}
+            ${c.es.luogo ? ` · ${escapeHtml(c.es.luogo)}` : ""}
+            <div class="es-aiuto" style="margin:2px 0 0;">Chiusura adesioni: ${c.es.chiusura_adesioni ? formatDataOraIt(c.es.chiusura_adesioni) : "non impostata"}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn-add-mini" id="es-btn-excel" style="background:var(--blu-700);">📥 Excel</button>
+            ${completo ? `<button class="btn-add-mini" id="es-btn-modifica">✏️ Modifica</button>
+                          <button class="btn-add-mini" id="es-btn-elimina" style="background:var(--rosso);">Elimina</button>` : ""}
+          </div>
+        </div>
+        <div id="es-tab-body"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) chiudiModal(); });
+  overlay.querySelectorAll(".modal-tab").forEach(t => t.addEventListener("click", () => { c.tab = t.dataset.tab; renderCruscottoEsercitazione(); }));
+  document.getElementById("es-btn-excel").addEventListener("click", esportaEsercitazioneExcel);
+  if (completo){
+    document.getElementById("es-btn-modifica").addEventListener("click", () => apriModalEsercitazione(c.es.id));
+    document.getElementById("es-btn-elimina").addEventListener("click", () => eliminaEsercitazione(c.es.id));
+  }
+  if (c.tab === "volontari") renderTabVolontariEsercitazione();
+  else if (c.tab === "sezioni") renderTabSezioniEsercitazione();
+  else renderTabRiepilogoEsercitazione();
+}
+
+// Numeri del cruscotto (usati anche dall'export Excel)
+function calcolaRiepilogoEsercitazione(c){
+  const servizioPerId = new Map(c.servizi.map(s => [s.id, s]));
+  const perServizio = new Map(c.servizi.map(s => [s.id, 0]));
+  c.adesioni.forEach(a => a.servizi.forEach(id => { if (perServizio.has(id)) perServizio.set(id, perServizio.get(id) + 1); }));
+
+  const giorni = [...new Set(c.servizi.map(s => s.giorno))];
+  const perGiorno = giorni.map(g => {
+    const riga = { giorno:g };
+    TIPI_SERVIZIO.forEach(t => {
+      const s = c.servizi.find(x => x.giorno === g && x.tipo === t);
+      riga[t] = s ? perServizio.get(s.id) : null; // null = servizio non previsto quel giorno
+    });
+    return riga;
+  });
+  let pasti = 0, pernotti = 0, postiLetto = 0;
+  perServizio.forEach((n, id) => {
+    const tipo = servizioPerId.get(id).tipo;
+    if (tipo === "pernotto"){ pernotti += n; postiLetto = Math.max(postiLetto, n); }
+    else pasti += n;
+  });
+
+  const volontariPerSezione = new Map(c.sezioni.map(s => [s.id, 0]));
+  c.adesioni.forEach(a => volontariPerSezione.set(a.sezione_id, (volontariPerSezione.get(a.sezione_id) || 0) + 1));
+  const conta = (lista, campo) => lista.map(n => ({ nome:n, n: c.adesioni.filter(a => (a[campo] || []).includes(n)).length }));
+
+  return {
+    volontari: c.adesioni.length,
+    sezioniTotali: c.sezioni.length,
+    sezioniRisposto: c.sezioni.filter(s => s.stato === "risposto").length,
+    sezioniNonPartecipa: c.sezioni.filter(s => s.stato === "non_partecipa").length,
+    pasti, pernotti, postiLetto, perGiorno, volontariPerSezione,
+    patenti: conta(c.patenti, "patenti"),
+    abilitazioni: conta(c.abilitazioni, "abilitazioni")
+  };
+}
+
+function barreEsercitazione(righe){
+  const max = Math.max(1, ...righe.map(r => r.n));
+  if (!righe.length) return `<div class="storico-empty">Nessun dato.</div>`;
+  return `<div class="es-barre">${righe.map(r => `
+    <div class="es-barra">
+      <span class="es-barra-nome">${escapeHtml(r.nome)}</span>
+      <span class="es-barra-traccia"><span style="width:${Math.round(r.n / max * 100)}%"></span></span>
+      <span class="es-barra-n">${r.n}</span>
+    </div>`).join("")}</div>`;
+}
+
+function renderTabRiepilogoEsercitazione(){
+  const c = _cruscotto;
+  const r = calcolaRiepilogoEsercitazione(c);
+  const body = document.getElementById("es-tab-body");
+  const cella = v => v === null ? `<span style="color:var(--grigio-400);">—</span>` : v;
+  body.innerHTML = `
+    <div class="es-stat-grid">
+      <div class="report-stat-box"><div class="report-stat-num">${r.volontari}</div><div class="report-stat-lbl">Volontari</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${r.sezioniRisposto}/${r.sezioniTotali}</div><div class="report-stat-lbl">Sezioni che hanno inviato l'adesione</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${r.pasti}</div><div class="report-stat-lbl">Pasti totali</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${r.postiLetto}</div><div class="report-stat-lbl">Posti letto (notte più piena)</div></div>
+    </div>
+
+    <div class="section-title">Sezioni</div>
+    <div class="es-legenda">
+      <span><i class="es-pallino es-sez-risposto"></i> Risposto</span>
+      <span><i class="es-pallino es-sez-in_attesa"></i> In attesa</span>
+      <span><i class="es-pallino es-sez-non_partecipa"></i> Non partecipa</span>
+    </div>
+    ${c.sezioni.length ? `<div class="es-sez-griglia">${c.sezioni.map(s => `
+      <div class="es-sez-chip es-sez-${s.stato}" title="${STATI_SEZIONE_ESERCITAZIONE[s.stato]}">
+        <span>${escapeHtml(s.sezione)}</span>
+        <strong>${s.stato === "non_partecipa" ? "—" : r.volontariPerSezione.get(s.id) || 0}</strong>
+      </div>`).join("")}</div>` : `<div class="storico-empty">Nessuna Sezione invitata.</div>`}
+
+    <div class="section-title" style="margin-top:22px;">Pasti e pernotti per giorno</div>
+    ${r.perGiorno.length ? `
+      <table class="storico-table es-griglia-servizi">
+        <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${r.perGiorno.map(g => `<tr><td>${labelGiornoBreve(g.giorno)}</td>${TIPI_SERVIZIO.map(t => `<td>${cella(g[t])}</td>`).join("")}</tr>`).join("")}
+          <tr class="es-riga-totale"><td>Totale</td>${TIPI_SERVIZIO.map(t => `<td>${r.perGiorno.reduce((n, g) => n + (g[t] || 0), 0)}</td>`).join("")}</tr>
+        </tbody>
+      </table>` : `<div class="storico-empty">Nessun servizio previsto.</div>`}
+
+    <div class="es-due-colonne">
+      <div>
+        <div class="section-title" style="margin-top:22px;">Volontari per Sezione</div>
+        ${barreEsercitazione(c.sezioni.filter(s => r.volontariPerSezione.get(s.id)).map(s => ({ nome:s.sezione, n:r.volontariPerSezione.get(s.id) })).sort((a,b) => b.n - a.n))}
+      </div>
+      <div>
+        <div class="section-title" style="margin-top:22px;">Patenti</div>
+        ${barreEsercitazione(r.patenti)}
+        <div class="section-title" style="margin-top:16px;">Abilitazioni</div>
+        ${barreEsercitazione(r.abilitazioni)}
+      </div>
+    </div>
+  `;
+}
+
+/* ---------- Scheda Volontari ---------- */
+function descriviServiziAdesione(a){
+  const servizi = _cruscotto.servizi.filter(s => a.servizi.includes(s.id));
+  const pasti = servizi.filter(s => s.tipo !== "pernotto").length;
+  const notti = servizi.filter(s => s.tipo === "pernotto").length;
+  return [pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "—";
+}
+
+function renderTabVolontariEsercitazione(){
+  const c = _cruscotto;
+  const completo = esercitazioniCompleto();
+  const body = document.getElementById("es-tab-body");
+  body.innerHTML = `
+    <div class="toolbar" style="margin-bottom:10px;">
+      <input type="search" id="es-vol-search" placeholder="Cerca per cognome o nome…" value="${escapeHtml(c.filtro.search)}">
+      <select id="es-vol-sezione">
+        <option value="">Tutte le Sezioni</option>
+        ${c.sezioni.map(s => `<option value="${s.id}" ${String(c.filtro.sezione)===String(s.id)?"selected":""}>${escapeHtml(s.sezione)}</option>`).join("")}
+      </select>
+      ${completo ? `<button class="btn-add" id="es-vol-nuovo">+ Aggiungi volontario</button>` : ""}
+    </div>
+    ${completo ? "" : `<p class="es-aiuto">Codice fiscale e cellulare sono visibili solo con accesso completo.</p>`}
+    <div id="es-vol-form"></div>
+    <div id="es-vol-lista"></div>
+  `;
+  document.getElementById("es-vol-search").addEventListener("input", e => { c.filtro.search = e.target.value; disegnaListaVolontariEsercitazione(); });
+  document.getElementById("es-vol-sezione").addEventListener("change", e => { c.filtro.sezione = e.target.value; disegnaListaVolontariEsercitazione(); });
+  if (completo) document.getElementById("es-vol-nuovo").addEventListener("click", () => mostraFormVolontarioEsercitazione(null));
+  disegnaListaVolontariEsercitazione();
+}
+
+function disegnaListaVolontariEsercitazione(){
+  const c = _cruscotto;
+  const completo = esercitazioniCompleto();
+  const q = c.filtro.search.trim().toLowerCase();
+  const elenco = c.adesioni.filter(a =>
+    (!c.filtro.sezione || String(a.sezione_id) === String(c.filtro.sezione)) &&
+    (!q || `${a.cognome} ${a.nome}`.toLowerCase().includes(q) || `${a.nome} ${a.cognome}`.toLowerCase().includes(q)));
+  const wrap = document.getElementById("es-vol-lista");
+  if (!elenco.length){
+    wrap.innerHTML = `<div class="storico-empty">${c.adesioni.length ? "Nessun volontario corrisponde alla ricerca." : "Nessun volontario iscritto."}</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div style="overflow-x:auto;">
+      <table class="storico-table">
+        <thead><tr>
+          <th>Sezione</th><th>Cognome Nome</th>
+          ${completo ? "<th>Codice fiscale</th><th>Cellulare</th>" : ""}
+          <th>Patenti</th><th>Abilitazioni</th><th>Servizi</th>
+          ${completo ? "<th></th>" : ""}
+        </tr></thead>
+        <tbody>
+          ${elenco.map(a => `
+            <tr>
+              <td>${escapeHtml(a.sezione)}</td>
+              <td><strong>${escapeHtml(a.cognome)}</strong> ${escapeHtml(a.nome)}${a.note ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(a.note)}</div>` : ""}</td>
+              ${completo ? `<td style="font-family:monospace;">${escapeHtml(a.codice_fiscale)}</td><td>${escapeHtml(a.cellulare || "—")}</td>` : ""}
+              <td>${escapeHtml(a.patenti.join(", ") || "—")}</td>
+              <td>${escapeHtml(a.abilitazioni.join(", ") || "—")}</td>
+              <td>${descriviServiziAdesione(a)}</td>
+              ${completo ? `<td style="white-space:nowrap;">
+                <button class="row-del" style="color:var(--blu-500);" data-modifica="${a.id}">Modifica</button>
+                <button class="row-del" data-elimina="${a.id}">Elimina</button></td>` : ""}
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+  if (!completo) return;
+  wrap.querySelectorAll("[data-modifica]").forEach(b => b.addEventListener("click", () => mostraFormVolontarioEsercitazione(parseInt(b.dataset.modifica))));
+  wrap.querySelectorAll("[data-elimina]").forEach(b => b.addEventListener("click", () => eliminaAdesioneEsercitazione(parseInt(b.dataset.elimina))));
+}
+
+function mostraFormVolontarioEsercitazione(adesioneId){
+  const c = _cruscotto;
+  const a = adesioneId ? c.adesioni.find(x => x.id === adesioneId) : null;
+  const box = document.getElementById("es-vol-form");
+  if (!c.sezioni.length){ alert("Nessuna Sezione invitata a questa esercitazione."); return; }
+  const giorni = [...new Set(c.servizi.map(s => s.giorno))];
+  box.innerHTML = `
+    <div class="mini-form">
+      <form id="form-adesione-admin">
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Sezione *</label>
+            <select name="sezione_id" required>
+              ${c.sezioni.map(s => `<option value="${s.id}" ${(a ? a.sezione_id === s.id : String(c.filtro.sezione) === String(s.id)) ? "selected" : ""}>${escapeHtml(s.sezione)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-field"><label>Codice fiscale *</label><input name="codice_fiscale" required maxlength="16" style="text-transform:uppercase;font-family:monospace;" value="${escapeHtml(a?.codice_fiscale || "")}"></div>
+          <div class="form-field"><label>Cognome *</label><input name="cognome" required maxlength="80" value="${escapeHtml(a?.cognome || "")}"></div>
+          <div class="form-field"><label>Nome *</label><input name="nome" required maxlength="80" value="${escapeHtml(a?.nome || "")}"></div>
+          <div class="form-field"><label>Cellulare</label><input name="cellulare" maxlength="30" inputmode="tel" value="${escapeHtml(a?.cellulare || "")}"></div>
+          <div class="form-field"><label>Note</label><input name="note" maxlength="500" value="${escapeHtml(a?.note || "")}"></div>
+          <div class="form-field full"><label>Patenti</label>
+            <div class="es-sezioni-check">${c.patenti.map(p => `<label><input type="checkbox" name="patenti" value="${escapeHtml(p)}" ${a?.patenti.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
+          </div>
+          <div class="form-field full"><label>Abilitazioni</label>
+            <div class="es-sezioni-check">${c.abilitazioni.map(p => `<label><input type="checkbox" name="abilitazioni" value="${escapeHtml(p)}" ${a?.abilitazioni.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
+          </div>
+          <div class="form-field full"><label>Servizi</label>
+            ${giorni.length ? `<table class="storico-table es-griglia-servizi">
+              <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
+              <tbody>${giorni.map(g => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
+                const s = c.servizi.find(x => x.giorno === g && x.tipo === t);
+                return `<td>${s ? `<input type="checkbox" name="servizi" value="${s.id}" ${a?.servizi.includes(s.id) ? "checked" : ""}>` : "—"}</td>`;
+              }).join("")}</tr>`).join("")}</tbody>
+            </table>` : `<div class="es-aiuto">Nessun servizio previsto.</div>`}
+          </div>
+        </div>
+        <div id="es-vol-errore" style="color:var(--rosso);font-size:12.5px;margin-top:8px;display:none;"></div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" id="es-vol-annulla">Annulla</button>
+          <button type="submit" class="btn-save">${a ? "Salva modifiche" : "Aggiungi"}</button>
+        </div>
+      </form>
+    </div>
+  `;
+  box.scrollIntoView({ behavior:"smooth", block:"nearest" });
+  document.getElementById("es-vol-annulla").addEventListener("click", () => { box.innerHTML = ""; });
+  document.getElementById("form-adesione-admin").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    const errBox = document.getElementById("es-vol-errore");
+    const mostraErrore = m => { errBox.textContent = m; errBox.style.display = "block"; };
+    errBox.style.display = "none";
+
+    const cf = f.codice_fiscale.value.replace(/\s/g, "").toUpperCase();
+    if (!cfValido(cf)){ mostraErrore("Codice fiscale non valido: controlla i 16 caratteri."); return; }
+    const valori = sel => [...f.querySelectorAll(`input[name="${sel}"]:checked`)].map(x => x.value);
+    const servizi = valori("servizi").map(Number);
+
+    // Collegamento facoltativo all'anagrafica Formazione (se l'utente può leggerla)
+    let volontarioId = a?.volontario_id ?? null;
+    if (!a || a.codice_fiscale !== cf){
+      const { data: vf } = await sb.from("volontari_formazione").select("id").eq("codice_fiscale", cf).maybeSingle();
+      volontarioId = vf?.id ?? null;
+    }
+    const payload = {
+      esercitazione_id: c.es.id,
+      esercitazione_sezione_id: parseInt(f.sezione_id.value),
+      volontario_id: volontarioId,
+      cognome: f.cognome.value.trim().toUpperCase(),
+      nome: f.nome.value.trim().toUpperCase(),
+      codice_fiscale: cf,
+      cellulare: f.cellulare.value.trim() || null,
+      note: f.note.value.trim() || null,
+      patenti: valori("patenti"),
+      abilitazioni: valori("abilitazioni")
+    };
+    const btn = f.querySelector(".btn-save");
+    btn.disabled = true;
+
+    let id = a?.id;
+    const r = id
+      ? await sb.from("adesioni").update(payload).eq("id", id)
+      : await sb.from("adesioni").insert(payload).select("id").single();
+    if (r.error){
+      btn.disabled = false;
+      mostraErrore(r.error.code === "23505" ? "Questo codice fiscale è già iscritto a questa esercitazione." : "Errore: " + r.error.message);
+      return;
+    }
+    if (!id) id = r.data.id;
+
+    // servizi: solo le differenze
+    const prima = a?.servizi || [];
+    const daTogliere = prima.filter(s => !servizi.includes(s));
+    const daAggiungere = servizi.filter(s => !prima.includes(s));
+    if (daTogliere.length){
+      const { error } = await sb.from("adesione_servizi").delete().eq("adesione_id", id).in("servizio_id", daTogliere);
+      if (error){ btn.disabled = false; mostraErrore("Volontario salvato, ma errore sui servizi: " + error.message); return; }
+    }
+    if (daAggiungere.length){
+      const { error } = await sb.from("adesione_servizi").insert(daAggiungere.map(s => ({ adesione_id:id, servizio_id:s })));
+      if (error){ btn.disabled = false; mostraErrore("Volontario salvato, ma errore sui servizi: " + error.message); return; }
+    }
+    apriCruscottoEsercitazione(c.es.id, "volontari");
+  });
+}
+
+async function eliminaAdesioneEsercitazione(adesioneId){
+  const a = _cruscotto.adesioni.find(x => x.id === adesioneId);
+  if (!confirm(`Togliere ${a ? `${a.cognome} ${a.nome}` : "questo volontario"} dall'esercitazione?`)) return;
+  const { error } = await sb.from("adesioni").delete().eq("id", adesioneId);
+  if (error){ alert("Errore: " + error.message); return; }
+  apriCruscottoEsercitazione(_cruscotto.es.id, "volontari");
+}
+
+/* ---------- Scheda Sezioni: link pubblici (token solo via esercitazione_link) ---------- */
+function urlAdesione(token){
+  return new URL(`adesione.html?t=${encodeURIComponent(token)}`, location.href).href;
+}
+
+function nuovoUuid(){
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
+
+function testoMailAdesione(es, sezione, link){
+  const date = es.data_fine !== es.data_inizio ? `dal ${formatDataIt(es.data_inizio)} al ${formatDataIt(es.data_fine)}` : `il ${formatDataIt(es.data_inizio)}`;
+  const oggetto = `Esercitazione "${es.titolo}" – adesioni Sezione ${sezione}`;
+  const testo = [
+    "Buongiorno,",
+    "",
+    `la Sezione ${sezione} è invitata all'esercitazione "${es.titolo}" (${ENTI_ESERCITAZIONE[es.ente] || es.ente}) che si terrà ${date}${es.luogo ? ` a ${es.luogo}` : ""}.`,
+    "",
+    "Per comunicare i volontari partecipanti, con pasti e pernotti, usate questo link riservato alla vostra Sezione (non serve registrarsi):",
+    link,
+    "",
+    es.chiusura_adesioni ? `Le adesioni si chiudono il ${formatDataOraIt(es.chiusura_adesioni)}.` : "",
+    "Fino alla chiusura potete riaprire il link per modificare l'elenco. Se la Sezione non partecipa, indicatelo dallo stesso link.",
+    "",
+    "Grazie,",
+    "Polo Logistico 1° RGPT/CAP Vercelli"
+  ].filter((r, i, arr) => !(r === "" && arr[i-1] === "")).join("\n");
+  return { oggetto, testo };
+}
+
+async function copiaTesto(testo){
+  try{
+    await navigator.clipboard.writeText(testo);
+    return true;
+  }catch(e){
+    prompt("Copia il link (Ctrl+C):", testo);
+    return false;
+  }
+}
+
+async function renderTabSezioniEsercitazione(){
+  const c = _cruscotto;
+  const completo = esercitazioniCompleto();
+  const body = document.getElementById("es-tab-body");
+  const volPerSez = calcolaRiepilogoEsercitazione(c).volontariPerSezione;
+
+  let link = new Map();
+  if (completo){
+    body.innerHTML = `<div class="loading-spin">Caricamento…</div>`;
+    const { data, error } = await sb.rpc("esercitazione_link", { p_esercitazione_id: c.es.id });
+    if (error){ body.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
+    (data || []).forEach(r => link.set(r.esercitazione_sezione_id, r));
+  }
+
+  const avvisi = [];
+  if (c.es.stato === "bozza") avvisi.push("L'esercitazione è in <strong>bozza</strong>: i link non funzionano finché non imposti lo stato \"Adesioni aperte\".");
+  if (c.es.stato === "chiusa" || c.es.stato === "conclusa") avvisi.push("Le adesioni sono chiuse: i link mostrano i dati ma non permettono modifiche.");
+
+  body.innerHTML = `
+    ${avvisi.map(a => `<div class="es-avviso">${a}</div>`).join("")}
+    ${completo ? "" : `<p class="es-aiuto">I link per le Sezioni sono disponibili solo con accesso completo.</p>`}
+    ${c.sezioni.length ? `
+    <div style="overflow-x:auto;">
+      <table class="storico-table">
+        <thead><tr><th>Sezione</th><th>Stato</th><th>Risposto il</th><th>Volontari</th>${completo ? "<th></th>" : ""}</tr></thead>
+        <tbody>
+          ${c.sezioni.map(s => {
+            const l = link.get(s.id);
+            return `
+            <tr>
+              <td><strong>${escapeHtml(s.sezione)}</strong>${l?.email_pc ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(l.email_pc)}</div>` : ""}</td>
+              <td><span class="es-badge es-sez-badge-${s.stato}">${STATI_SEZIONE_ESERCITAZIONE[s.stato]}</span></td>
+              <td>${s.risposto_at ? formatDataOraIt(s.risposto_at) : "—"}</td>
+              <td>${s.stato === "non_partecipa" ? "—" : volPerSez.get(s.id) || 0}</td>
+              ${completo ? `<td style="white-space:nowrap;">${l ? `
+                <button class="row-del" style="color:var(--blu-500);" data-copia="${s.id}">📋 Copia link</button>
+                <button class="row-del" style="color:var(--blu-500);" data-mail="${s.id}" ${l.email_pc ? "" : "disabled title=\"Mail PC non impostata (Impostazioni)\""}>✉️ Mail</button>
+                <button class="row-del" data-rigenera="${s.id}">🔄 Rigenera</button>` : "—"}</td>` : ""}
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>` : `<div class="storico-empty">Nessuna Sezione invitata.</div>`}
+  `;
+  if (!completo) return;
+
+  body.querySelectorAll("[data-copia]").forEach(b => b.addEventListener("click", async () => {
+    const l = link.get(parseInt(b.dataset.copia));
+    if (await copiaTesto(urlAdesione(l.token))){ const t = b.textContent; b.textContent = "✓ Copiato"; setTimeout(() => b.textContent = t, 1500); }
+  }));
+  body.querySelectorAll("[data-mail]").forEach(b => b.addEventListener("click", () => {
+    const l = link.get(parseInt(b.dataset.mail));
+    if (!l?.email_pc){ alert("Mail PC della Sezione non impostata: aggiungila in Impostazioni."); return; }
+    const { oggetto, testo } = testoMailAdesione(c.es, l.sezione, urlAdesione(l.token));
+    location.href = `mailto:${encodeURIComponent(l.email_pc)}?subject=${encodeURIComponent(oggetto)}&body=${encodeURIComponent(testo)}`;
+  }));
+  body.querySelectorAll("[data-rigenera]").forEach(b => b.addEventListener("click", async () => {
+    const id = parseInt(b.dataset.rigenera);
+    const l = link.get(id);
+    if (!confirm(`Rigenerare il link della Sezione ${l?.sezione || ""}? Il link inviato finora smetterà di funzionare e andrà mandato quello nuovo. Le adesioni già inserite restano.`)) return;
+    const { error } = await sb.from("esercitazione_sezioni").update({ token: nuovoUuid() }).eq("id", id);
+    if (error){ alert("Errore: " + error.message); return; }
+    renderTabSezioniEsercitazione();
+  }));
+}
+
+/* ---------- Export Excel (foglio Volontari + foglio Riepilogo) ---------- */
+function esportaEsercitazioneExcel(){
+  const c = _cruscotto;
+  const completo = esercitazioniCompleto();
+  const r = calcolaRiepilogoEsercitazione(c);
+  const etichettaServizio = s => `${labelGiornoBreve(s.giorno)} ${LABEL_SERVIZIO[s.tipo]}`;
+
+  const righeVolontari = c.adesioni.map(a => {
+    const riga = { Sezione: a.sezione, Cognome: a.cognome, Nome: a.nome };
+    if (completo){ riga["Codice fiscale"] = a.codice_fiscale; riga.Cellulare = a.cellulare || ""; }
+    riga.Patenti = a.patenti.join(", ");
+    riga.Abilitazioni = a.abilitazioni.join(", ");
+    c.servizi.forEach(s => { riga[etichettaServizio(s)] = a.servizi.includes(s.id) ? "X" : ""; });
+    if (completo) riga.Note = a.note || "";
+    return riga;
+  });
+  const wsVolontari = righeVolontari.length
+    ? XLSX.utils.json_to_sheet(righeVolontari)
+    : XLSX.utils.aoa_to_sheet([["Nessun volontario iscritto"]]);
+
+  const aoa = [
+    ["Esercitazione", c.es.titolo],
+    ["Ente", ENTI_ESERCITAZIONE[c.es.ente] || c.es.ente],
+    ["Date", `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}`],
+    ["Luogo", c.es.luogo || ""],
+    ["Stato", STATI_ESERCITAZIONE[c.es.stato] || c.es.stato],
+    ["Esportato il", formatDataOraIt(new Date().toISOString())],
+    [],
+    ["Volontari", r.volontari],
+    ["Sezioni che hanno inviato l'adesione", `${r.sezioniRisposto}/${r.sezioniTotali}`],
+    ["Sezioni che non partecipano", r.sezioniNonPartecipa],
+    ["Pasti totali", r.pasti],
+    ["Pernotti totali", r.pernotti],
+    ["Posti letto (notte più piena)", r.postiLetto],
+    [],
+    ["Giorno", ...TIPI_SERVIZIO.map(t => LABEL_SERVIZIO[t])],
+    ...r.perGiorno.map(g => [labelGiornoBreve(g.giorno), ...TIPI_SERVIZIO.map(t => g[t] === null ? "—" : g[t])]),
+    [],
+    ["Sezione", "Stato", "Risposto il", "Volontari"],
+    ...c.sezioni.map(s => [s.sezione, STATI_SEZIONE_ESERCITAZIONE[s.stato], s.risposto_at ? formatDataOraIt(s.risposto_at) : "", s.stato === "non_partecipa" ? 0 : r.volontariPerSezione.get(s.id) || 0]),
+    [],
+    ["Patente", "Volontari"], ...r.patenti.map(p => [p.nome, p.n]),
+    [],
+    ["Abilitazione", "Volontari"], ...r.abilitazioni.map(p => [p.nome, p.n])
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsVolontari, "Volontari");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Riepilogo");
+  XLSX.writeFile(wb, `Esercitazione_${(c.es.titolo || "").replace(/[^a-zA-Z0-9]+/g, "_").slice(0,60)}_${c.es.data_inizio}.xlsx`);
 }
 
 async function renderImpostazioni(){

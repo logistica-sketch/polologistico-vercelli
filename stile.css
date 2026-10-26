@@ -568,3 +568,41 @@ input,select,textarea{font-family:inherit;}
 .es-sezioni-check{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px 12px;}
 .es-sezioni-check label{display:flex;align-items:center;gap:6px;font-size:12.5px;}
 .es-sezioni-check input{width:auto;}
+.es-testata{
+  display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
+  font-size:13px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--grigio-200);
+}
+.es-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}
+.es-legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--grigio-600);margin:-4px 0 10px;}
+.es-legenda span{display:flex;align-items:center;gap:5px;}
+.es-pallino{display:inline-block;width:10px;height:10px;border-radius:50%;}
+.es-sez-griglia{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;}
+.es-sez-chip{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  padding:8px 10px;border-radius:8px;font-size:12px;font-weight:600;color:#fff;
+}
+.es-sez-chip strong{font-size:14px;}
+/* blu = risposto, arancio = in attesa, grigio = non partecipa */
+.es-sez-risposto{background:var(--blu-500);color:#fff;}
+.es-sez-in_attesa{background:#e67e22;color:#fff;}
+.es-sez-non_partecipa{background:var(--grigio-400);color:var(--grigio-800);}
+.es-sez-badge-risposto{background:#e8eef7;color:var(--blu-500);}
+.es-sez-badge-in_attesa{background:#fdeedd;color:#b35c0e;}
+.es-sez-badge-non_partecipa{background:var(--grigio-200);color:var(--grigio-800);}
+.es-riga-totale td{font-weight:700;border-top:2px solid var(--grigio-200);}
+.es-due-colonne{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
+.es-barre{display:flex;flex-direction:column;gap:6px;}
+.es-barra{display:grid;grid-template-columns:130px 1fr 34px;align-items:center;gap:8px;font-size:12px;}
+.es-barra-nome{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.es-barra-traccia{height:10px;background:var(--grigio-100);border-radius:5px;overflow:hidden;}
+.es-barra-traccia span{display:block;height:100%;background:var(--blu-300);border-radius:5px;}
+.es-barra-n{text-align:right;font-weight:700;}
+.es-avviso{
+  background:var(--giallo-bg);color:var(--giallo);border-radius:8px;
+  padding:10px 12px;font-size:12.5px;margin-bottom:12px;
+}
+@media (max-width:700px){
+  .es-stat-grid{grid-template-columns:repeat(2,1fr);}
+  .es-due-colonne{grid-template-columns:1fr;}
+  .es-barra{grid-template-columns:100px 1fr 30px;}
+}
