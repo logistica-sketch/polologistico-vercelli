@@ -10,6 +10,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="stile.css">
 <script src="https://unpkg.com/@supabase/supabase-js@2.117.2"></script>
+<script src="esercitazioni-excel.js"></script>
 <!--
   Pagina pubblica per le Sezioni: nessun login, il link contiene il token (?t=).
   Usa SOLO le RPC adesione_get / adesione_salva / adesione_nessuna (anon non legge le tabelle).
@@ -234,12 +235,27 @@
       ${e.descrizione ? `<div class="scheda"><p class="aiuto" style="margin:0;white-space:pre-line;color:var(--grigio-800);">${esc(e.descrizione)}</p></div>` : ""}`;
   }
 
+  // Campi configurati sull'esercitazione: non_richiesto | facoltativo | obbligatorio
+  function livello(k){ return (dati.campi && dati.campi[k]) || "facoltativo"; }
+  function attivo(k){ return livello(k) !== "non_richiesto"; }
+  function obblig(k){ return livello(k) === "obbligatorio"; }
+  function asterisco(k){ return obblig(k) ? " *" : ""; }
+
   function servizioPerId(id){ return (dati.servizi || []).find(s => s.id === id); }
   function riassuntoServizi(v){
     const s = v.servizi.map(servizioPerId).filter(Boolean);
     const pasti = s.filter(x => x.tipo !== "pernotto").length;
     const notti = s.filter(x => x.tipo === "pernotto").length;
     return [pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "nessun servizio";
+  }
+  // Dettaglio di un volontario: solo i campi attivi
+  function dettaglioVolontario(v, conCf){
+    const parti = [];
+    if (conCf) parti.push(v.codice_fiscale);
+    if (attivo("servizi") && (dati.servizi || []).length) parti.push(riassuntoServizi(v));
+    if (attivo("patenti") && v.patenti.length) parti.push("Patenti " + v.patenti.join(", "));
+    if (attivo("abilitazioni") && v.abilitazioni.length) parti.push(v.abilitazioni.join(", "));
+    return parti.join(" · ");
   }
 
   function disegna(opz){
@@ -277,13 +293,14 @@
         <h2>Riepilogo</h2>
         <div class="riepilogo-num">
           <div><strong>${volontari.length}</strong><span>volontari</span></div>
+          ${attivo("servizi") && (dati.servizi || []).length ? `
           <div><strong>${pasti}</strong><span>pasti</span></div>
-          <div><strong>${notti}</strong><span>pernotti</span></div>
+          <div><strong>${notti}</strong><span>pernotti</span></div>` : ""}
         </div>
         ${volontari.map(v => `
           <div class="vol"><div class="chi">
             <div class="nome">${esc(v.cognome)} ${esc(v.nome)}</div>
-            <div class="dett">${esc(riassuntoServizi(v))}${v.patenti.length ? " · Patenti " + esc(v.patenti.join(", ")) : ""}${v.abilitazioni.length ? " · " + esc(v.abilitazioni.join(", ")) : ""}</div>
+            <div class="dett">${esc(dettaglioVolontario(v, false))}</div>
           </div></div>`).join("")}
       </div>`}
       <p class="aiuto" style="text-align:center;">Fino alla chiusura delle adesioni potete riaprire questo link e modificare la risposta.</p>
@@ -301,6 +318,7 @@
     if (opz.bozzaRipresa) avvisi.push(`<div class="messaggio msg-info">Abbiamo ripreso i dati che avevate inserito su questo telefono e <strong>non ancora inviato</strong>.
       <div style="margin-top:8px;"><button class="pill" id="btn-scarta-bozza">Scarta e ricomincia dall'ultimo invio</button></div></div>`);
     if (opz.errore) avvisi.push(`<div class="messaggio msg-errore" id="box-errore"><h2>Invio non riuscito</h2>${esc(opz.errore)}</div>`);
+    if (opz.info) avvisi.push(`<div class="messaggio msg-info" id="box-info">${esc(opz.info)}</div>`);
 
     app.innerHTML = testata() + avvisi.join("") + `
       <div class="scheda">
@@ -311,14 +329,25 @@
             <div class="vol">
               <div class="chi">
                 <div class="nome">${esc(v.cognome)} ${esc(v.nome)}</div>
-                <div class="dett">${esc(v.codice_fiscale)} · ${esc(riassuntoServizi(v))}</div>
+                <div class="dett">${esc(dettaglioVolontario(v, true))}</div>
               </div>
               <button class="b-modifica" data-modifica="${i}">Modifica</button>
               <button class="b-togli" data-togli="${i}">Togli</button>
             </div>`).join("") : `<div class="vuoto">Nessun volontario inserito.</div>`}
         </div>
         <div id="box-form">${formAperto ? "" : `<div class="azioni"><button class="secondario" id="btn-aggiungi">+ Aggiungi volontario</button></div>`}</div>
-      </div>`;
+      </div>
+      ${formAperto ? "" : `
+      <div class="scheda">
+        <h2>Con un file Excel</h2>
+        <p class="aiuto">In alternativa, scaricate il modello (già compilato con i volontari dell'elenco), completatelo e ricaricatelo. I volontari validi entrano nell'elenco; per confermare serve comunque <strong>Invia adesione</strong>.</p>
+        <div class="azioni" style="margin-top:6px;">
+          <button class="secondario" id="btn-modello-excel">📥 Scarica modello</button>
+          <button class="secondario" id="btn-carica-excel">📤 Carica Excel</button>
+        </div>
+        <input type="file" id="input-excel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none;">
+        <div id="anteprima-excel" style="margin-top:12px;"></div>
+      </div>`}`;
 
     barra.style.display = formAperto ? "none" : "block";
 
@@ -342,7 +371,85 @@
     const agg = document.getElementById("btn-aggiungi");
     if (agg) agg.addEventListener("click", () => apriForm(null));
     if (formAperto) disegnaForm(formBozza);
+    if (!formAperto) collegaExcel();
+    if (opz.info){ const box = document.getElementById("box-info"); if (box) box.scrollIntoView({ behavior:"smooth", block:"center" }); }
     if (opz.errore){ const box = document.getElementById("box-errore"); if (box) box.scrollIntoView({ behavior:"smooth", block:"center" }); }
+  }
+
+  /* ---------- Excel: modello e caricamento (modulo esercitazioni-excel.js) ---------- */
+  function configExcel(){
+    const e = dati.esercitazione;
+    return {
+      titolo: e.titolo, sezione: dati.sezione,
+      date: e.data_fine && e.data_fine !== e.data_inizio ? `${dataIt(e.data_inizio)} – ${dataIt(e.data_fine)}` : dataIt(e.data_inizio),
+      campi: dati.campi || {}, patenti: dati.patenti || [], abilitazioni: dati.abilitazioni || [],
+      servizi: dati.servizi || [], volontari, maxVolontari: MAX_VOLONTARI
+    };
+  }
+
+  function collegaExcel(){
+    const bModello = document.getElementById("btn-modello-excel");
+    const bCarica = document.getElementById("btn-carica-excel");
+    const input = document.getElementById("input-excel");
+    const box = document.getElementById("anteprima-excel");
+    if (!bModello || !window.EsercitazioniExcel) return;
+
+    bModello.addEventListener("click", async () => {
+      bModello.disabled = true;
+      try{ await window.EsercitazioniExcel.scaricaModello(configExcel()); }
+      catch(e){ alert(messaggioErrore(e)); }
+      bModello.disabled = false;
+    });
+    bCarica.addEventListener("click", () => input.click());
+    input.addEventListener("change", async () => {
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      box.innerHTML = `<div class="aiuto">Lettura del file…</div>`;
+      let esito;
+      try{ esito = await window.EsercitazioniExcel.leggiFile(file, configExcel()); }
+      catch(e){ box.innerHTML = `<div class="messaggio msg-errore">${esc(messaggioErrore(e))}</div>`; return; }
+      const validi = esito.righe.filter(r => !r.errori.length).map(r => r.volontario);
+      box.innerHTML = window.EsercitazioniExcel.htmlAnteprima(esito) + (validi.length ? `
+        <div class="azioni">
+          <button class="secondario" id="btn-excel-annulla">Annulla</button>
+          <button class="primario" id="btn-excel-aggiungi">Aggiungi ${validi.length} all'elenco</button>
+        </div>` : "");
+      box.scrollIntoView({ behavior:"smooth", block:"start" });
+      const annulla = document.getElementById("btn-excel-annulla");
+      if (annulla) annulla.addEventListener("click", () => { box.innerHTML = ""; });
+      const aggiungi = document.getElementById("btn-excel-aggiungi");
+      if (aggiungi) aggiungi.addEventListener("click", () => uniscidaExcel(validi));
+    });
+  }
+
+  // I volontari del file entrano nell'elenco: stesso CF = aggiornato, altrimenti aggiunto.
+  // Chi è in elenco ma non nel file resta (si toglie a mano).
+  function uniscidaExcel(validi){
+    const nuovi = validi.filter(v => !volontari.some(x => x.codice_fiscale === v.codice_fiscale)).length;
+    if (volontari.length + nuovi > MAX_VOLONTARI){
+      alert(`Con questo file l'elenco supererebbe ${MAX_VOLONTARI} volontari.`);
+      return;
+    }
+    let aggiornati = 0;
+    validi.forEach(v => {
+      const i = volontari.findIndex(x => x.codice_fiscale === v.codice_fiscale);
+      if (i < 0){ volontari.push(v); return; }
+      const prec = volontari[i];
+      volontari[i] = {
+        ...v,
+        // campi non presenti nel modello (non richiesti): si conserva quanto già inserito
+        cellulare: attivo("cellulare") ? v.cellulare : prec.cellulare,
+        patenti: attivo("patenti") ? v.patenti : prec.patenti,
+        abilitazioni: attivo("abilitazioni") ? v.abilitazioni : prec.abilitazioni,
+        servizi: attivo("servizi") ? v.servizi : prec.servizi,
+        note: attivo("note") ? v.note : prec.note
+      };
+      aggiornati++;
+    });
+    volontari.sort((a, b) => a.cognome.localeCompare(b.cognome) || a.nome.localeCompare(b.nome));
+    salvaBozza();
+    disegna({ info: `Dal file: ${nuovi} volontari aggiunti, ${aggiornati} aggiornati. Controllate l'elenco e premete "Invia adesione" per confermare.` });
   }
 
   /* ---------- form volontario ---------- */
@@ -382,12 +489,16 @@
         <label class="campo" for="f-cf">Codice fiscale *</label>
         <input class="testo cf" id="f-cf" name="codice_fiscale" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" value="${esc(v.codice_fiscale)}">
         <div class="errore-campo" id="err-cf"></div>
-        <label class="campo" for="f-cell">Cellulare</label>
-        <input class="testo" id="f-cell" name="cellulare" type="tel" inputmode="tel" autocomplete="off" maxlength="30" value="${esc(v.cellulare)}">
-        ${(dati.patenti || []).length ? `<label class="campo">Patenti</label><div class="pulsanti">${pills(dati.patenti, v.patenti, "patenti")}</div>` : ""}
-        ${(dati.abilitazioni || []).length ? `<label class="campo">Abilitazioni</label><div class="pulsanti">${pills(dati.abilitazioni, v.abilitazioni, "abilitazioni")}</div>` : ""}
-        ${giorni.length ? `
-          <label class="campo">Pasti e pernotti</label>
+        ${attivo("cellulare") ? `
+        <label class="campo" for="f-cell">Cellulare${asterisco("cellulare")}</label>
+        <input class="testo" id="f-cell" name="cellulare" type="tel" inputmode="tel" autocomplete="off" maxlength="30" value="${esc(v.cellulare)}">` : ""}
+        ${attivo("patenti") && (dati.patenti || []).length ? `<label class="campo">Patenti${asterisco("patenti")}</label><div class="pulsanti">${pills(dati.patenti, v.patenti, "patenti")}</div>` : ""}
+        ${attivo("abilitazioni") && (dati.abilitazioni || []).length ? `<label class="campo">Abilitazioni${asterisco("abilitazioni")}</label><div class="pulsanti">${pills(dati.abilitazioni, v.abilitazioni, "abilitazioni")}</div>` : ""}
+        ${attivo("note") ? `
+        <label class="campo" for="f-note">Note${asterisco("note")}</label>
+        <input class="testo" id="f-note" name="note" autocomplete="off" maxlength="500" value="${esc(v.note || "")}">` : ""}
+        ${attivo("servizi") && giorni.length ? `
+          <label class="campo">Pasti e pernotti${asterisco("servizi")}</label>
           <div style="margin-bottom:8px;"><button type="button" class="pill" id="btn-tutti-servizi">Seleziona tutti</button></div>
           ${giorni.map(g => `
             <div class="giorno">
@@ -435,24 +546,36 @@
     if (!form) return formBozza;
     const scelti = g => [...form.querySelectorAll(`.pill.on[data-gruppo="${g}"]`)].map(p => p.dataset.valore);
     const precedente = modifica !== null ? volontari[modifica] : null;
+    // campi non richiesti: si conserva il valore precedente (il server li ignora comunque)
     return {
       cognome: form.cognome.value.trim().toUpperCase(),
       nome: form.nome.value.trim().toUpperCase(),
       codice_fiscale: pulisciCf(form.codice_fiscale.value),
-      cellulare: form.cellulare.value.trim(),
-      patenti: scelti("patenti"),
-      abilitazioni: scelti("abilitazioni"),
-      servizi: scelti("servizi").map(Number),
-      note: precedente ? precedente.note : null   // le note le gestisce il Polo: si conservano
+      cellulare: form.cellulare ? form.cellulare.value.trim() : (precedente ? precedente.cellulare : ""),
+      patenti: attivo("patenti") ? scelti("patenti") : (precedente ? precedente.patenti : []),
+      abilitazioni: attivo("abilitazioni") ? scelti("abilitazioni") : (precedente ? precedente.abilitazioni : []),
+      servizi: attivo("servizi") ? scelti("servizi").map(Number) : (precedente ? precedente.servizi : []),
+      note: form.note ? (form.note.value.trim() || null) : (precedente ? precedente.note : null)
     };
+  }
+
+  // Controlli lato client (gli stessi li ripete il server in adesione_salva)
+  function erroriVolontario(v){
+    const errori = [];
+    if (!v.cognome || !v.nome) errori.push("Cognome e nome sono obbligatori.");
+    if (!cfValido(v.codice_fiscale)) errori.push("Il codice fiscale non è valido.");
+    if (obblig("cellulare") && !v.cellulare) errori.push("Il cellulare è obbligatorio.");
+    if (obblig("note") && !v.note) errori.push("Le note sono obbligatorie.");
+    if (obblig("patenti") && !v.patenti.length) errori.push("Indicate almeno una patente.");
+    if (obblig("abilitazioni") && !v.abilitazioni.length) errori.push("Indicate almeno un'abilitazione.");
+    if (obblig("servizi") && (dati.servizi || []).length && !v.servizi.length) errori.push("Indicate almeno un pasto o pernotto.");
+    return errori;
   }
 
   function confermaForm(){
     const v = leggiForm();
     const err = document.getElementById("err-form");
-    const errori = [];
-    if (!v.cognome || !v.nome) errori.push("Cognome e nome sono obbligatori.");
-    if (!cfValido(v.codice_fiscale)) errori.push("Il codice fiscale non è valido.");
+    const errori = erroriVolontario(v);
     if (volontari.some((x, i) => i !== modifica && x.codice_fiscale === v.codice_fiscale)) errori.push("Questo codice fiscale è già nell'elenco.");
     if (errori.length){ err.textContent = errori.join(" "); return; }
     if (modifica === null) volontari.push(v); else volontari[modifica] = v;

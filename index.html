@@ -13,6 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Polo Logistico">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <script src="https://unpkg.com/@supabase/supabase-js@2.117.2"></script>
+<script src="esercitazioni-excel.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -5248,6 +5249,19 @@ const STATI_SEZIONE_ESERCITAZIONE = { risposto:"Risposto", in_attesa:"In attesa"
 const TIPI_SERVIZIO = ["pranzo", "cena", "pernotto"];
 const LABEL_SERVIZIO = { pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
 const MAX_GIORNI_ESERCITAZIONE = 31;
+// Campi configurabili per esercitazione (colonna esercitazioni.campi). Cognome, nome e CF sono sempre obbligatori.
+const CAMPI_ESERCITAZIONE = [
+  { k:"cellulare", label:"Cellulare" },
+  { k:"patenti", label:"Patenti" },
+  { k:"abilitazioni", label:"Abilitazioni" },
+  { k:"servizi", label:"Pasti e pernotti" },
+  { k:"note", label:"Note" }
+];
+const LIVELLI_CAMPO = { non_richiesto:"Non richiesto", facoltativo:"Facoltativo", obbligatorio:"Obbligatorio" };
+const CAMPI_DEFAULT = { cellulare:"facoltativo", patenti:"facoltativo", abilitazioni:"facoltativo", servizi:"facoltativo", note:"non_richiesto" };
+function livelloCampo(es, k){ return (es && es.campi && es.campi[k]) || CAMPI_DEFAULT[k] || "facoltativo"; }
+function campoAttivo(es, k){ return livelloCampo(es, k) !== "non_richiesto"; }
+function campoObbligatorio(es, k){ return livelloCampo(es, k) === "obbligatorio"; }
 
 function esercitazioniCompleto(){ return livelloPermesso("esercitazioni") === "completo"; }
 
@@ -5456,6 +5470,18 @@ async function apriModalEsercitazione(id){
               </select>
             </div>
             <div class="form-field full"><label>Descrizione</label><textarea name="descrizione" maxlength="2000">${escapeHtml(es?.descrizione||"")}</textarea></div>
+            <div class="form-field full"><label>Referente / contatto</label><input name="referente" maxlength="300" placeholder="es. Mario Rossi – 333 1234567 (facoltativo)" value="${escapeHtml(es?.referente||"")}"></div>
+          </div>
+
+          <div class="section-title" style="margin-top:20px;">Campi richiesti alle Sezioni</div>
+          <p class="es-aiuto">Cognome, nome e codice fiscale sono sempre obbligatori. I campi "non richiesti" non compaiono nel modulo delle Sezioni, nel cruscotto e negli Excel.</p>
+          <div class="es-campi-griglia">
+            ${CAMPI_ESERCITAZIONE.map(c => `
+              <label>${c.label}
+                <select name="campo_${c.k}">
+                  ${Object.entries(LIVELLI_CAMPO).map(([v,l]) => `<option value="${v}" ${livelloCampo(es, c.k)===v?"selected":""}>${l}</option>`).join("")}
+                </select>
+              </label>`).join("")}
           </div>
 
           <div class="section-title" style="margin-top:20px;">Servizi per giorno</div>
@@ -5547,8 +5573,14 @@ async function apriModalEsercitazione(id){
       data_fine: form.data_fine.value,
       chiusura_adesioni: inputLocaleAIso(form.chiusura_adesioni.value),
       stato: form.stato.value,
-      descrizione: form.descrizione.value.trim() || null
+      descrizione: form.descrizione.value.trim() || null,
+      referente: form.referente.value.trim() || null,
+      campi: Object.fromEntries(CAMPI_ESERCITAZIONE.map(c => [c.k, form["campo_" + c.k].value]))
     };
+    if (payload.campi.servizi === "obbligatorio" && !serviziVoluti.length){
+      alert("Pasti e pernotti sono obbligatori, ma non hai spuntato nessun servizio.");
+      return;
+    }
     btn.disabled = true; btn.textContent = "Salvataggio…";
     const esito = await salvaEsercitazione(es, payload, servizi, serviziVoluti, invitate, sezioniVolute);
     btn.disabled = false; btn.textContent = "Salva";
@@ -5675,6 +5707,7 @@ function renderCruscottoEsercitazione(){
             ${formatDataIt(c.es.data_inizio)}${c.es.data_fine !== c.es.data_inizio ? ` → ${formatDataIt(c.es.data_fine)}` : ""}
             ${c.es.luogo ? ` · ${escapeHtml(c.es.luogo)}` : ""}
             <div class="es-aiuto" style="margin:2px 0 0;">Chiusura adesioni: ${c.es.chiusura_adesioni ? formatDataOraIt(c.es.chiusura_adesioni) : "non impostata"}</div>
+            ${c.es.referente ? `<div class="es-aiuto" style="margin:2px 0 0;">Referente: ${escapeHtml(c.es.referente)}</div>` : ""}
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn-add-mini" id="es-btn-excel" style="background:var(--blu-700);">📥 Excel</button>
@@ -5753,12 +5786,16 @@ function renderTabRiepilogoEsercitazione(){
   const r = calcolaRiepilogoEsercitazione(c);
   const body = document.getElementById("es-tab-body");
   const cella = v => v === null ? `<span style="color:var(--grigio-400);">—</span>` : v;
+  const conServizi = campoAttivo(c.es, "servizi");
+  const conPatenti = campoAttivo(c.es, "patenti");
+  const conAbil = campoAttivo(c.es, "abilitazioni");
   body.innerHTML = `
     <div class="es-stat-grid">
       <div class="report-stat-box"><div class="report-stat-num">${r.volontari}</div><div class="report-stat-lbl">Volontari</div></div>
       <div class="report-stat-box"><div class="report-stat-num">${r.sezioniRisposto}/${r.sezioniTotali}</div><div class="report-stat-lbl">Sezioni che hanno inviato l'adesione</div></div>
+      ${conServizi ? `
       <div class="report-stat-box"><div class="report-stat-num">${r.pasti}</div><div class="report-stat-lbl">Pasti totali</div></div>
-      <div class="report-stat-box"><div class="report-stat-num">${r.postiLetto}</div><div class="report-stat-lbl">Posti letto (notte più piena)</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${r.postiLetto}</div><div class="report-stat-lbl">Posti letto (notte più piena)</div></div>` : ""}
     </div>
 
     <div class="section-title">Sezioni</div>
@@ -5773,6 +5810,7 @@ function renderTabRiepilogoEsercitazione(){
         <strong>${s.stato === "non_partecipa" ? "—" : r.volontariPerSezione.get(s.id) || 0}</strong>
       </div>`).join("")}</div>` : `<div class="storico-empty">Nessuna Sezione invitata.</div>`}
 
+    ${conServizi ? `
     <div class="section-title" style="margin-top:22px;">Pasti e pernotti per giorno</div>
     ${r.perGiorno.length ? `
       <table class="storico-table es-griglia-servizi">
@@ -5781,19 +5819,18 @@ function renderTabRiepilogoEsercitazione(){
           ${r.perGiorno.map(g => `<tr><td>${labelGiornoBreve(g.giorno)}</td>${TIPI_SERVIZIO.map(t => `<td>${cella(g[t])}</td>`).join("")}</tr>`).join("")}
           <tr class="es-riga-totale"><td>Totale</td>${TIPI_SERVIZIO.map(t => `<td>${r.perGiorno.reduce((n, g) => n + (g[t] || 0), 0)}</td>`).join("")}</tr>
         </tbody>
-      </table>` : `<div class="storico-empty">Nessun servizio previsto.</div>`}
+      </table>` : `<div class="storico-empty">Nessun servizio previsto.</div>`}` : ""}
 
     <div class="es-due-colonne">
       <div>
         <div class="section-title" style="margin-top:22px;">Volontari per Sezione</div>
         ${barreEsercitazione(c.sezioni.filter(s => r.volontariPerSezione.get(s.id)).map(s => ({ nome:s.sezione, n:r.volontariPerSezione.get(s.id) })).sort((a,b) => b.n - a.n))}
       </div>
+      ${conPatenti || conAbil ? `
       <div>
-        <div class="section-title" style="margin-top:22px;">Patenti</div>
-        ${barreEsercitazione(r.patenti)}
-        <div class="section-title" style="margin-top:16px;">Abilitazioni</div>
-        ${barreEsercitazione(r.abilitazioni)}
-      </div>
+        ${conPatenti ? `<div class="section-title" style="margin-top:22px;">Patenti</div>${barreEsercitazione(r.patenti)}` : ""}
+        ${conAbil ? `<div class="section-title" style="margin-top:${conPatenti ? 16 : 22}px;">Abilitazioni</div>${barreEsercitazione(r.abilitazioni)}` : ""}
+      </div>` : ""}
     </div>
   `;
 }
@@ -5817,7 +5854,11 @@ function renderTabVolontariEsercitazione(){
         <option value="">Tutte le Sezioni</option>
         ${c.sezioni.map(s => `<option value="${s.id}" ${String(c.filtro.sezione)===String(s.id)?"selected":""}>${escapeHtml(s.sezione)}</option>`).join("")}
       </select>
-      ${completo ? `<button class="btn-add" id="es-vol-nuovo">+ Aggiungi volontario</button>` : ""}
+      ${completo ? `
+        <button class="btn-add" id="es-vol-modello" style="background:var(--blu-700);" title="Modello Excel della Sezione selezionata">📥 Modello Excel</button>
+        <button class="btn-add" id="es-vol-carica" style="background:var(--blu-700);" title="Carica l'Excel ricevuto da una Sezione">📤 Carica Excel</button>
+        <input type="file" id="es-vol-file" accept=".xlsx" style="display:none;">
+        <button class="btn-add" id="es-vol-nuovo">+ Aggiungi volontario</button>` : ""}
     </div>
     ${completo ? "" : `<p class="es-aiuto">Codice fiscale e cellulare sono visibili solo con accesso completo.</p>`}
     <div id="es-vol-form"></div>
@@ -5825,8 +5866,99 @@ function renderTabVolontariEsercitazione(){
   `;
   document.getElementById("es-vol-search").addEventListener("input", e => { c.filtro.search = e.target.value; disegnaListaVolontariEsercitazione(); });
   document.getElementById("es-vol-sezione").addEventListener("change", e => { c.filtro.sezione = e.target.value; disegnaListaVolontariEsercitazione(); });
-  if (completo) document.getElementById("es-vol-nuovo").addEventListener("click", () => mostraFormVolontarioEsercitazione(null));
+  if (completo){
+    document.getElementById("es-vol-nuovo").addEventListener("click", () => mostraFormVolontarioEsercitazione(null));
+    document.getElementById("es-vol-modello").addEventListener("click", scaricaModelloExcelSezione);
+    document.getElementById("es-vol-carica").addEventListener("click", () => {
+      if (!sezioneSceltaPerExcel()) return;
+      document.getElementById("es-vol-file").click();
+    });
+    document.getElementById("es-vol-file").addEventListener("change", caricaExcelSezione);
+  }
   disegnaListaVolontariEsercitazione();
+}
+
+/* ---------- Excel per Sezione (stesso modello della pagina pubblica: esercitazioni-excel.js) ---------- */
+function sezioneSceltaPerExcel(){
+  const c = _cruscotto;
+  const s = c.sezioni.find(x => String(x.id) === String(c.filtro.sezione));
+  if (!s){ alert("Scegli prima la Sezione dal menu \"Tutte le Sezioni\"."); return null; }
+  return s;
+}
+
+function configExcelSezione(s){
+  const c = _cruscotto;
+  return {
+    titolo: c.es.titolo, sezione: s.sezione,
+    date: c.es.data_fine !== c.es.data_inizio ? `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}` : formatDataIt(c.es.data_inizio),
+    campi: c.es.campi || CAMPI_DEFAULT, patenti: c.patenti, abilitazioni: c.abilitazioni, servizi: c.servizi,
+    volontari: c.adesioni.filter(a => a.sezione_id === s.id), maxVolontari: 150
+  };
+}
+
+async function scaricaModelloExcelSezione(){
+  const s = sezioneSceltaPerExcel();
+  if (!s) return;
+  try{ await window.EsercitazioniExcel.scaricaModello(configExcelSezione(s)); }
+  catch(e){ alert("Errore: " + e.message); }
+}
+
+async function caricaExcelSezione(ev){
+  const file = ev.target.files[0];
+  ev.target.value = "";
+  const s = sezioneSceltaPerExcel();
+  if (!file || !s) return;
+  const c = _cruscotto;
+  const box = document.getElementById("es-vol-form");
+  box.innerHTML = `<div class="loading-spin">Lettura del file…</div>`;
+  let esito;
+  try{ esito = await window.EsercitazioniExcel.leggiFile(file, configExcelSezione(s)); }
+  catch(e){ box.innerHTML = `<p style="color:var(--rosso);">Errore: ${escapeHtml(e.message)}</p>`; return; }
+  const validi = esito.righe.filter(r => !r.errori.length).map(r => r.volontario);
+  box.innerHTML = `
+    <div class="mini-form">
+      <div class="section-title" style="margin-top:0;">Excel della Sezione ${escapeHtml(s.sezione)}</div>
+      ${window.EsercitazioniExcel.htmlAnteprima(esito)}
+      <p class="es-aiuto" style="margin-top:10px;">I volontari validi vengono aggiunti o aggiornati (stesso codice fiscale); quelli già iscritti e non presenti nel file restano. Il salvataggio passa dagli stessi controlli della pagina delle Sezioni e segna la Sezione come "risposto".</p>
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" id="es-excel-annulla">Annulla</button>
+        ${validi.length ? `<button type="button" class="btn-save" id="es-excel-salva">Salva ${validi.length} volontari</button>` : ""}
+      </div>
+    </div>`;
+  document.getElementById("es-excel-annulla").addEventListener("click", () => { box.innerHTML = ""; });
+  const salva = document.getElementById("es-excel-salva");
+  if (!salva) return;
+  salva.addEventListener("click", async () => {
+    // elenco completo della Sezione = iscritti attuali aggiornati con il file
+    const attuali = c.adesioni.filter(a => a.sezione_id === s.id).map(a => ({
+      cognome:a.cognome, nome:a.nome, codice_fiscale:a.codice_fiscale, cellulare:a.cellulare || "",
+      patenti:a.patenti, abilitazioni:a.abilitazioni, servizi:a.servizi, note:a.note || null
+    }));
+    validi.forEach(v => {
+      const i = attuali.findIndex(x => x.codice_fiscale === v.codice_fiscale);
+      if (i < 0) attuali.push(v);
+      else attuali[i] = {
+        ...v,
+        cellulare: campoAttivo(c.es, "cellulare") ? v.cellulare : attuali[i].cellulare,
+        patenti: campoAttivo(c.es, "patenti") ? v.patenti : attuali[i].patenti,
+        abilitazioni: campoAttivo(c.es, "abilitazioni") ? v.abilitazioni : attuali[i].abilitazioni,
+        servizi: campoAttivo(c.es, "servizi") ? v.servizi : attuali[i].servizi,
+        note: campoAttivo(c.es, "note") ? v.note : attuali[i].note
+      };
+    });
+    if (attuali.length > 150){ alert("La Sezione supererebbe 150 volontari."); return; }
+    salva.disabled = true; salva.textContent = "Salvataggio…";
+    const { data: link, error: errLink } = await sb.rpc("esercitazione_link", { p_esercitazione_id: c.es.id });
+    const token = (link || []).find(l => l.esercitazione_sezione_id === s.id)?.token;
+    if (errLink || !token){ salva.disabled = false; salva.textContent = "Riprova"; alert("Errore: " + (errLink?.message || "link della Sezione non trovato.")); return; }
+    const { error } = await sb.rpc("adesione_salva", { p_token: token, p_volontari: attuali });
+    if (error){
+      salva.disabled = false; salva.textContent = "Riprova";
+      alert("Salvataggio non riuscito: " + error.message + (/chiuse/i.test(error.message) ? "\n\nPer caricare dati a esercitazione chiusa, riapri temporaneamente le adesioni (stato \"Adesioni aperte\")." : ""));
+      return;
+    }
+    apriCruscottoEsercitazione(c.es.id, "volontari");
+  });
 }
 
 function disegnaListaVolontariEsercitazione(){
@@ -5841,24 +5973,27 @@ function disegnaListaVolontariEsercitazione(){
     wrap.innerHTML = `<div class="storico-empty">${c.adesioni.length ? "Nessun volontario corrisponde alla ricerca." : "Nessun volontario iscritto."}</div>`;
     return;
   }
+  const att = k => campoAttivo(c.es, k);
   wrap.innerHTML = `
     <div style="overflow-x:auto;">
       <table class="storico-table">
         <thead><tr>
           <th>Sezione</th><th>Cognome Nome</th>
-          ${completo ? "<th>Codice fiscale</th><th>Cellulare</th>" : ""}
-          <th>Patenti</th><th>Abilitazioni</th><th>Servizi</th>
+          ${completo ? "<th>Codice fiscale</th>" : ""}
+          ${completo && att("cellulare") ? "<th>Cellulare</th>" : ""}
+          ${att("patenti") ? "<th>Patenti</th>" : ""}${att("abilitazioni") ? "<th>Abilitazioni</th>" : ""}${att("servizi") ? "<th>Servizi</th>" : ""}
           ${completo ? "<th></th>" : ""}
         </tr></thead>
         <tbody>
           ${elenco.map(a => `
             <tr>
               <td>${escapeHtml(a.sezione)}</td>
-              <td><strong>${escapeHtml(a.cognome)}</strong> ${escapeHtml(a.nome)}${a.note ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(a.note)}</div>` : ""}</td>
-              ${completo ? `<td style="font-family:monospace;">${escapeHtml(a.codice_fiscale)}</td><td>${escapeHtml(a.cellulare || "—")}</td>` : ""}
-              <td>${escapeHtml(a.patenti.join(", ") || "—")}</td>
-              <td>${escapeHtml(a.abilitazioni.join(", ") || "—")}</td>
-              <td>${descriviServiziAdesione(a)}</td>
+              <td><strong>${escapeHtml(a.cognome)}</strong> ${escapeHtml(a.nome)}${att("note") && a.note ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(a.note)}</div>` : ""}</td>
+              ${completo ? `<td style="font-family:monospace;">${escapeHtml(a.codice_fiscale)}</td>` : ""}
+              ${completo && att("cellulare") ? `<td>${escapeHtml(a.cellulare || "—")}</td>` : ""}
+              ${att("patenti") ? `<td>${escapeHtml(a.patenti.join(", ") || "—")}</td>` : ""}
+              ${att("abilitazioni") ? `<td>${escapeHtml(a.abilitazioni.join(", ") || "—")}</td>` : ""}
+              ${att("servizi") ? `<td>${descriviServiziAdesione(a)}</td>` : ""}
               ${completo ? `<td style="white-space:nowrap;">
                 <button class="row-del" style="color:var(--blu-500);" data-modifica="${a.id}">Modifica</button>
                 <button class="row-del" data-elimina="${a.id}">Elimina</button></td>` : ""}
@@ -5878,6 +6013,8 @@ function mostraFormVolontarioEsercitazione(adesioneId){
   const box = document.getElementById("es-vol-form");
   if (!c.sezioni.length){ alert("Nessuna Sezione invitata a questa esercitazione."); return; }
   const giorni = [...new Set(c.servizi.map(s => s.giorno))];
+  const att = k => campoAttivo(c.es, k);
+  const ast = k => campoObbligatorio(c.es, k) ? " *" : "";
   box.innerHTML = `
     <div class="mini-form">
       <form id="form-adesione-admin">
@@ -5891,15 +6028,15 @@ function mostraFormVolontarioEsercitazione(adesioneId){
           <div class="form-field"><label>Codice fiscale *</label><input name="codice_fiscale" required maxlength="16" style="text-transform:uppercase;font-family:monospace;" value="${escapeHtml(a?.codice_fiscale || "")}"></div>
           <div class="form-field"><label>Cognome *</label><input name="cognome" required maxlength="80" value="${escapeHtml(a?.cognome || "")}"></div>
           <div class="form-field"><label>Nome *</label><input name="nome" required maxlength="80" value="${escapeHtml(a?.nome || "")}"></div>
-          <div class="form-field"><label>Cellulare</label><input name="cellulare" maxlength="30" inputmode="tel" value="${escapeHtml(a?.cellulare || "")}"></div>
-          <div class="form-field"><label>Note</label><input name="note" maxlength="500" value="${escapeHtml(a?.note || "")}"></div>
-          <div class="form-field full"><label>Patenti</label>
+          ${att("cellulare") ? `<div class="form-field"><label>Cellulare${ast("cellulare")}</label><input name="cellulare" maxlength="30" inputmode="tel" value="${escapeHtml(a?.cellulare || "")}"></div>` : ""}
+          ${att("note") ? `<div class="form-field"><label>Note${ast("note")}</label><input name="note" maxlength="500" value="${escapeHtml(a?.note || "")}"></div>` : ""}
+          ${att("patenti") ? `<div class="form-field full"><label>Patenti${ast("patenti")}</label>
             <div class="es-sezioni-check">${c.patenti.map(p => `<label><input type="checkbox" name="patenti" value="${escapeHtml(p)}" ${a?.patenti.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
-          </div>
-          <div class="form-field full"><label>Abilitazioni</label>
+          </div>` : ""}
+          ${att("abilitazioni") ? `<div class="form-field full"><label>Abilitazioni${ast("abilitazioni")}</label>
             <div class="es-sezioni-check">${c.abilitazioni.map(p => `<label><input type="checkbox" name="abilitazioni" value="${escapeHtml(p)}" ${a?.abilitazioni.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
-          </div>
-          <div class="form-field full"><label>Servizi</label>
+          </div>` : ""}
+          ${att("servizi") ? `<div class="form-field full"><label>Servizi${ast("servizi")}</label>
             ${giorni.length ? `<table class="storico-table es-griglia-servizi">
               <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
               <tbody>${giorni.map(g => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
@@ -5907,7 +6044,7 @@ function mostraFormVolontarioEsercitazione(adesioneId){
                 return `<td>${s ? `<input type="checkbox" name="servizi" value="${s.id}" ${a?.servizi.includes(s.id) ? "checked" : ""}>` : "—"}</td>`;
               }).join("")}</tr>`).join("")}</tbody>
             </table>` : `<div class="es-aiuto">Nessun servizio previsto.</div>`}
-          </div>
+          </div>` : ""}
         </div>
         <div id="es-vol-errore" style="color:var(--rosso);font-size:12.5px;margin-top:8px;display:none;"></div>
         <div class="form-actions">
@@ -5930,6 +6067,13 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     if (!cfValido(cf)){ mostraErrore("Codice fiscale non valido: controlla i 16 caratteri."); return; }
     const valori = sel => [...f.querySelectorAll(`input[name="${sel}"]:checked`)].map(x => x.value);
     const servizi = valori("servizi").map(Number);
+    // stessi obblighi della pagina delle Sezioni (campi configurati sull'esercitazione)
+    const ob = k => campoObbligatorio(c.es, k);
+    if (ob("cellulare") && !f.cellulare.value.trim()){ mostraErrore("Il cellulare è obbligatorio."); return; }
+    if (ob("note") && !f.note.value.trim()){ mostraErrore("Le note sono obbligatorie."); return; }
+    if (ob("patenti") && !valori("patenti").length){ mostraErrore("Indica almeno una patente."); return; }
+    if (ob("abilitazioni") && !valori("abilitazioni").length){ mostraErrore("Indica almeno un'abilitazione."); return; }
+    if (ob("servizi") && c.servizi.length && !servizi.length){ mostraErrore("Indica almeno un pasto o pernotto."); return; }
 
     // Collegamento facoltativo all'anagrafica Formazione (se l'utente può leggerla)
     let volontarioId = a?.volontario_id ?? null;
@@ -5943,12 +6087,13 @@ function mostraFormVolontarioEsercitazione(adesioneId){
       volontario_id: volontarioId,
       cognome: f.cognome.value.trim().toUpperCase(),
       nome: f.nome.value.trim().toUpperCase(),
-      codice_fiscale: cf,
-      cellulare: f.cellulare.value.trim() || null,
-      note: f.note.value.trim() || null,
-      patenti: valori("patenti"),
-      abilitazioni: valori("abilitazioni")
+      codice_fiscale: cf
     };
+    // i campi non richiesti non si toccano (restano come sono)
+    if (att("cellulare")) payload.cellulare = f.cellulare.value.trim() || null;
+    if (att("note")) payload.note = f.note.value.trim() || null;
+    if (att("patenti")) payload.patenti = valori("patenti");
+    if (att("abilitazioni")) payload.abilitazioni = valori("abilitazioni");
     const btn = f.querySelector(".btn-save");
     btn.disabled = true;
 
@@ -5963,6 +6108,7 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     }
     if (!id) id = r.data.id;
 
+    if (!att("servizi")){ apriCruscottoEsercitazione(c.es.id, "volontari"); return; }
     // servizi: solo le differenze
     const prima = a?.servizi || [];
     const daTogliere = prima.filter(s => !servizi.includes(s));
@@ -6103,13 +6249,15 @@ function esportaEsercitazioneExcel(){
   const r = calcolaRiepilogoEsercitazione(c);
   const etichettaServizio = s => `${labelGiornoBreve(s.giorno)} ${LABEL_SERVIZIO[s.tipo]}`;
 
+  const att = k => campoAttivo(c.es, k);
   const righeVolontari = c.adesioni.map(a => {
     const riga = { Sezione: a.sezione, Cognome: a.cognome, Nome: a.nome };
-    if (completo){ riga["Codice fiscale"] = a.codice_fiscale; riga.Cellulare = a.cellulare || ""; }
-    riga.Patenti = a.patenti.join(", ");
-    riga.Abilitazioni = a.abilitazioni.join(", ");
-    c.servizi.forEach(s => { riga[etichettaServizio(s)] = a.servizi.includes(s.id) ? "X" : ""; });
-    if (completo) riga.Note = a.note || "";
+    if (completo) riga["Codice fiscale"] = a.codice_fiscale;
+    if (completo && att("cellulare")) riga.Cellulare = a.cellulare || "";
+    if (att("patenti")) riga.Patenti = a.patenti.join(", ");
+    if (att("abilitazioni")) riga.Abilitazioni = a.abilitazioni.join(", ");
+    if (att("servizi")) c.servizi.forEach(s => { riga[etichettaServizio(s)] = a.servizi.includes(s.id) ? "X" : ""; });
+    if (completo && att("note")) riga.Note = a.note || "";
     return riga;
   });
   const wsVolontari = righeVolontari.length
@@ -6127,19 +6275,19 @@ function esportaEsercitazioneExcel(){
     ["Volontari", r.volontari],
     ["Sezioni che hanno inviato l'adesione", `${r.sezioniRisposto}/${r.sezioniTotali}`],
     ["Sezioni che non partecipano", r.sezioniNonPartecipa],
-    ["Pasti totali", r.pasti],
-    ["Pernotti totali", r.pernotti],
-    ["Posti letto (notte più piena)", r.postiLetto],
-    [],
-    ["Giorno", ...TIPI_SERVIZIO.map(t => LABEL_SERVIZIO[t])],
-    ...r.perGiorno.map(g => [labelGiornoBreve(g.giorno), ...TIPI_SERVIZIO.map(t => g[t] === null ? "—" : g[t])]),
+    ...(att("servizi") ? [
+      ["Pasti totali", r.pasti],
+      ["Pernotti totali", r.pernotti],
+      ["Posti letto (notte più piena)", r.postiLetto],
+      [],
+      ["Giorno", ...TIPI_SERVIZIO.map(t => LABEL_SERVIZIO[t])],
+      ...r.perGiorno.map(g => [labelGiornoBreve(g.giorno), ...TIPI_SERVIZIO.map(t => g[t] === null ? "—" : g[t])])
+    ] : []),
     [],
     ["Sezione", "Stato", "Risposto il", "Volontari"],
     ...c.sezioni.map(s => [s.sezione, STATI_SEZIONE_ESERCITAZIONE[s.stato], s.risposto_at ? formatDataOraIt(s.risposto_at) : "", s.stato === "non_partecipa" ? 0 : r.volontariPerSezione.get(s.id) || 0]),
-    [],
-    ["Patente", "Volontari"], ...r.patenti.map(p => [p.nome, p.n]),
-    [],
-    ["Abilitazione", "Volontari"], ...r.abilitazioni.map(p => [p.nome, p.n])
+    ...(att("patenti") ? [[], ["Patente", "Volontari"], ...r.patenti.map(p => [p.nome, p.n])] : []),
+    ...(att("abilitazioni") ? [[], ["Abilitazione", "Volontari"], ...r.abilitazioni.map(p => [p.nome, p.n])] : [])
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsVolontari, "Volontari");

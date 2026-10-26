@@ -607,3 +607,6 @@ input,select,textarea{font-family:inherit;}
   .es-barra{grid-template-columns:100px 1fr 30px;}
 }
 .es-input-mail{width:100%;min-width:180px;padding:6px 8px;border:1px solid var(--grigio-400);border-radius:6px;font-size:12.5px;}
+.es-campi-griglia{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 14px;}
+.es-campi-griglia label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;font-weight:600;color:var(--grigio-800);}
+.es-campi-griglia select{padding:6px 8px;border:1px solid var(--grigio-400);border-radius:6px;font-size:12.5px;}
