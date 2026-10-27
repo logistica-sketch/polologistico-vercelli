@@ -122,6 +122,7 @@ const MENU = [
   { route: "firma",        label: "Firma Documenti", icon: "ti-signature", permesso: "firma_documenti" },
   { route: "libromatricola", label: "Libro Matricola", icon: "ti-book",    permesso: "libro_matricola" },
   { route: "esercitazioni", label: "Esercitazioni", icon: "ti-flag",     permesso: "esercitazioni" },
+  { route: "emergenze",    label: "Emergenze",     icon: "ti-alert-triangle", permesso: "emergenze" },
   { route: "utenti",       label: "Gestione Utenti", icon: "ti-users",     permesso: "_solo_it_admin" },
   { route: "impostazioni", label: "Impostazioni",  icon: "ti-settings",    permesso: "_almeno_una_sezione" },
 ];
@@ -474,6 +475,7 @@ const PAGE_TITLES = {
   firma: ["Firma Documenti", "Carica PDF, apponi la firma e scarica"],
   libromatricola: ["Libro Matricola", "Mezzi assicurati e polizze"],
   esercitazioni: ["Esercitazioni", "Adesioni delle Sezioni, pasti e pernotti"],
+  emergenze: ["Emergenze", "Disponibilità delle Sezioni"],
   utenti: ["Gestione Utenti", "Utenti abilitati e relativi permessi"],
   impostazioni: ["Impostazioni", "Configurazioni per modulo"]
 };
@@ -503,7 +505,8 @@ function router(){
   else if (route === "formazione") renderFormazione();
   else if (route === "firma") renderFirmaDocumenti();
   else if (route === "libromatricola") renderLibroMatricola();
-  else if (route === "esercitazioni") renderEsercitazioni();
+  else if (route === "esercitazioni") renderAttivazioni("esercitazione");
+  else if (route === "emergenze") renderAttivazioni("emergenza");
   else if (route === "utenti") renderGestioneUtenti();
   else if (route === "impostazioni") renderImpostazioni();
 }
@@ -2734,6 +2737,7 @@ const PAGINE_PERMESSO = [
   { key:"firma_documenti", label:"Firma Documenti" },
   { key:"libro_matricola", label:"Libro Matricola" },
   { key:"esercitazioni", label:"Esercitazioni", livelli:true },
+  { key:"emergenze", label:"Emergenze", livelli:true },
   { key:"impostazioni", label:"Impostazioni" }
 ];
 
@@ -5235,12 +5239,27 @@ function apriModalExportPerSezione(sezioni){
 
 
 /* ============================================================
-   MODULO ESERCITAZIONI
-   Livelli permesso 'esercitazioni': completo (gestione, CF e cellulare)
-   / base (sola lettura, adesioni dalla vista v_adesioni_base).
+   MODULO ATTIVAZIONI (Esercitazioni + Emergenze)
+   Stesso motore (tabella attivazioni con tipo 'esercitazione' | 'emergenza'),
+   due voci di menu. Permessi separati per tipo: 'esercitazioni' / 'emergenze',
+   ciascuno con livelli completo (gestione, CF e cellulare) / base (sola
+   lettura, adesioni dalla vista v_adesioni_base).
    Il token del link pubblico NON è leggibile da tabella: si ottiene solo
-   con la RPC esercitazione_link() (riservata a completo).
+   con la RPC attivazione_link() (riservata a completo).
    ============================================================ */
+let _attivazioneTipo = "esercitazione"; // tipo della voce di menu aperta
+const TESTI_TIPO = {
+  esercitazione: { nome:"esercitazione", Nome:"Esercitazione", plurale:"esercitazioni", nuova:"Nuova esercitazione", icona:"🏕️", route:"esercitazioni" },
+  emergenza:     { nome:"emergenza",     Nome:"Emergenza",     plurale:"emergenze",     nuova:"Nuova emergenza",     icona:"🚨", route:"emergenze" }
+};
+function testiTipo(tipo){ return TESTI_TIPO[tipo || _attivazioneTipo] || TESTI_TIPO.esercitazione; }
+function permessoTipo(tipo){ return (tipo || _attivazioneTipo) === "emergenza" ? "emergenze" : "esercitazioni"; }
+// Ultimo giorno della griglia: data fine, oppure (emergenza aperta) la finestra estendibile
+function ultimoGiornoAttivazione(es){ return (es && (es.data_fine || es.fine_finestra)) || null; }
+function periodoAttivazioneIt(es){
+  if (!es.data_fine) return `dal ${formatDataIt(es.data_inizio)} (in corso${es.fine_finestra ? `, finestra fino al ${formatDataIt(es.fine_finestra)}` : ""})`;
+  return es.data_fine !== es.data_inizio ? `${formatDataIt(es.data_inizio)} → ${formatDataIt(es.data_fine)}` : formatDataIt(es.data_inizio);
+}
 let _esercitazioniCache = [];
 let _esercitazioniFiltro = { search:"", stato:"" };
 const ENTI_ESERCITAZIONE = { CAP:"CAP", "1RGPT":"1° RGPT" };
@@ -5277,7 +5296,10 @@ function giornoDopo(iso){
 function campoAttivo(es, k){ return livelloCampo(es, k) !== "non_richiesto"; }
 function campoObbligatorio(es, k){ return livelloCampo(es, k) === "obbligatorio"; }
 
-function esercitazioniCompleto(){ return livelloPermesso("esercitazioni") === "completo"; }
+// "completo" sul tipo indicato (di default il tipo della voce di menu aperta)
+function esercitazioniCompleto(tipo){ return livelloPermesso(permessoTipo(tipo)) === "completo"; }
+// Impostazioni: liste condivise gestibili con uno dei due permessi completo
+function gestisceAttivazioni(){ return esercitazioniCompleto("esercitazione") || esercitazioniCompleto("emergenza"); }
 
 // Codice fiscale: formato + carattere di controllo (stessa regola di cf_valido() sul DB)
 function cfValido(cf){
@@ -5334,11 +5356,11 @@ async function caricaAdesioniEsercitazione(esercitazioneId){
   if (esercitazioniCompleto()){
     const { data, error } = await caricaTutteLeRighe(() => sb
       .from("adesioni")
-      .select("id, esercitazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, esigenze, esigenze_note, adesione_servizi(servizio_id)")
-      .eq("esercitazione_id", esercitazioneId));
+      .select("id, attivazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, esigenze, esigenze_note, adesione_servizi(servizio_id)")
+      .eq("attivazione_id", esercitazioneId));
     if (error) return { data:null, error };
     return { data: data.map(a => ({
-      id:a.id, sezione_id:a.esercitazione_sezione_id, volontario_id:a.volontario_id,
+      id:a.id, sezione_id:a.attivazione_sezione_id, volontario_id:a.volontario_id,
       cognome:a.cognome, nome:a.nome, codice_fiscale:a.codice_fiscale, cellulare:a.cellulare,
       patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], note:a.note,
       esigenze:a.esigenze || [], esigenze_note:a.esigenze_note,
@@ -5347,39 +5369,47 @@ async function caricaAdesioniEsercitazione(esercitazioneId){
   }
   const { data, error } = await caricaTutteLeRighe(() => sb
     .from("v_adesioni_base")
-    .select("id, esercitazione_sezione_id, cognome, nome, patenti, abilitazioni, servizi")
-    .eq("esercitazione_id", esercitazioneId));
+    .select("id, attivazione_sezione_id, cognome, nome, patenti, abilitazioni, servizi")
+    .eq("attivazione_id", esercitazioneId));
   if (error) return { data:null, error };
   return { data: data.map(a => ({
-    id:a.id, sezione_id:a.esercitazione_sezione_id, cognome:a.cognome, nome:a.nome,
+    id:a.id, sezione_id:a.attivazione_sezione_id, cognome:a.cognome, nome:a.nome,
     patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], esigenze:[], servizi:a.servizi || []
   })), error:null };
 }
 
 /* ---------- LISTA ---------- */
+// Punto d'ingresso delle due voci di menu (Esercitazioni / Emergenze)
+function renderAttivazioni(tipo){
+  if (_attivazioneTipo !== tipo) _esercitazioniFiltro = { search:"", stato:"" };
+  _attivazioneTipo = tipo;
+  renderEsercitazioni();
+}
+
 async function renderEsercitazioni(){
   const content = document.getElementById("page-content");
   const completo = esercitazioniCompleto();
+  const T = testiTipo();
 
   const [{ data: esercitazioni, error }, { data: sezioni, error: errSez }] = await Promise.all([
-    sb.from("esercitazioni").select("*").order("data_inizio", { ascending:false }),
-    caricaTutteLeRighe(() => sb.from("esercitazione_sezioni").select("id, esercitazione_id, stato"))
+    sb.from("attivazioni").select("*").eq("tipo", _attivazioneTipo).order("data_inizio", { ascending:false }),
+    caricaTutteLeRighe(() => sb.from("attivazione_sezioni").select("id, attivazione_id, stato"))
   ]);
   if (error || errSez){
     content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml((error||errSez).message)}</p></div>`;
     return;
   }
   const { data: adesioni, error: errAd } = await caricaTutteLeRighe(() =>
-    sb.from(completo ? "adesioni" : "v_adesioni_base").select("id, esercitazione_id"));
+    sb.from(completo ? "adesioni" : "v_adesioni_base").select("id, attivazione_id"));
   if (errAd){ content.innerHTML = `<div class="placeholder-page"><h3>Errore</h3><p>${escapeHtml(errAd.message)}</p></div>`; return; }
 
   _esercitazioniCache = (esercitazioni || []).map(e => {
-    const sez = sezioni.filter(s => s.esercitazione_id === e.id);
+    const sez = sezioni.filter(s => s.attivazione_id === e.id);
     return {
       ...e,
       n_sezioni: sez.length,
       n_risposte: sez.filter(s => s.stato !== "in_attesa").length,
-      n_volontari: adesioni.filter(a => a.esercitazione_id === e.id).length
+      n_volontari: adesioni.filter(a => a.attivazione_id === e.id).length
     };
   });
 
@@ -5390,7 +5420,7 @@ async function renderEsercitazioni(){
         <option value="">Tutti gli stati</option>
         ${Object.entries(STATI_ESERCITAZIONE).map(([k,l]) => `<option value="${k}" ${_esercitazioniFiltro.stato===k?"selected":""}>${l}</option>`).join("")}
       </select>
-      ${completo ? `<button class="btn-add" id="es-btn-nuova">+ Nuova esercitazione</button>` : ""}
+      ${completo ? `<button class="btn-add" id="es-btn-nuova">+ ${T.nuova}</button>` : ""}
     </div>
     <div class="results-count" id="es-results-count"></div>
     <div id="es-list"></div>
@@ -5407,10 +5437,11 @@ function renderEsercitazioniList(){
   const elenco = _esercitazioniCache.filter(e =>
     (!f.stato || e.stato === f.stato) &&
     (!q || (e.titolo||"").toLowerCase().includes(q) || (e.luogo||"").toLowerCase().includes(q)));
-  document.getElementById("es-results-count").textContent = `${elenco.length} esercitazioni`;
+  const T = testiTipo();
+  document.getElementById("es-results-count").textContent = `${elenco.length} ${T.plurale}`;
   const wrap = document.getElementById("es-list");
   if (elenco.length === 0){
-    wrap.innerHTML = `<div class="empty-state"><div class="ic">🏕️</div>${_esercitazioniCache.length ? "Nessuna esercitazione corrisponde ai filtri." : "Nessuna esercitazione creata."}</div>`;
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">${T.icona}</div>${_esercitazioniCache.length ? `Nessuna ${T.nome} corrisponde ai filtri.` : `Nessuna ${T.nome} creata.`}</div>`;
     return;
   }
   wrap.innerHTML = `
@@ -5422,7 +5453,7 @@ function renderEsercitazioniList(){
             <tr data-id="${e.id}">
               <td><strong>${escapeHtml(e.titolo)}</strong>${e.luogo ? `<div style="font-size:11.5px;color:var(--grigio-600);">${escapeHtml(e.luogo)}</div>` : ""}</td>
               <td>${ENTI_ESERCITAZIONE[e.ente] || escapeHtml(e.ente)}</td>
-              <td>${formatDataIt(e.data_inizio)}${e.data_fine !== e.data_inizio ? ` → ${formatDataIt(e.data_fine)}` : ""}</td>
+              <td>${periodoAttivazioneIt(e)}</td>
               <td>${badgeStatoEsercitazione(e.stato)}</td>
               <td>${e.n_risposte}/${e.n_sezioni}</td>
               <td>${e.n_volontari}</td>
@@ -5444,15 +5475,18 @@ async function apriModalEsercitazione(id){
   let es = null, servizi = [], invitate = [];
   if (id){
     const [r1, r2, r3] = await Promise.all([
-      sb.from("esercitazioni").select("*").eq("id", id).maybeSingle(),
-      sb.from("esercitazione_servizi").select("id, giorno, tipo").eq("esercitazione_id", id),
-      sb.from("esercitazione_sezioni").select("id, sezione, stato").eq("esercitazione_id", id)
+      sb.from("attivazioni").select("*").eq("id", id).maybeSingle(),
+      sb.from("attivazione_servizi").select("id, giorno, tipo").eq("attivazione_id", id),
+      sb.from("attivazione_sezioni").select("id, sezione, stato").eq("attivazione_id", id)
     ]);
     const err = r1.error || r2.error || r3.error;
     if (err){ alert("Errore: " + err.message); return; }
-    if (!r1.data){ alert("Esercitazione non trovata."); return; }
+    if (!r1.data){ alert(`${testiTipo().Nome} non trovata.`); return; }
     es = r1.data; servizi = r2.data || []; invitate = r3.data || [];
   }
+  const tipo = es ? es.tipo : _attivazioneTipo;
+  const T = testiTipo(tipo);
+  const emergenza = tipo === "emergenza";
 
   chiudiModal();
   const overlay = document.createElement("div");
@@ -5461,7 +5495,7 @@ async function apriModalEsercitazione(id){
   overlay.innerHTML = `
     <div class="modal-box modal-box-lg">
       <div class="modal-head">
-        <h3>${es ? "Modifica esercitazione" : "Nuova esercitazione"}</h3>
+        <h3>${es ? `Modifica ${T.nome}` : T.nuova}</h3>
         <button class="modal-close" id="modal-close-btn">✕</button>
       </div>
       <div class="modal-body">
@@ -5476,7 +5510,9 @@ async function apriModalEsercitazione(id){
             </div>
             <div class="form-field"><label>Luogo</label><input name="luogo" maxlength="150" value="${escapeHtml(es?.luogo||"")}"></div>
             <div class="form-field"><label>Data inizio *</label><input type="date" name="data_inizio" required value="${es?.data_inizio||""}"></div>
-            <div class="form-field"><label>Data fine *</label><input type="date" name="data_fine" required value="${es?.data_fine||""}"></div>
+            <div class="form-field"><label>Data fine${emergenza ? " (se nota)" : " *"}</label><input type="date" name="data_fine" ${emergenza ? "" : "required"} value="${es?.data_fine||""}"></div>
+            ${emergenza ? `<div class="form-field"><label>Griglia dei giorni fino al</label><input type="date" name="fine_finestra" value="${es?.fine_finestra||""}">
+              <div class="es-aiuto" style="margin:4px 0 0;">Se la data fine non è nota, la griglia dei giorni arriva fin qui: si può estendere quando serve.</div></div>` : ""}
             <div class="form-field"><label>Chiusura adesioni</label><input type="datetime-local" name="chiusura_adesioni" value="${isoAInputLocale(es?.chiusura_adesioni)}"></div>
             <div class="form-field">
               <label>Stato</label>
@@ -5536,8 +5572,10 @@ async function apriModalEsercitazione(id){
   // nuova esercitazione: pranzo e cena ogni giorno, pernotto tutte le notti tranne l'ultimo giorno,
   // colazione nei giorni preceduti da una notte con pernotto (di norma dal 2° giorno)
   const precompila = !es;
+  // ultimo giorno della griglia: data fine oppure, per un'emergenza senza fine, la finestra
+  const ultimoGiorno = () => form.data_fine.value || (form.fine_finestra ? form.fine_finestra.value : "");
   function disegnaServizi(){
-    const giorni = giorniTra(form.data_inizio.value, form.data_fine.value);
+    const giorni = giorniTra(form.data_inizio.value, ultimoGiorno());
     const box = document.getElementById("es-servizi-griglia");
     if (!giorni.length){ box.innerHTML = `<div class="storico-empty">Indica le date per vedere i giorni.</div>`; return; }
     if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ box.innerHTML = `<div class="storico-empty">Massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.</div>`; return; }
@@ -5569,10 +5607,13 @@ async function apriModalEsercitazione(id){
     }));
   }
   form.data_inizio.addEventListener("change", () => {
-    if (form.data_inizio.value && (!form.data_fine.value || form.data_fine.value < form.data_inizio.value)) form.data_fine.value = form.data_inizio.value;
+    const inizio = form.data_inizio.value;
+    if (inizio && !emergenza && (!form.data_fine.value || form.data_fine.value < inizio)) form.data_fine.value = inizio;
+    if (inizio && emergenza && (!form.fine_finestra.value || form.fine_finestra.value < inizio)) form.fine_finestra.value = inizio;
     disegnaServizi();
   });
   form.data_fine.addEventListener("change", disegnaServizi);
+  if (form.fine_finestra) form.fine_finestra.addEventListener("change", disegnaServizi);
   disegnaServizi();
 
   function selezionaDaEnte(){
@@ -5589,9 +5630,13 @@ async function apriModalEsercitazione(id){
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const btn = form.querySelector(".btn-save");
-    const giorni = giorniTra(form.data_inizio.value, form.data_fine.value);
+    if (emergenza && !form.data_fine.value && !form.fine_finestra.value){ alert("Indica la data fine oppure fino a quando aprire la griglia dei giorni."); return; }
+    if (form.data_fine.value && form.data_fine.value < form.data_inizio.value){ alert("La data di fine non può essere precedente alla data di inizio."); return; }
+    if (emergenza && form.fine_finestra.value && form.fine_finestra.value < form.data_inizio.value){ alert("La griglia dei giorni non può finire prima della data di inizio."); return; }
+    if (emergenza && form.fine_finestra.value && form.fine_finestra.value < form.data_inizio.value){ alert("La finestra non può finire prima della data di inizio."); return; }
+    const giorni = giorniTra(form.data_inizio.value, ultimoGiorno());
     if (!giorni.length){ alert("La data di fine non può essere precedente alla data di inizio."); return; }
-    if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ alert(`Un'esercitazione può durare al massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.`); return; }
+    if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ alert(`Un'${T.nome} può coprire al massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.`); return; }
     const serviziVoluti = [];
     giorni.forEach(g => TIPI_SERVIZIO.forEach(t => { if (spunte.get(`${g}|${t}`)) serviziVoluti.push({ giorno:g, tipo:t }); }));
     const sezioniVolute = [...form.querySelectorAll('input[name="sezione"]:checked')].map(c => c.value);
@@ -5601,8 +5646,10 @@ async function apriModalEsercitazione(id){
       titolo: form.titolo.value.trim(),
       ente: form.ente.value,
       luogo: form.luogo.value.trim() || null,
+      tipo,
       data_inizio: form.data_inizio.value,
-      data_fine: form.data_fine.value,
+      data_fine: form.data_fine.value || null,
+      fine_finestra: emergenza ? (form.fine_finestra.value || null) : null,
       chiusura_adesioni: inputLocaleAIso(form.chiusura_adesioni.value),
       stato: form.stato.value,
       descrizione: form.descrizione.value.trim() || null,
@@ -5644,30 +5691,30 @@ async function salvaEsercitazione(es, payload, serviziAttuali, serviziVoluti, in
 
   let id = es?.id;
   if (id){
-    const { error } = await sb.from("esercitazioni").update(payload).eq("id", id);
+    const { error } = await sb.from("attivazioni").update(payload).eq("id", id);
     if (error){ alert("Errore: " + error.message); return null; }
   } else {
-    const { data, error } = await sb.from("esercitazioni").insert(payload).select("id").single();
+    const { data, error } = await sb.from("attivazioni").insert(payload).select("id").single();
     if (error){ alert("Errore: " + error.message); return null; }
     id = data.id;
   }
 
   if (daTogliereServizi.length){
-    const { error } = await sb.from("esercitazione_servizi").delete().in("id", daTogliereServizi.map(s => s.id));
-    if (error){ alert("Esercitazione salvata, ma errore sui servizi: " + error.message); return id; }
+    const { error } = await sb.from("attivazione_servizi").delete().in("id", daTogliereServizi.map(s => s.id));
+    if (error){ alert(`${testiTipo(payload.tipo).Nome} salvata, ma errore sui servizi: ` + error.message); return id; }
   }
   if (daAggiungereServizi.length){
-    const { error } = await sb.from("esercitazione_servizi").insert(daAggiungereServizi.map(s => ({ esercitazione_id:id, giorno:s.giorno, tipo:s.tipo })));
-    if (error){ alert("Esercitazione salvata, ma errore sui servizi: " + error.message); return id; }
+    const { error } = await sb.from("attivazione_servizi").insert(daAggiungereServizi.map(s => ({ attivazione_id:id, giorno:s.giorno, tipo:s.tipo })));
+    if (error){ alert(`${testiTipo(payload.tipo).Nome} salvata, ma errore sui servizi: ` + error.message); return id; }
   }
   if (daTogliereSezioni.length){
-    const { error } = await sb.from("esercitazione_sezioni").delete().in("id", daTogliereSezioni.map(s => s.id));
-    if (error){ alert("Esercitazione salvata, ma errore sulle Sezioni: " + error.message); return id; }
+    const { error } = await sb.from("attivazione_sezioni").delete().in("id", daTogliereSezioni.map(s => s.id));
+    if (error){ alert(`${testiTipo(payload.tipo).Nome} salvata, ma errore sulle Sezioni: ` + error.message); return id; }
   }
   if (daAggiungereSezioni.length){
-    // niente select('*'): il token non è leggibile, si ottiene con esercitazione_link()
-    const { error } = await sb.from("esercitazione_sezioni").insert(daAggiungereSezioni.map(n => ({ esercitazione_id:id, sezione:n }))).select("id");
-    if (error){ alert("Esercitazione salvata, ma errore sulle Sezioni: " + error.message); return id; }
+    // niente select('*'): il token non è leggibile, si ottiene con attivazione_link()
+    const { error } = await sb.from("attivazione_sezioni").insert(daAggiungereSezioni.map(n => ({ attivazione_id:id, sezione:n }))).select("id");
+    if (error){ alert(`${testiTipo(payload.tipo).Nome} salvata, ma errore sulle Sezioni: ` + error.message); return id; }
   }
   return id;
 }
@@ -5675,8 +5722,8 @@ async function salvaEsercitazione(es, payload, serviziAttuali, serviziVoluti, in
 async function eliminaEsercitazione(id){
   if (!esercitazioniCompleto()) return;
   const es = _esercitazioniCache.find(e => e.id === id);
-  if (!confirm(`Eliminare definitivamente l'esercitazione "${es?.titolo || ""}"? Verranno cancellate anche tutte le adesioni delle Sezioni.`)) return;
-  const { error } = await sb.from("esercitazioni").delete().eq("id", id);
+  if (!confirm(`Eliminare definitivamente l'${testiTipo().nome} "${es?.titolo || ""}"? Verranno cancellate anche tutte le adesioni delle Sezioni.`)) return;
+  const { error } = await sb.from("attivazioni").delete().eq("id", id);
   if (error){ alert("Errore: " + error.message); return; }
   chiudiModal();
   renderEsercitazioni();
@@ -5689,21 +5736,22 @@ async function apriCruscottoEsercitazione(id, tab){
   const completo = esercitazioniCompleto();
   const vuoto = Promise.resolve({ data:[], error:null });
   const [r1, r2, r3, r4, r5, ad, r6, r7, r8, r9] = await Promise.all([
-    sb.from("esercitazioni").select("*").eq("id", id).maybeSingle(),
-    sb.from("esercitazione_servizi").select("id, giorno, tipo").eq("esercitazione_id", id),
-    sb.from("esercitazione_sezioni").select("id, sezione, stato, risposto_at").eq("esercitazione_id", id),
-    sb.from("esercitazioni_patenti").select("nome").order("ordine").order("nome"),
-    sb.from("esercitazioni_abilitazioni").select("nome").order("ordine").order("nome"),
+    sb.from("attivazioni").select("*").eq("id", id).maybeSingle(),
+    sb.from("attivazione_servizi").select("id, giorno, tipo").eq("attivazione_id", id),
+    sb.from("attivazione_sezioni").select("id, sezione, stato, risposto_at").eq("attivazione_id", id),
+    sb.from("attivazioni_patenti").select("nome").order("ordine").order("nome"),
+    sb.from("attivazioni_abilitazioni").select("nome").order("ordine").order("nome"),
     caricaAdesioniEsercitazione(id),
-    sb.from("esercitazioni_esigenze").select("nome, con_nota").order("ordine").order("nome"),
+    sb.from("attivazioni_esigenze").select("nome, con_nota").order("ordine").order("nome"),
     // cucina: totali volontari + ospiti + extra ed esigenze, senza dati personali (anche livello base)
-    sb.rpc("esercitazione_cucina", { p_esercitazione_id: id }),
-    completo ? sb.from("esercitazione_ospiti").select("id, nome, ente_ruolo, note, esigenze, esigenze_note, esercitazione_ospiti_servizi(servizio_id)").eq("esercitazione_id", id).order("nome") : vuoto,
-    completo ? sb.from("esercitazione_extra").select("id, servizio_id, quantita, descrizione").eq("esercitazione_id", id).order("id") : vuoto
+    sb.rpc("attivazione_cucina", { p_attivazione_id: id }),
+    completo ? sb.from("attivazione_ospiti").select("id, nome, ente_ruolo, note, esigenze, esigenze_note, attivazione_ospiti_servizi(servizio_id)").eq("attivazione_id", id).order("nome") : vuoto,
+    completo ? sb.from("attivazione_extra").select("id, servizio_id, quantita, descrizione").eq("attivazione_id", id).order("id") : vuoto
   ]);
   const err = r1.error || r2.error || r3.error || r4.error || r5.error || ad.error || r6.error || r7.error || r8.error || r9.error;
   if (err){ alert("Errore: " + err.message); return; }
-  if (!r1.data){ alert("Esercitazione non trovata."); return; }
+  if (!r1.data){ alert("Evento non trovato."); return; }
+  _attivazioneTipo = r1.data.tipo;
 
   const ordineTipo = t => TIPI_SERVIZIO.indexOf(t);
   const sezioni = (r3.data || []).sort((a,b) => a.sezione.localeCompare(b.sezione));
@@ -5718,7 +5766,7 @@ async function apriCruscottoEsercitazione(id, tab){
     abilitazioni: (r5.data || []).map(p => p.nome),
     esigenze: r6.data || [],
     cucina: r7.data || { servizi:[], esigenze:[] },
-    ospiti: (r8.data || []).map(o => ({ ...o, esigenze:o.esigenze || [], servizi:(o.esercitazione_ospiti_servizi || []).map(x => x.servizio_id) })),
+    ospiti: (r8.data || []).map(o => ({ ...o, esigenze:o.esigenze || [], servizi:(o.attivazione_ospiti_servizi || []).map(x => x.servizio_id) })),
     extra: r9.data || [],
     tab: tab || (stessaEsercitazione ? _cruscotto.tab : null) || "riepilogo",
     filtro: stessaEsercitazione ? _cruscotto.filtro : { search:"", sezione:"" }
@@ -5749,7 +5797,7 @@ function renderCruscottoEsercitazione(){
         <div class="es-testata">
           <div>
             <strong>${ENTI_ESERCITAZIONE[c.es.ente] || escapeHtml(c.es.ente)}</strong> ·
-            ${formatDataIt(c.es.data_inizio)}${c.es.data_fine !== c.es.data_inizio ? ` → ${formatDataIt(c.es.data_fine)}` : ""}
+            ${periodoAttivazioneIt(c.es)}
             ${c.es.luogo ? ` · ${escapeHtml(c.es.luogo)}` : ""}
             <div class="es-aiuto" style="margin:2px 0 0;">Chiusura adesioni: ${c.es.chiusura_adesioni ? formatDataOraIt(c.es.chiusura_adesioni) : "non impostata"}</div>
             ${c.es.referente ? `<div class="es-aiuto" style="margin:2px 0 0;">Referente: ${escapeHtml(c.es.referente)}</div>` : ""}
@@ -5943,7 +5991,7 @@ function configExcelSezione(s){
   const c = _cruscotto;
   return {
     titolo: c.es.titolo, sezione: s.sezione,
-    date: c.es.data_fine !== c.es.data_inizio ? `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}` : formatDataIt(c.es.data_inizio),
+    date: periodoAttivazioneIt(c.es),
     campi: c.es.campi || CAMPI_DEFAULT, patenti: c.patenti, abilitazioni: c.abilitazioni, servizi: c.servizi,
     esigenze: c.esigenze, volontari: c.adesioni.filter(a => a.sezione_id === s.id), maxVolontari: 150
   };
@@ -6004,13 +6052,13 @@ async function caricaExcelSezione(ev){
     });
     if (attuali.length > 150){ alert("La Sezione supererebbe 150 volontari."); return; }
     salva.disabled = true; salva.textContent = "Salvataggio…";
-    const { data: link, error: errLink } = await sb.rpc("esercitazione_link", { p_esercitazione_id: c.es.id });
-    const token = (link || []).find(l => l.esercitazione_sezione_id === s.id)?.token;
+    const { data: link, error: errLink } = await sb.rpc("attivazione_link", { p_attivazione_id: c.es.id });
+    const token = (link || []).find(l => l.attivazione_sezione_id === s.id)?.token;
     if (errLink || !token){ salva.disabled = false; salva.textContent = "Riprova"; alert("Errore: " + (errLink?.message || "link della Sezione non trovato.")); return; }
     const { error } = await sb.rpc("adesione_salva", { p_token: token, p_volontari: attuali });
     if (error){
       salva.disabled = false; salva.textContent = "Riprova";
-      alert("Salvataggio non riuscito: " + error.message + (/chiuse/i.test(error.message) ? "\n\nPer caricare dati a esercitazione chiusa, riapri temporaneamente le adesioni (stato \"Adesioni aperte\")." : ""));
+      alert("Salvataggio non riuscito: " + error.message + (/chiuse/i.test(error.message) ? "\n\nPer caricare dati con le adesioni chiuse, riapri temporaneamente le adesioni (stato \"Adesioni aperte\")." : ""));
       return;
     }
     apriCruscottoEsercitazione(c.es.id, "volontari");
@@ -6116,7 +6164,7 @@ function mostraFormVolontarioEsercitazione(adesioneId){
   const c = _cruscotto;
   const a = adesioneId ? c.adesioni.find(x => x.id === adesioneId) : null;
   const box = document.getElementById("es-vol-form");
-  if (!c.sezioni.length){ alert("Nessuna Sezione invitata a questa esercitazione."); return; }
+  if (!c.sezioni.length){ alert("Nessuna Sezione invitata a questo evento."); return; }
   const giorni = [...new Set(c.servizi.map(s => s.giorno))];
   const att = k => campoAttivo(c.es, k);
   const ast = k => campoObbligatorio(c.es, k) ? " *" : "";
@@ -6187,8 +6235,8 @@ function mostraFormVolontarioEsercitazione(adesioneId){
       volontarioId = vf?.id ?? null;
     }
     const payload = {
-      esercitazione_id: c.es.id,
-      esercitazione_sezione_id: parseInt(f.sezione_id.value),
+      attivazione_id: c.es.id,
+      attivazione_sezione_id: parseInt(f.sezione_id.value),
       volontario_id: volontarioId,
       cognome: f.cognome.value.trim().toUpperCase(),
       nome: f.nome.value.trim().toUpperCase(),
@@ -6212,7 +6260,7 @@ function mostraFormVolontarioEsercitazione(adesioneId){
       : await sb.from("adesioni").insert(payload).select("id").single();
     if (r.error){
       btn.disabled = false;
-      mostraErrore(r.error.code === "23505" ? "Questo codice fiscale è già iscritto a questa esercitazione." : "Errore: " + r.error.message);
+      mostraErrore(r.error.code === "23505" ? "Questo codice fiscale è già iscritto a questo evento." : "Errore: " + r.error.message);
       return;
     }
     if (!id) id = r.data.id;
@@ -6236,7 +6284,7 @@ function mostraFormVolontarioEsercitazione(adesioneId){
 
 async function eliminaAdesioneEsercitazione(adesioneId){
   const a = _cruscotto.adesioni.find(x => x.id === adesioneId);
-  if (!confirm(`Togliere ${a ? `${a.cognome} ${a.nome}` : "questo volontario"} dall'esercitazione?`)) return;
+  if (!confirm(`Togliere ${a ? `${a.cognome} ${a.nome}` : "questo volontario"} dall'${testiTipo().nome}?`)) return;
   const { error } = await sb.from("adesioni").delete().eq("id", adesioneId);
   if (error){ alert("Errore: " + error.message); return; }
   apriCruscottoEsercitazione(_cruscotto.es.id, "volontari");
@@ -6287,7 +6335,7 @@ function renderTabOspitiEsercitazione(){
       <input type="number" name="quantita" min="1" max="1000" required placeholder="Quantità">
       <input name="descrizione" maxlength="150" required placeholder="Descrizione (es. autorità)">
       <button type="submit" class="btn-add-mini">Aggiungi</button>
-    </form>` : `<div class="es-aiuto">Prima definisci i servizi dell'esercitazione.</div>`}
+    </form>` : `<div class="es-aiuto">Prima definisci i servizi dell'evento.</div>`}
     ${c.extra.length ? `
     <table class="storico-table" style="margin-top:10px;">
       <thead><tr><th>Servizio</th><th>Quantità</th><th>Descrizione</th><th></th></tr></thead>
@@ -6306,13 +6354,13 @@ function renderTabOspitiEsercitazione(){
   body.querySelectorAll("[data-osp-elimina]").forEach(b => b.addEventListener("click", async () => {
     const o = c.ospiti.find(x => x.id === parseInt(b.dataset.ospElimina));
     if (!confirm(`Togliere l'ospite ${o ? o.nome : ""}?`)) return;
-    const { error } = await sb.from("esercitazione_ospiti").delete().eq("id", o.id);
+    const { error } = await sb.from("attivazione_ospiti").delete().eq("id", o.id);
     if (error){ alert("Errore: " + error.message); return; }
     apriCruscottoEsercitazione(c.es.id, "ospiti");
   }));
   body.querySelectorAll("[data-extra-elimina]").forEach(b => b.addEventListener("click", async () => {
     if (!confirm("Togliere questa riga di extra?")) return;
-    const { error } = await sb.from("esercitazione_extra").delete().eq("id", parseInt(b.dataset.extraElimina));
+    const { error } = await sb.from("attivazione_extra").delete().eq("id", parseInt(b.dataset.extraElimina));
     if (error){ alert("Errore: " + error.message); return; }
     apriCruscottoEsercitazione(c.es.id, "ospiti");
   }));
@@ -6321,8 +6369,8 @@ function renderTabOspitiEsercitazione(){
     ev.preventDefault();
     const quantita = parseInt(fx.quantita.value, 10);
     if (!fx.servizio_id.value || !(quantita >= 1 && quantita <= 1000) || !fx.descrizione.value.trim()){ alert("Indica servizio, quantità (1–1000) e descrizione."); return; }
-    const { error } = await sb.from("esercitazione_extra").insert({
-      esercitazione_id: c.es.id, servizio_id: parseInt(fx.servizio_id.value), quantita, descrizione: fx.descrizione.value.trim()
+    const { error } = await sb.from("attivazione_extra").insert({
+      attivazione_id: c.es.id, servizio_id: parseInt(fx.servizio_id.value), quantita, descrizione: fx.descrizione.value.trim()
     });
     if (error){ alert("Errore: " + error.message); return; }
     apriCruscottoEsercitazione(c.es.id, "ospiti");
@@ -6366,15 +6414,15 @@ function mostraFormOspiteEsercitazione(ospiteId){
     const errEsig = erroreEsigenze(c, esigenze, esigenzeNote);
     if (errEsig){ mostraErrore(errEsig); return; }
     const payload = {
-      esercitazione_id: c.es.id, nome, ente_ruolo: f.ente_ruolo.value.trim() || null,
+      attivazione_id: c.es.id, nome, ente_ruolo: f.ente_ruolo.value.trim() || null,
       note: f.note.value.trim() || null, esigenze, esigenze_note: esigenzeNote
     };
     const btn = f.querySelector(".btn-save");
     btn.disabled = true;
     let id = o?.id;
     const r = id
-      ? await sb.from("esercitazione_ospiti").update(payload).eq("id", id)
-      : await sb.from("esercitazione_ospiti").insert(payload).select("id").single();
+      ? await sb.from("attivazione_ospiti").update(payload).eq("id", id)
+      : await sb.from("attivazione_ospiti").insert(payload).select("id").single();
     if (r.error){ btn.disabled = false; mostraErrore("Errore: " + r.error.message); return; }
     if (!id) id = r.data.id;
 
@@ -6384,18 +6432,18 @@ function mostraFormOspiteEsercitazione(ospiteId){
     const daTogliere = prima.filter(s => !servizi.includes(s));
     const daAggiungere = servizi.filter(s => !prima.includes(s));
     if (daTogliere.length){
-      const { error } = await sb.from("esercitazione_ospiti_servizi").delete().eq("ospite_id", id).in("servizio_id", daTogliere);
+      const { error } = await sb.from("attivazione_ospiti_servizi").delete().eq("ospite_id", id).in("servizio_id", daTogliere);
       if (error){ btn.disabled = false; mostraErrore("Ospite salvato, ma errore sui servizi: " + error.message); return; }
     }
     if (daAggiungere.length){
-      const { error } = await sb.from("esercitazione_ospiti_servizi").insert(daAggiungere.map(s => ({ ospite_id:id, servizio_id:s, esercitazione_id:c.es.id })));
+      const { error } = await sb.from("attivazione_ospiti_servizi").insert(daAggiungere.map(s => ({ ospite_id:id, servizio_id:s, attivazione_id:c.es.id })));
       if (error){ btn.disabled = false; mostraErrore("Ospite salvato, ma errore sui servizi: " + error.message); return; }
     }
     apriCruscottoEsercitazione(c.es.id, "ospiti");
   });
 }
 
-/* ---------- Scheda Cucina (anche livello base): dati da esercitazione_cucina() ---------- */
+/* ---------- Scheda Cucina (anche livello base): dati da attivazione_cucina() ---------- */
 function righeCucina(c){
   return ((c.cucina && c.cucina.servizi) || []).map(s => ({
     ...s,
@@ -6452,7 +6500,7 @@ function stampaCucinaEsercitazione(){
   const c = _cruscotto;
   const w = window.open("", "_blank");
   if (!w){ alert("Il browser ha bloccato la finestra di stampa: consenti i popup per questo sito."); return; }
-  const date = c.es.data_fine !== c.es.data_inizio ? `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}` : formatDataIt(c.es.data_inizio);
+  const date = periodoAttivazioneIt(c.es);
   w.document.write(`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Cucina – ${escapeHtml(c.es.titolo)}</title>
     <style>
       @page { size: A4; margin: 14mm; }
@@ -6473,7 +6521,7 @@ function stampaCucinaEsercitazione(){
   w.document.close();
 }
 
-/* ---------- Scheda Sezioni: link pubblici (token solo via esercitazione_link) ---------- */
+/* ---------- Scheda Sezioni: link pubblici (token solo via attivazione_link) ---------- */
 function urlAdesione(token){
   return new URL(`adesione.html?t=${encodeURIComponent(token)}`, location.href).href;
 }
@@ -6487,14 +6535,21 @@ function nuovoUuid(){
 }
 
 function testoMailAdesione(es, sezione, link){
-  const date = es.data_fine !== es.data_inizio ? `dal ${formatDataIt(es.data_inizio)} al ${formatDataIt(es.data_fine)}` : `il ${formatDataIt(es.data_inizio)}`;
-  const oggetto = `Esercitazione "${es.titolo}" – adesioni Sezione ${sezione}`;
+  const T = testiTipo(es.tipo);
+  const date = !es.data_fine ? `dal ${formatDataIt(es.data_inizio)}`
+    : es.data_fine !== es.data_inizio ? `dal ${formatDataIt(es.data_inizio)} al ${formatDataIt(es.data_fine)}` : `il ${formatDataIt(es.data_inizio)}`;
+  const emergenza = es.tipo === "emergenza";
+  const oggetto = `${T.Nome} "${es.titolo}" – ${emergenza ? "disponibilità" : "adesioni"} Sezione ${sezione}`;
   const testo = [
     "Buongiorno,",
     "",
-    `la Sezione ${sezione} è invitata all'esercitazione "${es.titolo}" (${ENTI_ESERCITAZIONE[es.ente] || es.ente}) che si terrà ${date}${es.luogo ? ` a ${es.luogo}` : ""}.`,
+    emergenza
+      ? `per l'emergenza "${es.titolo}" (${ENTI_ESERCITAZIONE[es.ente] || es.ente}) ${date}${es.luogo ? ` a ${es.luogo}` : ""} chiediamo alla Sezione ${sezione} di comunicare le disponibilità.`
+      : `la Sezione ${sezione} è invitata all'esercitazione "${es.titolo}" (${ENTI_ESERCITAZIONE[es.ente] || es.ente}) che si terrà ${date}${es.luogo ? ` a ${es.luogo}` : ""}.`,
     "",
-    "Per comunicare i volontari partecipanti, con pasti e pernotti, usate questo link riservato alla vostra Sezione (non serve registrarsi):",
+    emergenza
+      ? "Per comunicare i volontari disponibili usate questo link riservato alla vostra Sezione (non serve registrarsi):"
+      : "Per comunicare i volontari partecipanti, con pasti e pernotti, usate questo link riservato alla vostra Sezione (non serve registrarsi):",
     link,
     "",
     es.chiusura_adesioni ? `Le adesioni si chiudono il ${formatDataOraIt(es.chiusura_adesioni)}.` : "",
@@ -6525,13 +6580,13 @@ async function renderTabSezioniEsercitazione(){
   let link = new Map();
   if (completo){
     body.innerHTML = `<div class="loading-spin">Caricamento…</div>`;
-    const { data, error } = await sb.rpc("esercitazione_link", { p_esercitazione_id: c.es.id });
+    const { data, error } = await sb.rpc("attivazione_link", { p_attivazione_id: c.es.id });
     if (error){ body.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
-    (data || []).forEach(r => link.set(r.esercitazione_sezione_id, r));
+    (data || []).forEach(r => link.set(r.attivazione_sezione_id, r));
   }
 
   const avvisi = [];
-  if (c.es.stato === "bozza") avvisi.push("L'esercitazione è in <strong>bozza</strong>: i link non funzionano finché non imposti lo stato \"Adesioni aperte\".");
+  if (c.es.stato === "bozza") avvisi.push("L'evento è in <strong>bozza</strong>: i link non funzionano finché non imposti lo stato \"Adesioni aperte\".");
   if (c.es.stato === "chiusa" || c.es.stato === "conclusa") avvisi.push("Le adesioni sono chiuse: i link mostrano i dati ma non permettono modifiche.");
 
   body.innerHTML = `
@@ -6576,7 +6631,7 @@ async function renderTabSezioniEsercitazione(){
     const id = parseInt(b.dataset.rigenera);
     const l = link.get(id);
     if (!confirm(`Rigenerare il link della Sezione ${l?.sezione || ""}? Il link inviato finora smetterà di funzionare e andrà mandato quello nuovo. Le adesioni già inserite restano.`)) return;
-    const { error } = await sb.from("esercitazione_sezioni").update({ token: nuovoUuid() }).eq("id", id);
+    const { error } = await sb.from("attivazione_sezioni").update({ token: nuovoUuid() }).eq("id", id);
     if (error){ alert("Errore: " + error.message); return; }
     renderTabSezioniEsercitazione();
   }));
@@ -6609,9 +6664,9 @@ function esportaEsercitazioneExcel(){
     : XLSX.utils.aoa_to_sheet([["Nessun volontario iscritto"]]);
 
   const aoa = [
-    ["Esercitazione", c.es.titolo],
+    [testiTipo(c.es.tipo).Nome, c.es.titolo],
     ["Ente", ENTI_ESERCITAZIONE[c.es.ente] || c.es.ente],
-    ["Date", `${formatDataIt(c.es.data_inizio)} – ${formatDataIt(c.es.data_fine)}`],
+    ["Date", periodoAttivazioneIt(c.es)],
     ["Luogo", c.es.luogo || ""],
     ["Stato", STATI_ESERCITAZIONE[c.es.stato] || c.es.stato],
     ["Esportato il", formatDataOraIt(new Date().toISOString())],
@@ -6655,7 +6710,7 @@ function esportaEsercitazioneExcel(){
       return riga;
     })), "Ospiti");
   }
-  XLSX.writeFile(wb, `Esercitazione_${(c.es.titolo || "").replace(/[^a-zA-Z0-9]+/g, "_").slice(0,60)}_${c.es.data_inizio}.xlsx`);
+  XLSX.writeFile(wb, `${testiTipo(c.es.tipo).Nome}_${(c.es.titolo || "").replace(/[^a-zA-Z0-9]+/g, "_").slice(0,60)}_${c.es.data_inizio}.xlsx`);
 }
 
 async function renderImpostazioni(){
@@ -6694,25 +6749,25 @@ async function renderImpostazioni(){
     `;
   }
 
-  const puoGestireEsercitazioni = esercitazioniCompleto();
+  const puoGestireEsercitazioni = gestisceAttivazioni();
   if (puoGestireEsercitazioni){
     html += `
-      <div class="section-title" style="margin-top:28px;">Esercitazioni – patenti</div>
+      <div class="section-title" style="margin-top:28px;">Esercitazioni ed emergenze – patenti</div>
       <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Le patenti che le Sezioni possono indicare per ogni volontario.</p>
       <div id="es-patenti-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-patente-es">+ Nuova patente</button></div>
 
-      <div class="section-title" style="margin-top:28px;">Esercitazioni – abilitazioni</div>
+      <div class="section-title" style="margin-top:28px;">Esercitazioni ed emergenze – abilitazioni</div>
       <div id="es-abilitazioni-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-abilitazione-es">+ Nuova abilitazione</button></div>
 
-      <div class="section-title" style="margin-top:28px;">Esercitazioni – esigenze alimentari</div>
+      <div class="section-title" style="margin-top:28px;">Esercitazioni ed emergenze – esigenze alimentari</div>
       <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Le voci "con nota" (es. allergie) chiedono di descrivere l'esigenza: nel report Cucina compaiono con nome e nota della persona.</p>
       <div id="es-esigenze-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-esigenza-es">+ Nuova esigenza</button></div>
 
       <div class="section-title" style="margin-top:28px;">Sezioni ANA – mail Protezione Civile</div>
-      <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Indirizzi usati per inviare alle Sezioni il link delle adesioni alle esercitazioni.</p>
+      <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Indirizzi usati per inviare alle Sezioni il link delle adesioni a esercitazioni ed emergenze.</p>
       <div id="sezioni-ana-mail-list"></div>
     `;
   }
@@ -6736,10 +6791,10 @@ async function renderImpostazioni(){
   }
 
   if (puoGestireEsercitazioni){
-    await renderListaVociEsercitazione("esercitazioni_patenti", "es-patenti-list", "patente");
-    document.getElementById("btn-nuova-patente-es").addEventListener("click", () => aggiungiVoceEsercitazione("esercitazioni_patenti", "es-patenti-list", "patente", "es. B, C, CE…"));
-    await renderListaVociEsercitazione("esercitazioni_abilitazioni", "es-abilitazioni-list", "abilitazione");
-    document.getElementById("btn-nuova-abilitazione-es").addEventListener("click", () => aggiungiVoceEsercitazione("esercitazioni_abilitazioni", "es-abilitazioni-list", "abilitazione", "es. MMT, TRIS…"));
+    await renderListaVociEsercitazione("attivazioni_patenti", "es-patenti-list", "patente");
+    document.getElementById("btn-nuova-patente-es").addEventListener("click", () => aggiungiVoceEsercitazione("attivazioni_patenti", "es-patenti-list", "patente", "es. B, C, CE…"));
+    await renderListaVociEsercitazione("attivazioni_abilitazioni", "es-abilitazioni-list", "abilitazione");
+    document.getElementById("btn-nuova-abilitazione-es").addEventListener("click", () => aggiungiVoceEsercitazione("attivazioni_abilitazioni", "es-abilitazioni-list", "abilitazione", "es. MMT, TRIS…"));
     await renderListaEsigenzeEsercitazione();
     document.getElementById("btn-nuova-esigenza-es").addEventListener("click", aggiungiEsigenzaEsercitazione);
     await renderMailSezioniAna();
@@ -6747,7 +6802,7 @@ async function renderImpostazioni(){
 }
 
 async function renderListaEsigenzeEsercitazione(){
-  const { data, error } = await sb.from("esercitazioni_esigenze").select("id, nome, con_nota").order("ordine").order("nome");
+  const { data, error } = await sb.from("attivazioni_esigenze").select("id, nome, con_nota").order("ordine").order("nome");
   const wrap = document.getElementById("es-esigenze-list");
   if (!wrap) return;
   if (error){ wrap.innerHTML = `<p>Errore: ${escapeHtml(error.message)}</p>`; return; }
@@ -6764,12 +6819,12 @@ async function renderListaEsigenzeEsercitazione(){
       </tbody>
     </table>`;
   wrap.querySelectorAll("[data-con-nota]").forEach(cb => cb.addEventListener("change", async () => {
-    const { error } = await sb.from("esercitazioni_esigenze").update({ con_nota: cb.checked }).eq("id", parseInt(cb.dataset.conNota));
+    const { error } = await sb.from("attivazioni_esigenze").update({ con_nota: cb.checked }).eq("id", parseInt(cb.dataset.conNota));
     if (error){ alert("Errore: " + error.message); cb.checked = !cb.checked; }
   }));
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
     if (!confirm(`Eliminare l'esigenza "${b.dataset.nome}"? Non sarà più selezionabile; chi l'ha già indicata la conserva.`)) return;
-    const { error } = await sb.from("esercitazioni_esigenze").delete().eq("id", parseInt(b.dataset.id));
+    const { error } = await sb.from("attivazioni_esigenze").delete().eq("id", parseInt(b.dataset.id));
     if (error){ alert("Errore: " + error.message); return; }
     renderListaEsigenzeEsercitazione();
   }));
@@ -6779,10 +6834,10 @@ async function aggiungiEsigenzaEsercitazione(){
   const nome = prompt("Nome nuova esigenza alimentare (es. Vegano, Senza lattosio…):");
   if (!nome || !nome.trim()) return;
   const conNota = confirm("Per questa esigenza serve una nota (es. a cosa è allergico) e la cucina deve vedere il nome della persona?\n\nOK = sì, Annulla = no");
-  const { data: ultime, error: errOrd } = await sb.from("esercitazioni_esigenze").select("ordine").order("ordine", { ascending:false }).limit(1);
+  const { data: ultime, error: errOrd } = await sb.from("attivazioni_esigenze").select("ordine").order("ordine", { ascending:false }).limit(1);
   if (errOrd){ alert("Errore: " + errOrd.message); return; }
   const n = nome.trim();
-  const { error } = await sb.from("esercitazioni_esigenze").insert({ nome: n.charAt(0).toUpperCase() + n.slice(1), con_nota: conNota, ordine: (ultime?.[0]?.ordine || 0) + 1 });
+  const { error } = await sb.from("attivazioni_esigenze").insert({ nome: n.charAt(0).toUpperCase() + n.slice(1), con_nota: conNota, ordine: (ultime?.[0]?.ordine || 0) + 1 });
   if (error){ alert(error.code === "23505" ? "Questa esigenza esiste già." : "Errore: " + error.message); return; }
   renderListaEsigenzeEsercitazione();
 }

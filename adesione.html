@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0b2545">
-<title>Adesione esercitazione – Polo Logistico</title>
+<title>Adesioni – Polo Logistico</title>
 <link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="stile.css">
 <script src="https://unpkg.com/@supabase/supabase-js@2.117.2"></script>
@@ -220,13 +220,20 @@
       <div class="messaggio msg-${tipo}"><h2>${esc(titolo)}</h2>${esc(testo)}</div>`;
   }
 
+  // "esercitazione" | "emergenza": stessa pagina, testi diversi
+  function nomeTipo(){ return dati.attivazione.tipo === "emergenza" ? "Emergenza" : "Esercitazione"; }
+  function periodo(e){
+    if (!e.data_fine) return `dal ${dataIt(e.data_inizio)} (in corso)`;
+    return e.data_fine !== e.data_inizio ? `${dataIt(e.data_inizio)} – ${dataIt(e.data_fine)}` : dataIt(e.data_inizio);
+  }
+
   /* ---------- disegno ---------- */
   function testata(){
-    const e = dati.esercitazione;
-    const date = e.data_fine && e.data_fine !== e.data_inizio ? `${dataIt(e.data_inizio)} – ${dataIt(e.data_fine)}` : dataIt(e.data_inizio);
+    const e = dati.attivazione;
+    const date = periodo(e);
     return `
       <div class="testata">
-        <div class="org">Esercitazione ${esc(ENTI[e.ente] || e.ente)}</div>
+        <div class="org">${nomeTipo()} ${esc(ENTI[e.ente] || e.ente)}</div>
         <h1>${esc(e.titolo)}</h1>
         <div class="riga">📅 ${esc(date)}</div>
         ${e.luogo ? `<div class="riga">📍 ${esc(e.luogo)}</div>` : ""}
@@ -236,7 +243,7 @@
       ${e.descrizione ? `<div class="scheda"><p class="aiuto" style="margin:0;white-space:pre-line;color:var(--grigio-800);">${esc(e.descrizione)}</p></div>` : ""}`;
   }
 
-  // Campi configurati sull'esercitazione: non_richiesto | facoltativo | obbligatorio
+  // Campi configurati sull'evento: non_richiesto | facoltativo | obbligatorio
   // come sul DB: campo assente = facoltativo, tranne le esigenze (non richieste)
   function livello(k){ return (dati.campi && dati.campi[k]) || (k === "esigenze" ? "non_richiesto" : "facoltativo"); }
   function esigenzeConNota(){ return (dati.esigenze || []).filter(e => e.con_nota).map(e => e.nome); }
@@ -278,8 +285,8 @@
 
   function disegnaChiuso(){
     barra.style.display = "none";
-    const e = dati.esercitazione;
-    const motivo = e.stato === "aperta" ? "Il termine per le adesioni è scaduto." : "Le adesioni per questa esercitazione sono chiuse.";
+    const e = dati.attivazione;
+    const motivo = e.stato === "aperta" ? "Il termine per le adesioni è scaduto." : "Le adesioni per questo evento sono chiuse.";
     let riepilogo = "";
     if (dati.stato_sezione === "risposto") riepilogo = `La vostra Sezione ha inviato l'adesione per <strong>${volontari.length}</strong> volontari${dati.risposto_at ? ` (${esc(dataOraIt(dati.risposto_at))})` : ""}.`;
     else if (dati.stato_sezione === "non_partecipa") riepilogo = "La vostra Sezione ha indicato che non partecipa.";
@@ -389,10 +396,10 @@
 
   /* ---------- Excel: modello e caricamento (modulo esercitazioni-excel.js) ---------- */
   function configExcel(){
-    const e = dati.esercitazione;
+    const e = dati.attivazione;
     return {
       titolo: e.titolo, sezione: dati.sezione,
-      date: e.data_fine && e.data_fine !== e.data_inizio ? `${dataIt(e.data_inizio)} – ${dataIt(e.data_fine)}` : dataIt(e.data_inizio),
+      date: periodo(e),
       campi: dati.campi || {}, patenti: dati.patenti || [], abilitazioni: dati.abilitazioni || [],
       servizi: dati.servizi || [], esigenze: dati.esigenze || [], volontari, maxVolontari: MAX_VOLONTARI
     };
@@ -628,7 +635,7 @@
     if (invioInCorso) return;
     const testo = volontari.length || dati.stato_sezione === "risposto"
       ? "Confermate che la Sezione NON partecipa? L'elenco dei volontari inviato finora verrà cancellato."
-      : "Confermate che la Sezione NON partecipa a questa esercitazione?";
+      : `Confermate che la Sezione NON partecipa a questa ${nomeTipo().toLowerCase()}?`;
     if (!confirm(testo)) return;
     await esegui("adesione_nessuna", { p_token: token });
   }
