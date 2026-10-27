@@ -1,5 +1,5 @@
 /* ============================================================
-   Esercitazioni – modello Excel da scaricare e ricaricare.
+   Esercitazioni ed emergenze – modello Excel da scaricare e ricaricare.
    Condiviso da adesione.html (Sezioni) e index.html (cruscotto admin).
    Usa ExcelJS (caricato da CDN solo quando serve) perché permette i menu
    a tendina (convalida dati). Nessun dato viene inviato: tutto nel browser.
@@ -8,15 +8,19 @@
      scaricaModello(cfg)      → genera e scarica il file .xlsx
      leggiFile(file, cfg)     → { righe:[{ riga, volontario, errori[] }], erroriFile[] }
      htmlAnteprima(esito)     → tabella HTML (stili in linea) con gli errori riga per riga
-   cfg = { titolo, sezione, date, campi, patenti[], abilitazioni[], servizi[{id,giorno,tipo}],
-           volontari[], maxVolontari }
+   cfg = { titolo, tipoNome ("Esercitazione" | "Emergenza"), sezione, date, campi, patenti[], abilitazioni[],
+           tipologie[], esigenze[], servizi[{id,giorno,tipo}], volontari[], maxVolontari }
+   Gli orari delle giornate di disponibilità non sono nel modello: si indicano dalla pagina
+   (un volontario caricato da Excel senza orari conserva quelli già salvati).
    ============================================================ */
 (function(){
   "use strict";
 
   const EXCELJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
-  const TIPI = ["colazione", "pranzo", "cena", "pernotto"];
-  const LABEL_TIPO = { colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  const TIPI = ["disponibile", "colazione", "pranzo", "cena", "pernotto"];
+  const LABEL_TIPO = { disponibile:"Disponibile", colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  // campi che, se assenti dalla configurazione, valgono "non richiesto" (come sul DB)
+  const NON_RICHIESTI_SE_ASSENTI = ["esigenze", "tipologia", "art39", "orari", "mezzi", "materiali"];
   const LIVELLO_DEFAULT = "facoltativo";
   const RIGHE_MODELLO = 150;
   const FOGLIO = "Volontari";
@@ -36,8 +40,8 @@
     return caricamento;
   }
 
-  // come sul DB: un campo assente vale "facoltativo", tranne le esigenze ("non richiesto")
-  function livello(campi, k){ return (campi && campi[k]) || (k === "esigenze" ? "non_richiesto" : LIVELLO_DEFAULT); }
+  // come sul DB: un campo assente vale "facoltativo", tranne quelli in NON_RICHIESTI_SE_ASSENTI
+  function livello(campi, k){ return (campi && campi[k]) || (NON_RICHIESTI_SE_ASSENTI.includes(k) ? "non_richiesto" : LIVELLO_DEFAULT); }
 
   function serviziOrdinati(cfg){
     return [...(cfg.servizi || [])].sort((a, b) => a.giorno.localeCompare(b.giorno) || TIPI.indexOf(a.tipo) - TIPI.indexOf(b.tipo));
@@ -68,7 +72,7 @@
     return t.charAt(0).toUpperCase() + t.slice(1);
   }
 
-  // Colonne del modello, in ordine: { chiave, titolo, tipo: testo|sino, larghezza }
+  // Colonne del modello, in ordine: { chiave, titolo, tipo: testo|sino|lista, larghezza, valori? }
   function colonne(cfg){
     const c = cfg.campi || {};
     const stella = k => obbligatorio(c, k) ? " *" : "";
@@ -77,7 +81,9 @@
       { chiave:"nome", titolo:"Nome *", tipo:"testo", larghezza:20 },
       { chiave:"codice_fiscale", titolo:"Codice fiscale *", tipo:"testo", larghezza:20 }
     ];
+    if (attivo(c, "tipologia")) out.push({ chiave:"tipologia", titolo:"Tipologia" + stella("tipologia"), tipo:"lista", larghezza:16, valori:cfg.tipologie || [] });
     if (attivo(c, "cellulare")) out.push({ chiave:"cellulare", titolo:"Cellulare" + stella("cellulare"), tipo:"testo", larghezza:16 });
+    if (attivo(c, "art39")) out.push({ chiave:"art39", titolo:"Chiede art. 39", tipo:"sino", larghezza:12 });
     if (attivo(c, "patenti")) (cfg.patenti || []).forEach(p => out.push({ chiave:"patente:" + p, titolo:"Patente " + p, tipo:"sino", larghezza:11 }));
     if (attivo(c, "abilitazioni")) (cfg.abilitazioni || []).forEach(p => out.push({ chiave:"abilitazione:" + p, titolo:p, tipo:"sino", larghezza:11 }));
     if (attivo(c, "servizi")) serviziOrdinati(cfg).forEach(s => out.push({ chiave:"servizio:" + s.id, titolo:`${etichettaGiorno(s.giorno)} ${LABEL_TIPO[s.tipo] || s.tipo}`, tipo:"sino", larghezza:14, servizio:s }));
@@ -95,6 +101,7 @@
     if (tipo === "abilitazione") return (v.abilitazioni || []).includes(chiave) ? "SI" : "NO";
     if (tipo === "esigenza") return (v.esigenze || []).includes(chiave) ? "SI" : "NO";
     if (tipo === "servizio") return (v.servizi || []).map(String).includes(chiave) ? "SI" : "NO";
+    if (tipo === "art39") return v.art39 ? "SI" : "NO";
     return v[tipo] || "";
   }
 
@@ -146,6 +153,9 @@
           cella.alignment = { horizontal:"center" };
           cella.dataValidation = { type:"list", allowBlank:true, formulae:['"SI,NO"'], showErrorMessage:true,
                                    errorTitle:"Valore non valido", error:"Scegli SI oppure NO." };
+        } else if (c.tipo === "lista"){
+          if (c.valori.length) cella.dataValidation = { type:"list", allowBlank:true, formulae:[`"${c.valori.join(",")}"`], showErrorMessage:true,
+                                                        errorTitle:"Valore non valido", error:"Scegli un valore dal menu." };
         } else {
           cella.numFmt = "@"; // testo: il CF non diventa un numero e gli zeri iniziali del cellulare restano
         }
@@ -156,7 +166,7 @@
     const ist = wb.addWorksheet("Istruzioni");
     ist.getColumn(1).width = 110;
     const righeIst = [
-      [`Esercitazione: ${cfg.titolo || ""}`, true],
+      [`${cfg.tipoNome || "Esercitazione"}: ${cfg.titolo || ""}`, true],
       [cfg.date ? `Date: ${cfg.date}` : "", false],
       [cfg.sezione ? `Sezione: ${cfg.sezione}` : "", false],
       ["", false],
@@ -165,8 +175,14 @@
       ["• Le colonne con * sono obbligatorie. Cognome, nome e codice fiscale servono sempre.", false],
       ["• Codice fiscale: 16 caratteri, senza spazi.", false],
       ["• Nelle colonne con il menu a tendina scegliete SI oppure NO.", false],
-      ...(attivo(cfg.campi, "servizi") ? [["• Pasti e pernotti: SI per ogni pasto o notte a cui il volontario partecipa." + (obbligatorio(cfg.campi, "servizi") ? " Almeno uno è obbligatorio." : ""), false],
-                                         ["• La colazione si imposta da sola a SI se il volontario pernotta la notte prima; potete comunque cambiarla.", false]] : []),
+      ...(attivo(cfg.campi, "tipologia") ? [["• Tipologia: sceglietela dal menu a tendina." + (obbligatorio(cfg.campi, "tipologia") ? " È obbligatoria." : ""), false]] : []),
+      ...(attivo(cfg.campi, "servizi") && (cfg.servizi || []).some(s => s.tipo === "disponibile")
+          ? [["• Disponibile: SI per ogni giornata in cui il volontario è disponibile." + (attivo(cfg.campi, "orari") ? " Gli eventuali orari si indicano dalla pagina, dopo il caricamento." : ""), false]] : []),
+      ...(attivo(cfg.campi, "servizi") && (cfg.servizi || []).some(s => s.tipo !== "disponibile")
+          ? [["• Pasti e pernotti: SI per ogni pasto o notte a cui il volontario partecipa.", false],
+             ["• La colazione si imposta da sola a SI se il volontario pernotta la notte prima; potete comunque cambiarla.", false]] : []),
+      ...(obbligatorio(cfg.campi, "servizi") ? [["• Almeno una giornata, un pasto o un pernotto è obbligatorio.", false]] : []),
+      ...(attivo(cfg.campi, "art39") ? [["• Chiede art. 39: SI se il volontario chiede i benefici di legge per il datore di lavoro (i dati del datore li gestisce la Sezione).", false]] : []),
       ...(attivo(cfg.campi, "esigenze") ? [["• Esigenze alimentari: SI dove serve. Per allergie e \"altro\" scrivete il dettaglio nella colonna \"Nota esigenze alimentari\".", false]] : []),
       ...(obbligatorio(cfg.campi, "patenti") ? [["• Patenti: indicate SI per almeno una patente.", false]] : []),
       ...(obbligatorio(cfg.campi, "abilitazioni") ? [["• Abilitazioni: indicate SI per almeno un'abilitazione.", false]] : []),
@@ -189,7 +205,7 @@
 
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const nome = `Adesione_${(cfg.sezione || "Sezione").replace(/[^a-zA-Z0-9]+/g, "_")}_${(cfg.titolo || "esercitazione").replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 40)}.xlsx`;
+    const nome = `Adesione_${(cfg.sezione || "Sezione").replace(/[^a-zA-Z0-9]+/g, "_")}_${(cfg.titolo || "evento").replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 40)}.xlsx`;
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = nome;
@@ -245,7 +261,7 @@
       const titolo = testoCella(testa.getCell(i)).replace(/\s*\*$/, "").trim().toUpperCase();
       const col = (chiaveCod && perChiave.get(chiaveCod)) || perTitolo.get(titolo) || null;
       mappa[i] = col;
-      if (!col && titolo) erroriFile.push(`Colonna "${testoCella(testa.getCell(i))}" non prevista per questa esercitazione: viene ignorata.`);
+      if (!col && titolo) erroriFile.push(`Colonna "${testoCella(testa.getCell(i))}" non prevista per questo evento: viene ignorata.`);
     }
     ["cognome", "nome", "codice_fiscale"].forEach(k => {
       if (!mappa.some(c => c && c.chiave === k)) erroriFile.push(`Manca la colonna obbligatoria "${perChiave.get(k).titolo}".`);
@@ -264,7 +280,7 @@
         if (!col) continue;
         const t = testoCella(riga.getCell(i)).trim();
         val[col.chiave] = t;
-        if (t && col.tipo === "testo") vuota = false;
+        if (t && col.tipo !== "sino") vuota = false;
         if (col.tipo === "sino" && siNo(t) === true) vuota = false;
       }
       if (vuota) continue;
@@ -279,6 +295,15 @@
         esigenze_note: attivo(campi, "esigenze") ? ((val.esigenze_note || "") || null) : null,
         patenti: [], abilitazioni: [], servizi: [], esigenze: []
       };
+      // tipologia e art. 39 solo se richiesti: se assenti, sul DB resta il valore già salvato
+      if (attivo(campi, "tipologia")){
+        const t = (val.tipologia || "").trim();
+        const trovata = (cfg.tipologie || []).find(x => x.toUpperCase() === t.toUpperCase());
+        v.tipologia = trovata || null;
+        if (t && !trovata) errori.push(`tipologia "${t}" non prevista`);
+        else if (!t && obbligatorio(campi, "tipologia")) errori.push("tipologia obbligatoria");
+      }
+      if (attivo(campi, "art39")) v.art39 = false;
       if (!v.cognome) errori.push("cognome mancante");
       if (!v.nome) errori.push("nome mancante");
       if (v.cognome.length > 80 || v.nome.length > 80) errori.push("cognome o nome troppo lungo");
@@ -300,6 +325,7 @@
         else if (tipo === "abilitazione") v.abilitazioni.push(k);
         else if (tipo === "esigenza") v.esigenze.push(k);
         else if (tipo === "servizio") v.servizi.push(Number(k));
+        else if (tipo === "art39") v.art39 = true;
       });
       if (v.esigenze_note && v.esigenze_note.length > 300) errori.push("nota esigenze troppo lunga");
       const conNota = (cfg.esigenze || []).filter(e => e.con_nota).map(e => e.nome);
@@ -308,7 +334,7 @@
       if (obbligatorio(campi, "note") && !v.note) errori.push("note obbligatorie");
       if (obbligatorio(campi, "patenti") && !v.patenti.length) errori.push("indicare almeno una patente");
       if (obbligatorio(campi, "abilitazioni") && !v.abilitazioni.length) errori.push("indicare almeno un'abilitazione");
-      if (obbligatorio(campi, "servizi") && !v.servizi.length) errori.push("indicare almeno un pasto o pernotto");
+      if (obbligatorio(campi, "servizi") && !v.servizi.length) errori.push("indicare almeno una giornata, un pasto o un pernotto");
 
       righe.push({ riga:r, volontario:v, errori });
     }

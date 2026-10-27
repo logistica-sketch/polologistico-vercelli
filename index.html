@@ -5265,28 +5265,44 @@ let _esercitazioniFiltro = { search:"", stato:"" };
 const ENTI_ESERCITAZIONE = { CAP:"CAP", "1RGPT":"1° RGPT" };
 const STATI_ESERCITAZIONE = { bozza:"Bozza", aperta:"Adesioni aperte", chiusa:"Adesioni chiuse", conclusa:"Conclusa" };
 const STATI_SEZIONE_ESERCITAZIONE = { risposto:"Risposto", in_attesa:"In attesa", non_partecipa:"Non partecipa" };
-// Ordine nel giorno: colazione, pranzo, cena, pernotto
+// Pasti e pernotti, nell'ordine del giorno: colazione, pranzo, cena, pernotto
 const TIPI_SERVIZIO = ["colazione", "pranzo", "cena", "pernotto"];
-const LABEL_SERVIZIO = { colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+// Le emergenze hanno in più la giornata di disponibilità ("disponibile"), prima dei pasti
+const ORDINE_SERVIZIO = ["disponibile", ...TIPI_SERVIZIO];
+const LABEL_SERVIZIO = { disponibile:"Disponibile", colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+function tipiGriglia(tipo){ return (tipo || _attivazioneTipo) === "emergenza" ? ORDINE_SERVIZIO : TIPI_SERVIZIO; }
 const MAX_GIORNI_ESERCITAZIONE = 31;
-// Campi configurabili per esercitazione (colonna esercitazioni.campi). Cognome, nome e CF sono sempre obbligatori.
-// Esigenze alimentari: solo non richiesto / facoltativo (chi non ha esigenze non indica nulla).
+// Campi configurabili per evento (colonna attivazioni.campi). Cognome, nome e CF sono sempre obbligatori.
+// senzaObbligatorio: solo non richiesto / facoltativo. soloEmergenza: non compare nelle esercitazioni.
 const CAMPI_ESERCITAZIONE = [
+  { k:"tipologia", label:"Tipologia (caposquadra…)", soloEmergenza:true },
   { k:"cellulare", label:"Cellulare" },
   { k:"patenti", label:"Patenti" },
   { k:"abilitazioni", label:"Abilitazioni" },
-  { k:"servizi", label:"Pasti e pernotti" },
+  { k:"servizi", label:"Pasti e pernotti", labelEmergenza:"Giornate, pasti e pernotti" },
+  { k:"orari", label:"Orari nella giornata", senzaObbligatorio:true, soloEmergenza:true },
+  { k:"art39", label:"Richiesta art. 39", senzaObbligatorio:true, soloEmergenza:true },
   { k:"esigenze", label:"Esigenze alimentari", senzaObbligatorio:true },
-  { k:"note", label:"Note" }
+  { k:"note", label:"Note" },
+  { k:"mezzi", label:"Mezzi della Sezione", senzaObbligatorio:true, soloEmergenza:true },
+  { k:"materiali", label:"Materiali della Sezione", senzaObbligatorio:true, soloEmergenza:true }
 ];
+function campiPerTipo(tipo){ return CAMPI_ESERCITAZIONE.filter(c => !c.soloEmergenza || tipo === "emergenza"); }
 const LIVELLI_CAMPO = { non_richiesto:"Non richiesto", facoltativo:"Facoltativo", obbligatorio:"Obbligatorio" };
 const CAMPI_DEFAULT = { cellulare:"facoltativo", patenti:"facoltativo", abilitazioni:"facoltativo", servizi:"facoltativo", esigenze:"facoltativo", note:"non_richiesto" };
-// Valori per una nuova esercitazione: CAMPI_DEFAULT. Su un'esercitazione salvata un campo assente vale
-// "facoltativo", tranne le esigenze ("non richiesto"), come fa adesione_salva sul database.
-function livelloCampo(es, k){
-  if (es && es.campi) return es.campi[k] || (k === "esigenze" ? "non_richiesto" : "facoltativo");
-  return CAMPI_DEFAULT[k] || "facoltativo";
+const CAMPI_DEFAULT_EMERGENZA = { tipologia:"obbligatorio", cellulare:"obbligatorio", patenti:"facoltativo", abilitazioni:"facoltativo",
+  servizi:"obbligatorio", orari:"facoltativo", art39:"facoltativo", esigenze:"non_richiesto", note:"facoltativo", mezzi:"facoltativo", materiali:"facoltativo" };
+// Su un evento salvato questi campi, se assenti, valgono "non richiesto" (gli altri "facoltativo"), come in adesione_salva
+const CAMPI_NON_RICHIESTI_SE_ASSENTI = ["esigenze", "tipologia", "art39", "orari", "mezzi", "materiali"];
+// Valori per un nuovo evento: i default del suo tipo
+function livelloCampo(es, k, tipo){
+  if (es && es.campi) return es.campi[k] || (CAMPI_NON_RICHIESTI_SE_ASSENTI.includes(k) ? "non_richiesto" : "facoltativo");
+  const def = (tipo || _attivazioneTipo) === "emergenza" ? CAMPI_DEFAULT_EMERGENZA : CAMPI_DEFAULT;
+  return def[k] || (CAMPI_NON_RICHIESTI_SE_ASSENTI.includes(k) ? "non_richiesto" : "facoltativo");
 }
+// "08:00" ↔ ora del DB ("08:00:00")
+function oraBreve(t){ return t ? String(t).slice(0, 5) : ""; }
+function descriviOrario(o){ return o ? `${o.dalle}–${o.alle}` : "giornata intera"; }
 // pernotto della notte X → colazione del giorno X+1
 function giornoDopo(iso){
   const d = new Date(iso + "T00:00:00Z");
@@ -5356,7 +5372,7 @@ async function caricaAdesioniEsercitazione(esercitazioneId){
   if (esercitazioniCompleto()){
     const { data, error } = await caricaTutteLeRighe(() => sb
       .from("adesioni")
-      .select("id, attivazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, esigenze, esigenze_note, adesione_servizi(servizio_id)")
+      .select("id, attivazione_sezione_id, volontario_id, cognome, nome, codice_fiscale, cellulare, patenti, abilitazioni, note, esigenze, esigenze_note, tipologia, art39, adesione_servizi(servizio_id, ora_dalle, ora_alle)")
       .eq("attivazione_id", esercitazioneId));
     if (error) return { data:null, error };
     return { data: data.map(a => ({
@@ -5364,17 +5380,22 @@ async function caricaAdesioniEsercitazione(esercitazioneId){
       cognome:a.cognome, nome:a.nome, codice_fiscale:a.codice_fiscale, cellulare:a.cellulare,
       patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], note:a.note,
       esigenze:a.esigenze || [], esigenze_note:a.esigenze_note,
-      servizi:(a.adesione_servizi || []).map(x => x.servizio_id)
+      tipologia:a.tipologia, art39:!!a.art39,
+      servizi:(a.adesione_servizi || []).map(x => x.servizio_id),
+      // orari per giornata di disponibilità: { servizio_id: { dalle, alle } }; assente = giornata intera
+      orari:Object.fromEntries((a.adesione_servizi || []).filter(x => x.ora_dalle)
+        .map(x => [x.servizio_id, { dalle:oraBreve(x.ora_dalle), alle:oraBreve(x.ora_alle) }]))
     })), error:null };
   }
   const { data, error } = await caricaTutteLeRighe(() => sb
     .from("v_adesioni_base")
-    .select("id, attivazione_sezione_id, cognome, nome, patenti, abilitazioni, servizi")
+    .select("id, attivazione_sezione_id, cognome, nome, patenti, abilitazioni, servizi, tipologia")
     .eq("attivazione_id", esercitazioneId));
   if (error) return { data:null, error };
   return { data: data.map(a => ({
     id:a.id, sezione_id:a.attivazione_sezione_id, cognome:a.cognome, nome:a.nome,
-    patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], esigenze:[], servizi:a.servizi || []
+    patenti:a.patenti || [], abilitazioni:a.abilitazioni || [], esigenze:[], servizi:a.servizi || [],
+    tipologia:a.tipologia, orari:{}
   })), error:null };
 }
 
@@ -5513,7 +5534,10 @@ async function apriModalEsercitazione(id){
             <div class="form-field"><label>Data fine${emergenza ? " (se nota)" : " *"}</label><input type="date" name="data_fine" ${emergenza ? "" : "required"} value="${es?.data_fine||""}"></div>
             ${emergenza ? `<div class="form-field"><label>Griglia dei giorni fino al</label><input type="date" name="fine_finestra" value="${es?.fine_finestra||""}">
               <div class="es-aiuto" style="margin:4px 0 0;">Se la data fine non è nota, la griglia dei giorni arriva fin qui: si può estendere quando serve.</div></div>` : ""}
-            <div class="form-field"><label>Chiusura adesioni</label><input type="datetime-local" name="chiusura_adesioni" value="${isoAInputLocale(es?.chiusura_adesioni)}"></div>
+            <div class="form-field"><label>Chiusura adesioni</label><input type="datetime-local" name="chiusura_adesioni" value="${isoAInputLocale(es?.chiusura_adesioni)}">
+              ${emergenza ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+                ${[6, 12, 24].map(h => `<button type="button" class="btn-add-mini" data-scadenza-ore="${h}">tra ${h} ore</button>`).join("")}
+              </div>` : ""}</div>
             <div class="form-field">
               <label>Stato</label>
               <select name="stato">
@@ -5527,17 +5551,20 @@ async function apriModalEsercitazione(id){
           <div class="section-title" style="margin-top:20px;">Campi richiesti alle Sezioni</div>
           <p class="es-aiuto">Cognome, nome e codice fiscale sono sempre obbligatori. I campi "non richiesti" non compaiono nel modulo delle Sezioni, nel cruscotto e negli Excel.</p>
           <div class="es-campi-griglia">
-            ${CAMPI_ESERCITAZIONE.map(c => `
-              <label>${c.label}
+            ${campiPerTipo(tipo).map(c => `
+              <label>${(emergenza && c.labelEmergenza) || c.label}
                 <select name="campo_${c.k}">
                   ${Object.entries(LIVELLI_CAMPO).filter(([v]) => !(c.senzaObbligatorio && v === "obbligatorio"))
-                    .map(([v,l]) => `<option value="${v}" ${livelloCampo(es, c.k)===v?"selected":""}>${l}</option>`).join("")}
+                    .map(([v,l]) => `<option value="${v}" ${livelloCampo(es, c.k, tipo)===v?"selected":""}>${l}</option>`).join("")}
                 </select>
               </label>`).join("")}
           </div>
+          ${emergenza ? `<p class="es-aiuto">Art. 39: la Sezione segnala solo se il volontario chiede i benefici; i dati del datore di lavoro li gestisce la Sezione. Il dato è visibile solo con accesso completo.</p>` : ""}
 
-          <div class="section-title" style="margin-top:20px;">Servizi per giorno</div>
-          <p class="es-aiuto">Le Sezioni potranno indicare, per ogni volontario, solo i servizi spuntati qui. La colazione segue il pernotto della notte prima (modificabile).</p>
+          <div class="section-title" style="margin-top:20px;">${emergenza ? "Giornate e servizi" : "Servizi per giorno"}</div>
+          <p class="es-aiuto">${emergenza
+            ? "\"Disponibile\" = giornata in cui le Sezioni possono indicare i volontari disponibili (con orari, se richiesti). Pasti e pernotti solo se servono."
+            : "Le Sezioni potranno indicare, per ogni volontario, solo i servizi spuntati qui. La colazione segue il pernotto della notte prima (modificabile)."}</p>
           <div id="es-servizi-griglia"></div>
 
           <div class="section-title" style="margin-top:20px;">Sezioni invitate</div>
@@ -5571,7 +5598,9 @@ async function apriModalEsercitazione(id){
   servizi.forEach(s => spunte.set(`${s.giorno}|${s.tipo}`, true));
   // nuova esercitazione: pranzo e cena ogni giorno, pernotto tutte le notti tranne l'ultimo giorno,
   // colazione nei giorni preceduti da una notte con pernotto (di norma dal 2° giorno)
+  // emergenza: solo la giornata di disponibilità, anche sui giorni aggiunti estendendo la finestra
   const precompila = !es;
+  const tipi = tipiGriglia(tipo);
   // ultimo giorno della griglia: data fine oppure, per un'emergenza senza fine, la finestra
   const ultimoGiorno = () => form.data_fine.value || (form.fine_finestra ? form.fine_finestra.value : "");
   function disegnaServizi(){
@@ -5581,11 +5610,13 @@ async function apriModalEsercitazione(id){
     if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ box.innerHTML = `<div class="storico-empty">Massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.</div>`; return; }
     box.innerHTML = `
       <table class="storico-table es-griglia-servizi">
-        <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
+        <thead><tr><th>Giorno</th>${tipi.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
         <tbody>
-          ${giorni.map((g, i) => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
+          ${giorni.map((g, i) => `<tr><td>${labelGiornoBreve(g)}</td>${tipi.map(t => {
             const k = `${g}|${t}`;
-            if (!spunte.has(k) && precompila){
+            if (!spunte.has(k) && emergenza){
+              spunte.set(k, t === "disponibile");
+            } else if (!spunte.has(k) && precompila){
               if (t === "colazione") spunte.set(k, i > 0 && !!spunte.get(`${giorni[i-1]}|pernotto`));
               else if (t === "pernotto") spunte.set(k, i < giorni.length - 1);
               else spunte.set(k, true);
@@ -5615,6 +5646,12 @@ async function apriModalEsercitazione(id){
   form.data_fine.addEventListener("change", disegnaServizi);
   if (form.fine_finestra) form.fine_finestra.addEventListener("change", disegnaServizi);
   disegnaServizi();
+  // emergenza: scadenza rapida da adesso
+  form.querySelectorAll("[data-scadenza-ore]").forEach(b => b.addEventListener("click", () => {
+    const d = new Date(Date.now() + parseInt(b.dataset.scadenzaOre) * 3600 * 1000);
+    d.setSeconds(0, 0);
+    form.chiusura_adesioni.value = isoAInputLocale(d.toISOString());
+  }));
 
   function selezionaDaEnte(){
     const ente = form.ente.value;
@@ -5633,12 +5670,11 @@ async function apriModalEsercitazione(id){
     if (emergenza && !form.data_fine.value && !form.fine_finestra.value){ alert("Indica la data fine oppure fino a quando aprire la griglia dei giorni."); return; }
     if (form.data_fine.value && form.data_fine.value < form.data_inizio.value){ alert("La data di fine non può essere precedente alla data di inizio."); return; }
     if (emergenza && form.fine_finestra.value && form.fine_finestra.value < form.data_inizio.value){ alert("La griglia dei giorni non può finire prima della data di inizio."); return; }
-    if (emergenza && form.fine_finestra.value && form.fine_finestra.value < form.data_inizio.value){ alert("La finestra non può finire prima della data di inizio."); return; }
     const giorni = giorniTra(form.data_inizio.value, ultimoGiorno());
     if (!giorni.length){ alert("La data di fine non può essere precedente alla data di inizio."); return; }
     if (giorni.length > MAX_GIORNI_ESERCITAZIONE){ alert(`Un'${T.nome} può coprire al massimo ${MAX_GIORNI_ESERCITAZIONE} giorni.`); return; }
     const serviziVoluti = [];
-    giorni.forEach(g => TIPI_SERVIZIO.forEach(t => { if (spunte.get(`${g}|${t}`)) serviziVoluti.push({ giorno:g, tipo:t }); }));
+    giorni.forEach(g => tipi.forEach(t => { if (spunte.get(`${g}|${t}`)) serviziVoluti.push({ giorno:g, tipo:t }); }));
     const sezioniVolute = [...form.querySelectorAll('input[name="sezione"]:checked')].map(c => c.value);
     if (!sezioniVolute.length){ alert("Seleziona almeno una Sezione da invitare."); return; }
 
@@ -5654,10 +5690,14 @@ async function apriModalEsercitazione(id){
       stato: form.stato.value,
       descrizione: form.descrizione.value.trim() || null,
       referente: form.referente.value.trim() || null,
-      campi: Object.fromEntries(CAMPI_ESERCITAZIONE.map(c => [c.k, form["campo_" + c.k].value]))
+      campi: Object.fromEntries(campiPerTipo(tipo).map(c => [c.k, form["campo_" + c.k].value]))
     };
     if (payload.campi.servizi === "obbligatorio" && !serviziVoluti.length){
-      alert("Pasti e pernotti sono obbligatori, ma non hai spuntato nessun servizio.");
+      alert(`${emergenza ? "Giornate, pasti e pernotti" : "Pasti e pernotti"} sono obbligatori, ma non hai spuntato nessun servizio.`);
+      return;
+    }
+    if (emergenza && payload.campi.orari !== "non_richiesto" && !serviziVoluti.some(s => s.tipo === "disponibile")){
+      alert("Hai chiesto gli orari, ma nessuna giornata è segnata come \"Disponibile\".");
       return;
     }
     btn.disabled = true; btn.textContent = "Salvataggio…";
@@ -5753,7 +5793,21 @@ async function apriCruscottoEsercitazione(id, tab){
   if (!r1.data){ alert("Evento non trovato."); return; }
   _attivazioneTipo = r1.data.tipo;
 
-  const ordineTipo = t => TIPI_SERVIZIO.indexOf(t);
+  // emergenza: riepilogo per giorno (anche base, senza dati personali), mezzi e materiali delle Sezioni, tipologie
+  let emerg = { giorni:[], mezzi:[], materiali:[], tipologie:[] };
+  if (r1.data.tipo === "emergenza"){
+    const [g, m, mt, tp] = await Promise.all([
+      sb.rpc("attivazione_giorni", { p_attivazione_id: id }),
+      sb.from("attivazione_mezzi").select("id, attivazione_sezione_id, tipo, targa, giorni, note").eq("attivazione_id", id).order("id"),
+      sb.from("attivazione_materiali").select("id, attivazione_sezione_id, quantita, descrizione, note").eq("attivazione_id", id).order("id"),
+      sb.from("attivazioni_tipologie").select("nome").order("ordine").order("nome")
+    ]);
+    const errE = g.error || m.error || mt.error || tp.error;
+    if (errE){ alert("Errore: " + errE.message); return; }
+    emerg = { giorni:(g.data && g.data.giorni) || [], mezzi:m.data || [], materiali:mt.data || [], tipologie:(tp.data || []).map(x => x.nome) };
+  }
+
+  const ordineTipo = t => ORDINE_SERVIZIO.indexOf(t);
   const sezioni = (r3.data || []).sort((a,b) => a.sezione.localeCompare(b.sezione));
   const stessaEsercitazione = _cruscotto && _cruscotto.es.id === id;
   _cruscotto = {
@@ -5768,6 +5822,10 @@ async function apriCruscottoEsercitazione(id, tab){
     cucina: r7.data || { servizi:[], esigenze:[] },
     ospiti: (r8.data || []).map(o => ({ ...o, esigenze:o.esigenze || [], servizi:(o.attivazione_ospiti_servizi || []).map(x => x.servizio_id) })),
     extra: r9.data || [],
+    giorni: emerg.giorni,
+    mezzi: emerg.mezzi.map(x => ({ ...x, giorni:x.giorni || [], sezione: sezioni.find(s => s.id === x.attivazione_sezione_id)?.sezione || "—" })),
+    materiali: emerg.materiali.map(x => ({ ...x, sezione: sezioni.find(s => s.id === x.attivazione_sezione_id)?.sezione || "—" })),
+    tipologie: emerg.tipologie,
     tab: tab || (stessaEsercitazione ? _cruscotto.tab : null) || "riepilogo",
     filtro: stessaEsercitazione ? _cruscotto.filtro : { search:"", sezione:"" }
   };
@@ -5777,6 +5835,11 @@ async function apriCruscottoEsercitazione(id, tab){
 function renderCruscottoEsercitazione(){
   const c = _cruscotto;
   const completo = esercitazioniCompleto();
+  const emergenza = c.es.tipo === "emergenza";
+  // emergenze: scheda mezzi/materiali se richiesti; ospiti e cucina solo se ci sono pasti o pernotti
+  const conPasti = !emergenza || c.servizi.some(s => s.tipo !== "disponibile");
+  const conMezzi = emergenza && (campoAttivo(c.es, "mezzi") || campoAttivo(c.es, "materiali") || c.mezzi.length || c.materiali.length);
+  if ((c.tab === "mezzi" && !conMezzi) || ((c.tab === "cucina" || c.tab === "ospiti") && !conPasti)) c.tab = "riepilogo";
   chiudiModal();
   const overlay = document.createElement("div");
   overlay.id = "modal-overlay";
@@ -5789,8 +5852,9 @@ function renderCruscottoEsercitazione(){
       </div>
       <div class="modal-tabs">
         ${[["riepilogo","Riepilogo"], ["volontari",`Volontari (${c.adesioni.length})`],
-           ...(completo ? [["ospiti",`Ospiti (${c.ospiti.length})`]] : []),
-           ["cucina","Cucina"], ["sezioni","Sezioni"]].map(([k,l]) =>
+           ...(conMezzi ? [["mezzi",`Mezzi e materiali (${c.mezzi.length + c.materiali.length})`]] : []),
+           ...(completo && conPasti ? [["ospiti",`Ospiti (${c.ospiti.length})`]] : []),
+           ...(conPasti ? [["cucina","Cucina"]] : []), ["sezioni","Sezioni"]].map(([k,l]) =>
           `<div class="modal-tab ${c.tab===k?"active":""}" data-tab="${k}">${l}</div>`).join("")}
       </div>
       <div class="modal-body">
@@ -5822,9 +5886,11 @@ function renderCruscottoEsercitazione(){
     document.getElementById("es-btn-elimina").addEventListener("click", () => eliminaEsercitazione(c.es.id));
   }
   if (c.tab === "volontari") renderTabVolontariEsercitazione();
+  else if (c.tab === "mezzi") renderTabMezziEmergenza();
   else if (c.tab === "ospiti" && completo) renderTabOspitiEsercitazione();
   else if (c.tab === "cucina") renderTabCucinaEsercitazione();
   else if (c.tab === "sezioni") renderTabSezioniEsercitazione();
+  else if (emergenza) renderTabRiepilogoEmergenza();
   else renderTabRiepilogoEsercitazione();
 }
 
@@ -5840,7 +5906,8 @@ function calcolaRiepilogoEsercitazione(c){
     c.adesioni.forEach(a => a.servizi.forEach(id => { if (perServizio.has(id)) perServizio.set(id, perServizio.get(id) + 1); }));
   }
 
-  const giorni = [...new Set(c.servizi.map(s => s.giorno))];
+  // pasti e pernotti: le giornate di disponibilità (emergenze) non contano
+  const giorni = [...new Set(c.servizi.filter(s => s.tipo !== "disponibile").map(s => s.giorno))];
   const perGiorno = giorni.map(g => {
     const riga = { giorno:g };
     TIPI_SERVIZIO.forEach(t => {
@@ -5852,6 +5919,7 @@ function calcolaRiepilogoEsercitazione(c){
   let pasti = 0, pernotti = 0, postiLetto = 0;
   perServizio.forEach((n, id) => {
     const tipo = servizioPerId.get(id).tipo;
+    if (tipo === "disponibile") return;
     if (tipo === "pernotto"){ pernotti += n; postiLetto = Math.max(postiLetto, n); }
     else pasti += n;
   });
@@ -5899,17 +5967,7 @@ function renderTabRiepilogoEsercitazione(){
       <div class="report-stat-box"><div class="report-stat-num">${r.postiLetto}</div><div class="report-stat-lbl">Posti letto (notte più piena)</div></div>` : ""}
     </div>
 
-    <div class="section-title">Sezioni</div>
-    <div class="es-legenda">
-      <span><i class="es-pallino es-sez-risposto"></i> Risposto</span>
-      <span><i class="es-pallino es-sez-in_attesa"></i> In attesa</span>
-      <span><i class="es-pallino es-sez-non_partecipa"></i> Non partecipa</span>
-    </div>
-    ${c.sezioni.length ? `<div class="es-sez-griglia">${c.sezioni.map(s => `
-      <div class="es-sez-chip es-sez-${s.stato}" title="${STATI_SEZIONE_ESERCITAZIONE[s.stato]}">
-        <span>${escapeHtml(s.sezione)}</span>
-        <strong>${s.stato === "non_partecipa" ? "—" : r.volontariPerSezione.get(s.id) || 0}</strong>
-      </div>`).join("")}</div>` : `<div class="storico-empty">Nessuna Sezione invitata.</div>`}
+    ${htmlChipSezioni(c, r)}
 
     ${conServizi ? `
     <div class="section-title" style="margin-top:22px;">Pasti e pernotti per giorno</div>
@@ -5936,12 +5994,142 @@ function renderTabRiepilogoEsercitazione(){
   `;
 }
 
+function htmlChipSezioni(c, r){
+  return `
+    <div class="section-title">Sezioni</div>
+    <div class="es-legenda">
+      <span><i class="es-pallino es-sez-risposto"></i> Risposto</span>
+      <span><i class="es-pallino es-sez-in_attesa"></i> In attesa</span>
+      <span><i class="es-pallino es-sez-non_partecipa"></i> Non partecipa</span>
+    </div>
+    ${c.sezioni.length ? `<div class="es-sez-griglia">${c.sezioni.map(s => `
+      <div class="es-sez-chip es-sez-${s.stato}" title="${STATI_SEZIONE_ESERCITAZIONE[s.stato]}">
+        <span>${escapeHtml(s.sezione)}</span>
+        <strong>${s.stato === "non_partecipa" ? "—" : r.volontariPerSezione.get(s.id) || 0}</strong>
+      </div>`).join("")}</div>` : `<div class="storico-empty">Nessuna Sezione invitata.</div>`}`;
+}
+
+/* ---------- Riepilogo per giorno (emergenze): dati da attivazione_giorni(), anche livello base ---------- */
+// conteggi { nome: n } → "nome n · nome n" (dal più frequente)
+function testoConteggi(obj){
+  return Object.entries(obj || {}).filter(([k]) => k).sort((a,b) => b[1] - a[1]).map(([k,n]) => `${k} ${n}`).join(" · ");
+}
+// colonne tipologia: la lista attuale più quelle già usate e poi tolte dalla lista
+function tipologieRiepilogo(c){
+  return [...new Set([...c.tipologie, ...c.giorni.flatMap(g => Object.keys(g.tipologie || {}).filter(Boolean))])];
+}
+
+function renderTabRiepilogoEmergenza(){
+  const c = _cruscotto;
+  const completo = esercitazioniCompleto();
+  const r = calcolaRiepilogoEsercitazione(c);
+  const body = document.getElementById("es-tab-body");
+  const conTipologia = campoAttivo(c.es, "tipologia");
+  const conOrari = campoAttivo(c.es, "orari");
+  const conPatenti = campoAttivo(c.es, "patenti");
+  const conAbil = campoAttivo(c.es, "abilitazioni");
+  const conMezzi = campoAttivo(c.es, "mezzi") || c.mezzi.length > 0;
+  const nArt39 = completo && campoAttivo(c.es, "art39") ? c.adesioni.filter(a => a.art39).length : null;
+  const tipologie = conTipologia ? tipologieRiepilogo(c) : [];
+  const senzaTipologia = conTipologia && c.giorni.some(g => (g.tipologie || {})[""]);
+  body.innerHTML = `
+    <div class="es-stat-grid">
+      <div class="report-stat-box"><div class="report-stat-num">${r.volontari}</div><div class="report-stat-lbl">Volontari disponibili</div></div>
+      <div class="report-stat-box"><div class="report-stat-num">${r.sezioniRisposto}/${r.sezioniTotali}</div><div class="report-stat-lbl">Sezioni che hanno risposto</div></div>
+      ${conMezzi ? `<div class="report-stat-box"><div class="report-stat-num">${c.mezzi.length}</div><div class="report-stat-lbl">Mezzi</div></div>` : ""}
+      ${nArt39 !== null ? `<div class="report-stat-box"><div class="report-stat-num">${nArt39}</div><div class="report-stat-lbl">Chiedono l'art. 39</div></div>` : ""}
+    </div>
+
+    <div class="section-title">Disponibilità per giorno</div>
+    ${c.giorni.length ? `
+    <div style="overflow-x:auto;">
+      <table class="storico-table es-griglia-servizi">
+        <thead><tr>
+          <th>Giorno</th><th>Volontari</th>
+          ${conOrari ? "<th>Giornata intera</th><th>Con orario</th>" : ""}
+          ${tipologie.map(t => `<th>${escapeHtml(t)}</th>`).join("")}${senzaTipologia ? "<th>Tipologia non indicata</th>" : ""}
+          ${conPatenti ? "<th>Patenti</th>" : ""}${conAbil ? "<th>Abilitazioni</th>" : ""}${conMezzi ? "<th>Mezzi</th>" : ""}
+        </tr></thead>
+        <tbody>${c.giorni.map(g => `
+          <tr>
+            <td>${labelGiornoBreve(g.giorno)}</td>
+            <td><strong>${g.volontari}</strong></td>
+            ${conOrari ? `<td>${g.volontari - g.con_orario}</td>
+              <td>${g.con_orario}${g.con_orario ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(testoConteggi(g.fasce))}</div>` : ""}</td>` : ""}
+            ${tipologie.map(t => `<td>${(g.tipologie || {})[t] || 0}</td>`).join("")}${senzaTipologia ? `<td>${(g.tipologie || {})[""] || 0}</td>` : ""}
+            ${conPatenti ? `<td style="text-align:left;">${escapeHtml(testoConteggi(g.patenti) || "—")}</td>` : ""}
+            ${conAbil ? `<td style="text-align:left;">${escapeHtml(testoConteggi(g.abilitazioni) || "—")}</td>` : ""}
+            ${conMezzi ? `<td>${g.mezzi}</td>` : ""}
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+    <p class="es-aiuto">Per ogni giorno: volontari indicati come disponibili, con le loro tipologie, patenti e abilitazioni, e i mezzi disponibili quel giorno.</p>` : `<div class="storico-empty">Nessuna giornata di disponibilità prevista.</div>`}
+
+    ${htmlChipSezioni(c, r)}
+
+    <div class="section-title" style="margin-top:22px;">Volontari per Sezione</div>
+    ${barreEsercitazione(c.sezioni.filter(s => r.volontariPerSezione.get(s.id)).map(s => ({ nome:s.sezione, n:r.volontariPerSezione.get(s.id) })).sort((a,b) => b.n - a.n))}
+  `;
+}
+
+/* ---------- Scheda Mezzi e materiali (emergenze): li inseriscono le Sezioni dal loro link ---------- */
+function renderTabMezziEmergenza(){
+  const c = _cruscotto;
+  const body = document.getElementById("es-tab-body");
+  const giorniEvento = c.servizi.filter(s => s.tipo === "disponibile").map(s => s.giorno);
+  const descriviGiorni = gg => !gg.length ? "—"
+    : giorniEvento.length && giorniEvento.every(g => gg.includes(g)) ? "tutti i giorni"
+    : gg.map(labelGiornoBreve).join(", ");
+  body.innerHTML = `
+    <p class="es-aiuto">Mezzi e materiali li indicano le Sezioni dal loro link (o li modifica chi ha accesso completo aprendo il link della Sezione).</p>
+    <div class="section-title">Mezzi (${c.mezzi.length})</div>
+    ${c.mezzi.length ? `
+    <div style="overflow-x:auto;">
+      <table class="storico-table">
+        <thead><tr><th>Sezione</th><th>Mezzo</th><th>Targa</th><th>Disponibile</th><th>Note</th></tr></thead>
+        <tbody>${c.mezzi.map(m => `
+          <tr>
+            <td>${escapeHtml(m.sezione)}</td>
+            <td><strong>${escapeHtml(m.tipo)}</strong></td>
+            <td style="font-family:monospace;">${escapeHtml(m.targa || "—")}</td>
+            <td>${escapeHtml(descriviGiorni(m.giorni))}</td>
+            <td>${escapeHtml(m.note || "—")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : `<div class="storico-empty">Nessun mezzo indicato.</div>`}
+
+    <div class="section-title" style="margin-top:22px;">Materiali (${c.materiali.length})</div>
+    ${c.materiali.length ? `
+    <div style="overflow-x:auto;">
+      <table class="storico-table">
+        <thead><tr><th>Sezione</th><th>Quantità</th><th>Descrizione</th><th>Note</th></tr></thead>
+        <tbody>${c.materiali.map(m => `
+          <tr>
+            <td>${escapeHtml(m.sezione)}</td>
+            <td>${m.quantita}</td>
+            <td><strong>${escapeHtml(m.descrizione)}</strong></td>
+            <td>${escapeHtml(m.note || "—")}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : `<div class="storico-empty">Nessun materiale indicato.</div>`}
+  `;
+}
+
 /* ---------- Scheda Volontari ---------- */
 function descriviServiziAdesione(a){
   const servizi = _cruscotto.servizi.filter(s => a.servizi.includes(s.id));
-  const pasti = servizi.filter(s => s.tipo !== "pernotto").length;
+  const giornate = servizi.filter(s => s.tipo === "disponibile");
+  const pasti = servizi.filter(s => s.tipo !== "pernotto" && s.tipo !== "disponibile").length;
   const notti = servizi.filter(s => s.tipo === "pernotto").length;
-  return [pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "—";
+  // giornate di disponibilità: elencate, con l'orario se indicato
+  const testoGiornate = giornate.map(s => {
+    const o = (a.orari || {})[s.id];
+    return `${labelGiornoBreve(s.giorno)}${o ? ` ${o.dalle}–${o.alle}` : ""}`;
+  }).join(", ");
+  return [testoGiornate, pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "—";
 }
 
 function renderTabVolontariEsercitazione(){
@@ -5990,9 +6178,9 @@ function sezioneSceltaPerExcel(){
 function configExcelSezione(s){
   const c = _cruscotto;
   return {
-    titolo: c.es.titolo, sezione: s.sezione,
+    titolo: c.es.titolo, tipoNome: testiTipo(c.es.tipo).Nome, sezione: s.sezione,
     date: periodoAttivazioneIt(c.es),
-    campi: c.es.campi || CAMPI_DEFAULT, patenti: c.patenti, abilitazioni: c.abilitazioni, servizi: c.servizi,
+    campi: c.es.campi || CAMPI_DEFAULT, patenti: c.patenti, abilitazioni: c.abilitazioni, servizi: c.servizi, tipologie: c.tipologie,
     esigenze: c.esigenze, volontari: c.adesioni.filter(a => a.sezione_id === s.id), maxVolontari: 150
   };
 }
@@ -6083,10 +6271,12 @@ function disegnaListaVolontariEsercitazione(){
       <table class="storico-table">
         <thead><tr>
           <th>Sezione</th><th>Cognome Nome</th>
+          ${att("tipologia") ? "<th>Tipologia</th>" : ""}
           ${completo ? "<th>Codice fiscale</th>" : ""}
           ${completo && att("cellulare") ? "<th>Cellulare</th>" : ""}
           ${att("patenti") ? "<th>Patenti</th>" : ""}${att("abilitazioni") ? "<th>Abilitazioni</th>" : ""}${att("servizi") ? "<th>Servizi</th>" : ""}
           ${completo && att("esigenze") ? "<th>Esigenze alimentari</th>" : ""}
+          ${completo && att("art39") ? "<th>Art. 39</th>" : ""}
           ${completo ? "<th></th>" : ""}
         </tr></thead>
         <tbody>
@@ -6094,12 +6284,14 @@ function disegnaListaVolontariEsercitazione(){
             <tr>
               <td>${escapeHtml(a.sezione)}</td>
               <td><strong>${escapeHtml(a.cognome)}</strong> ${escapeHtml(a.nome)}${att("note") && a.note ? `<div class="es-aiuto" style="margin:2px 0 0;">${escapeHtml(a.note)}</div>` : ""}</td>
+              ${att("tipologia") ? `<td>${escapeHtml(a.tipologia || "—")}</td>` : ""}
               ${completo ? `<td style="font-family:monospace;">${escapeHtml(a.codice_fiscale)}</td>` : ""}
               ${completo && att("cellulare") ? `<td>${escapeHtml(a.cellulare || "—")}</td>` : ""}
               ${att("patenti") ? `<td>${escapeHtml(a.patenti.join(", ") || "—")}</td>` : ""}
               ${att("abilitazioni") ? `<td>${escapeHtml(a.abilitazioni.join(", ") || "—")}</td>` : ""}
               ${att("servizi") ? `<td>${descriviServiziAdesione(a)}</td>` : ""}
               ${completo && att("esigenze") ? `<td>${descriviEsigenze(a)}</td>` : ""}
+              ${completo && att("art39") ? `<td>${a.art39 ? "Sì" : "—"}</td>` : ""}
               ${completo ? `<td style="white-space:nowrap;">
                 <button class="row-del" style="color:var(--blu-500);" data-modifica="${a.id}">Modifica</button>
                 <button class="row-del" data-elimina="${a.id}">Elimina</button></td>` : ""}
@@ -6114,17 +6306,41 @@ function disegnaListaVolontariEsercitazione(){
 }
 
 /* ---------- Pezzi di form condivisi (volontari e ospiti) ---------- */
-function htmlGrigliaServiziScelta(c, scelti){
-  const giorni = [...new Set(c.servizi.map(s => s.giorno))];
+// opz.disponibile: colonna delle giornate di disponibilità (volontari delle emergenze, non gli ospiti)
+// opz.orari: orari già salvati { servizio_id: { dalle, alle } } → campi "dalle/alle" accanto alla giornata; null = orari non richiesti
+function htmlGrigliaServiziScelta(c, scelti, opz = {}){
+  const tipi = (opz.disponibile ? ORDINE_SERVIZIO : TIPI_SERVIZIO).filter(t => c.servizi.some(s => s.tipo === t));
+  const giorni = [...new Set(c.servizi.filter(s => tipi.includes(s.tipo)).map(s => s.giorno))];
   if (!giorni.length) return `<div class="es-aiuto">Nessun servizio previsto.</div>`;
+  const conOrari = opz.disponibile && opz.orari;
   return `<table class="storico-table es-griglia-servizi">
-    <thead><tr><th>Giorno</th>${TIPI_SERVIZIO.map(t => `<th>${LABEL_SERVIZIO[t]}</th>`).join("")}</tr></thead>
-    <tbody>${giorni.map(g => `<tr><td>${labelGiornoBreve(g)}</td>${TIPI_SERVIZIO.map(t => {
+    <thead><tr><th>Giorno</th>${tipi.map(t => `<th>${LABEL_SERVIZIO[t]}</th>${t === "disponibile" && conOrari ? "<th>Orario (facoltativo)</th>" : ""}`).join("")}</tr></thead>
+    <tbody>${giorni.map(g => `<tr><td>${labelGiornoBreve(g)}</td>${tipi.map(t => {
       const s = c.servizi.find(x => x.giorno === g && x.tipo === t);
-      return `<td>${s ? `<input type="checkbox" name="servizi" value="${s.id}" ${(scelti || []).includes(s.id) ? "checked" : ""}>` : "—"}</td>`;
+      const cella = `<td>${s ? `<input type="checkbox" name="servizi" value="${s.id}" ${(scelti || []).includes(s.id) ? "checked" : ""}>` : "—"}</td>`;
+      if (t !== "disponibile" || !conOrari) return cella;
+      const o = s ? opz.orari[s.id] : null;
+      return cella + `<td style="white-space:nowrap;">${s ? `
+        <input type="time" name="ora_dalle_${s.id}" value="${escapeHtml(o?.dalle || "")}" style="width:auto;"> –
+        <input type="time" name="ora_alle_${s.id}" value="${escapeHtml(o?.alle || "")}" style="width:auto;">` : ""}</td>`;
     }).join("")}</tr>`).join("")}</tbody>
   </table>
-  <div class="es-aiuto" style="margin:6px 0 0;">Spuntando il pernotto, la colazione del mattino dopo si spunta da sola (modificabile).</div>`;
+  ${conOrari ? `<div class="es-aiuto" style="margin:6px 0 0;">Orario vuoto = giornata intera.</div>` : ""}
+  ${tipi.includes("pernotto") ? `<div class="es-aiuto" style="margin:6px 0 0;">Spuntando il pernotto, la colazione del mattino dopo si spunta da sola (modificabile).</div>` : ""}`;
+}
+
+// Orari letti dalla griglia: { servizio_id: { dalle, alle } } solo sulle giornate spuntate e con entrambi gli orari.
+// Ritorna { orari, errore }.
+function leggiOrariGriglia(f, c, servizi){
+  const orari = {};
+  for (const s of c.servizi.filter(x => x.tipo === "disponibile" && servizi.includes(x.id))){
+    const dalle = f[`ora_dalle_${s.id}`]?.value || "", alle = f[`ora_alle_${s.id}`]?.value || "";
+    if (!dalle && !alle) continue;
+    if (!dalle || !alle) return { orari, errore:`${labelGiornoBreve(s.giorno)}: indica sia l'inizio sia la fine, oppure lascia vuoto per la giornata intera.` };
+    if (dalle === alle) return { orari, errore:`${labelGiornoBreve(s.giorno)}: inizio e fine non possono coincidere.` };
+    orari[s.id] = { dalle, alle };
+  }
+  return { orari, errore:null };
 }
 
 // pernotto della notte X spuntato → colazione del giorno X+1 spuntata (resta modificabile a mano)
@@ -6181,7 +6397,14 @@ function mostraFormVolontarioEsercitazione(adesioneId){
           <div class="form-field"><label>Codice fiscale *</label><input name="codice_fiscale" required maxlength="16" style="text-transform:uppercase;font-family:monospace;" value="${escapeHtml(a?.codice_fiscale || "")}"></div>
           <div class="form-field"><label>Cognome *</label><input name="cognome" required maxlength="80" value="${escapeHtml(a?.cognome || "")}"></div>
           <div class="form-field"><label>Nome *</label><input name="nome" required maxlength="80" value="${escapeHtml(a?.nome || "")}"></div>
+          ${att("tipologia") ? `<div class="form-field"><label>Tipologia${ast("tipologia")}</label>
+            <select name="tipologia">
+              <option value="">—</option>
+              ${[...new Set([...c.tipologie, ...(a?.tipologia ? [a.tipologia] : [])])].map(t => `<option value="${escapeHtml(t)}" ${a?.tipologia === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+            </select></div>` : ""}
           ${att("cellulare") ? `<div class="form-field"><label>Cellulare${ast("cellulare")}</label><input name="cellulare" maxlength="30" inputmode="tel" value="${escapeHtml(a?.cellulare || "")}"></div>` : ""}
+          ${att("art39") ? `<div class="form-field"><label>Art. 39</label>
+            <label style="font-weight:normal;"><input type="checkbox" name="art39" ${a?.art39 ? "checked" : ""}> Chiede i benefici dell'art. 39</label></div>` : ""}
           ${att("note") ? `<div class="form-field"><label>Note${ast("note")}</label><input name="note" maxlength="500" value="${escapeHtml(a?.note || "")}"></div>` : ""}
           ${att("patenti") ? `<div class="form-field full"><label>Patenti${ast("patenti")}</label>
             <div class="es-sezioni-check">${c.patenti.map(p => `<label><input type="checkbox" name="patenti" value="${escapeHtml(p)}" ${a?.patenti.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
@@ -6189,8 +6412,8 @@ function mostraFormVolontarioEsercitazione(adesioneId){
           ${att("abilitazioni") ? `<div class="form-field full"><label>Abilitazioni${ast("abilitazioni")}</label>
             <div class="es-sezioni-check">${c.abilitazioni.map(p => `<label><input type="checkbox" name="abilitazioni" value="${escapeHtml(p)}" ${a?.abilitazioni.includes(p) ? "checked" : ""}> ${escapeHtml(p)}</label>`).join("") || "—"}</div>
           </div>` : ""}
-          ${att("servizi") ? `<div class="form-field full"><label>Servizi${ast("servizi")}</label>
-            ${htmlGrigliaServiziScelta(c, a?.servizi)}
+          ${att("servizi") ? `<div class="form-field full"><label>${c.es.tipo === "emergenza" ? "Giornate e servizi" : "Servizi"}${ast("servizi")}</label>
+            ${htmlGrigliaServiziScelta(c, a?.servizi, { disponibile:true, orari: att("orari") ? (a?.orari || {}) : null })}
           </div>` : ""}
           ${att("esigenze") ? htmlEsigenzeScelta(c, a?.esigenze, a?.esigenze_note) : ""}
         </div>
@@ -6222,11 +6445,14 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     if (ob("note") && !f.note.value.trim()){ mostraErrore("Le note sono obbligatorie."); return; }
     if (ob("patenti") && !valori("patenti").length){ mostraErrore("Indica almeno una patente."); return; }
     if (ob("abilitazioni") && !valori("abilitazioni").length){ mostraErrore("Indica almeno un'abilitazione."); return; }
-    if (ob("servizi") && c.servizi.length && !servizi.length){ mostraErrore("Indica almeno un pasto o pernotto."); return; }
+    if (ob("tipologia") && !f.tipologia.value){ mostraErrore("Indica la tipologia."); return; }
+    if (ob("servizi") && c.servizi.length && !servizi.length){ mostraErrore("Indica almeno una giornata, un pasto o un pernotto."); return; }
     if (att("esigenze")){
       const errEsig = erroreEsigenze(c, valori("esigenze"), f.esigenze_note.value.trim());
       if (errEsig){ mostraErrore(errEsig); return; }
     }
+    const lettura = att("servizi") && att("orari") ? leggiOrariGriglia(f, c, servizi) : { orari:null, errore:null };
+    if (lettura.errore){ mostraErrore(lettura.errore); return; }
 
     // Collegamento facoltativo all'anagrafica Formazione (se l'utente può leggerla)
     let volontarioId = a?.volontario_id ?? null;
@@ -6251,6 +6477,8 @@ function mostraFormVolontarioEsercitazione(adesioneId){
       payload.esigenze = valori("esigenze");
       payload.esigenze_note = f.esigenze_note.value.trim() || null;
     }
+    if (att("tipologia")) payload.tipologia = f.tipologia.value || null;
+    if (att("art39")) payload.art39 = f.art39.checked;
     const btn = f.querySelector(".btn-save");
     btn.disabled = true;
 
@@ -6277,6 +6505,18 @@ function mostraFormVolontarioEsercitazione(adesioneId){
     if (daAggiungere.length){
       const { error } = await sb.from("adesione_servizi").insert(daAggiungere.map(s => ({ adesione_id:id, servizio_id:s })));
       if (error){ btn.disabled = false; mostraErrore("Volontario salvato, ma errore sui servizi: " + error.message); return; }
+    }
+    // orari: aggiorno solo le giornate scelte il cui orario è cambiato (vuoto = giornata intera)
+    if (lettura.orari){
+      const giornate = c.servizi.filter(s => s.tipo === "disponibile" && servizi.includes(s.id));
+      for (const s of giornate){
+        const nuovo = lettura.orari[s.id] || null, vecchio = (a?.orari || {})[s.id] || null;
+        if (descriviOrario(nuovo) === descriviOrario(vecchio)) continue;
+        const { error } = await sb.from("adesione_servizi")
+          .update({ ora_dalle: nuovo ? nuovo.dalle : null, ora_alle: nuovo ? nuovo.alle : null })
+          .eq("adesione_id", id).eq("servizio_id", s.id);
+        if (error){ btn.disabled = false; mostraErrore("Volontario salvato, ma errore sugli orari: " + error.message); return; }
+      }
     }
     apriCruscottoEsercitazione(c.es.id, "volontari");
   });
@@ -6330,7 +6570,7 @@ function renderTabOspitiEsercitazione(){
     <form id="es-extra-form" class="es-extra-form">
       <select name="servizio_id" required>
         <option value="">Servizio…</option>
-        ${c.servizi.map(s => `<option value="${s.id}">${escapeHtml(etichettaServizio(s))}</option>`).join("")}
+        ${c.servizi.filter(s => s.tipo !== "disponibile").map(s => `<option value="${s.id}">${escapeHtml(etichettaServizio(s))}</option>`).join("")}
       </select>
       <input type="number" name="quantita" min="1" max="1000" required placeholder="Quantità">
       <input name="descrizione" maxlength="150" required placeholder="Descrizione (es. autorità)">
@@ -6645,13 +6885,19 @@ function esportaEsercitazioneExcel(){
   const etichettaServizio = s => `${labelGiornoBreve(s.giorno)} ${LABEL_SERVIZIO[s.tipo]}`;
 
   const att = k => campoAttivo(c.es, k);
+  const emergenza = c.es.tipo === "emergenza";
+  const conPasti = c.servizi.some(s => s.tipo !== "disponibile");
+  // giornata di disponibilità: "X" oppure l'orario (gli orari li vede solo completo)
+  const cellaServizio = (a, s) => !a.servizi.includes(s.id) ? "" : (s.tipo === "disponibile" && (a.orari || {})[s.id] ? descriviOrario(a.orari[s.id]) : "X");
   const righeVolontari = c.adesioni.map(a => {
     const riga = { Sezione: a.sezione, Cognome: a.cognome, Nome: a.nome };
+    if (att("tipologia")) riga.Tipologia = a.tipologia || "";
     if (completo) riga["Codice fiscale"] = a.codice_fiscale;
     if (completo && att("cellulare")) riga.Cellulare = a.cellulare || "";
+    if (completo && att("art39")) riga["Art. 39"] = a.art39 ? "SI" : "";
     if (att("patenti")) riga.Patenti = a.patenti.join(", ");
     if (att("abilitazioni")) riga.Abilitazioni = a.abilitazioni.join(", ");
-    if (att("servizi")) c.servizi.forEach(s => { riga[etichettaServizio(s)] = a.servizi.includes(s.id) ? "X" : ""; });
+    if (att("servizi")) c.servizi.forEach(s => { riga[etichettaServizio(s)] = cellaServizio(a, s); });
     if (completo && att("esigenze")){
       riga["Esigenze alimentari"] = (a.esigenze || []).join(", ");
       riga["Nota esigenze"] = a.esigenze_note || "";
@@ -6674,7 +6920,8 @@ function esportaEsercitazioneExcel(){
     ["Volontari", r.volontari],
     ["Sezioni che hanno inviato l'adesione", `${r.sezioniRisposto}/${r.sezioniTotali}`],
     ["Sezioni che non partecipano", r.sezioniNonPartecipa],
-    ...(c.servizi.length ? [
+    ...(emergenza ? [["Mezzi", c.mezzi.length], ["Righe di materiali", c.materiali.length]] : []),
+    ...(conPasti ? [
       ["Pasti totali (con ospiti ed extra)", r.pasti],
       ["Pernotti totali", r.pernotti],
       ["Posti letto (notte più piena)", r.postiLetto],
@@ -6702,11 +6949,43 @@ function esportaEsercitazioneExcel(){
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsVolontari, "Volontari");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Riepilogo");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaCucina), "Cucina");
+  if (emergenza){
+    // Per giorno: stessi numeri della scheda Riepilogo (attivazione_giorni)
+    const tipologie = att("tipologia") ? tipologieRiepilogo(c) : [];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Giorno", "Volontari", ...(att("orari") ? ["Giornata intera", "Con orario", "Fasce orarie"] : []), ...tipologie,
+       ...(att("tipologia") ? ["Tipologia non indicata"] : []), ...(att("patenti") ? ["Patenti"] : []), ...(att("abilitazioni") ? ["Abilitazioni"] : []), "Mezzi"],
+      ...c.giorni.map(g => [labelGiornoBreve(g.giorno), g.volontari,
+        ...(att("orari") ? [g.volontari - g.con_orario, g.con_orario, testoConteggi(g.fasce)] : []),
+        ...tipologie.map(t => (g.tipologie || {})[t] || 0), ...(att("tipologia") ? [(g.tipologie || {})[""] || 0] : []),
+        ...(att("patenti") ? [testoConteggi(g.patenti)] : []), ...(att("abilitazioni") ? [testoConteggi(g.abilitazioni)] : []), g.mezzi])
+    ]), "Per giorno");
+    const giorniEvento = c.servizi.filter(s => s.tipo === "disponibile");
+    XLSX.utils.book_append_sheet(wb, c.mezzi.length
+      ? XLSX.utils.json_to_sheet(c.mezzi.map(m => {
+          const riga = { Sezione: m.sezione, Mezzo: m.tipo, Targa: m.targa || "", Note: m.note || "" };
+          giorniEvento.forEach(s => { riga[labelGiornoBreve(s.giorno)] = m.giorni.includes(s.giorno) ? "X" : ""; });
+          return riga;
+        }))
+      : XLSX.utils.aoa_to_sheet([["Nessun mezzo indicato"]]), "Mezzi");
+    XLSX.utils.book_append_sheet(wb, c.materiali.length
+      ? XLSX.utils.json_to_sheet(c.materiali.map(m => ({ Sezione: m.sezione, "Quantità": m.quantita, Descrizione: m.descrizione, Note: m.note || "" })))
+      : XLSX.utils.aoa_to_sheet([["Nessun materiale indicato"]]), "Materiali");
+    if (completo && att("art39")){
+      const conArt39 = c.adesioni.filter(a => a.art39);
+      XLSX.utils.book_append_sheet(wb, conArt39.length
+        ? XLSX.utils.json_to_sheet(conArt39.map(a => ({
+            Sezione: a.sezione, Cognome: a.cognome, Nome: a.nome, "Codice fiscale": a.codice_fiscale,
+            Giornate: giorniEvento.filter(s => a.servizi.includes(s.id)).map(s => `${labelGiornoBreve(s.giorno)}${a.orari[s.id] ? " " + descriviOrario(a.orari[s.id]) : ""}`).join(", ")
+          })))
+        : XLSX.utils.aoa_to_sheet([["Nessun volontario chiede l'art. 39"]]), "Art. 39");
+    }
+  }
+  if (conPasti) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoaCucina), "Cucina");
   if (completo && c.ospiti.length){
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(c.ospiti.map(o => {
       const riga = { Nome: o.nome, "Ente / ruolo": o.ente_ruolo || "", "Esigenze alimentari": (o.esigenze || []).join(", "), "Nota esigenze": o.esigenze_note || "", Note: o.note || "" };
-      c.servizi.forEach(s => { riga[etichettaServizio(s)] = o.servizi.includes(s.id) ? "X" : ""; });
+      c.servizi.filter(s => s.tipo !== "disponibile").forEach(s => { riga[etichettaServizio(s)] = o.servizi.includes(s.id) ? "X" : ""; });
       return riga;
     })), "Ospiti");
   }
@@ -6761,6 +7040,11 @@ async function renderImpostazioni(){
       <div id="es-abilitazioni-list"></div>
       <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-abilitazione-es">+ Nuova abilitazione</button></div>
 
+      <div class="section-title" style="margin-top:28px;">Esercitazioni ed emergenze – tipologie di volontario</div>
+      <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Usate nelle emergenze (es. generico, caposquadra, coordinatore). Eliminando una voce, i volontari che l'avevano restano senza tipologia.</p>
+      <div id="es-tipologie-list"></div>
+      <div class="storico-toolbar"><button class="btn-add-mini" id="btn-nuova-tipologia-es">+ Nuova tipologia</button></div>
+
       <div class="section-title" style="margin-top:28px;">Esercitazioni ed emergenze – esigenze alimentari</div>
       <p style="font-size:12px;color:var(--grigio-600);margin-top:-6px;">Le voci "con nota" (es. allergie) chiedono di descrivere l'esigenza: nel report Cucina compaiono con nome e nota della persona.</p>
       <div id="es-esigenze-list"></div>
@@ -6795,6 +7079,8 @@ async function renderImpostazioni(){
     document.getElementById("btn-nuova-patente-es").addEventListener("click", () => aggiungiVoceEsercitazione("attivazioni_patenti", "es-patenti-list", "patente", "es. B, C, CE…"));
     await renderListaVociEsercitazione("attivazioni_abilitazioni", "es-abilitazioni-list", "abilitazione");
     document.getElementById("btn-nuova-abilitazione-es").addEventListener("click", () => aggiungiVoceEsercitazione("attivazioni_abilitazioni", "es-abilitazioni-list", "abilitazione", "es. MMT, TRIS…"));
+    await renderListaVociEsercitazione("attivazioni_tipologie", "es-tipologie-list", "tipologia");
+    document.getElementById("btn-nuova-tipologia-es").addEventListener("click", () => aggiungiVoceEsercitazione("attivazioni_tipologie", "es-tipologie-list", "tipologia", "es. Caposquadra"));
     await renderListaEsigenzeEsercitazione();
     document.getElementById("btn-nuova-esigenza-es").addEventListener("click", aggiungiEsigenzaEsercitazione);
     await renderMailSezioniAna();
@@ -6858,7 +7144,9 @@ async function renderListaVociEsercitazione(tabella, wrapId, etichetta){
     </table>
   `;
   wrap.querySelectorAll(".row-del").forEach(b => b.addEventListener("click", async () => {
-    if (!confirm(`Eliminare la ${etichetta} "${b.dataset.nome}"? Non sarà più selezionabile; i volontari già iscritti la conservano.`)) return;
+    // la tipologia è collegata ai volontari (on delete set null): chi l'aveva resta senza
+    const effetto = tabella === "attivazioni_tipologie" ? "i volontari che l'avevano restano senza tipologia" : "i volontari già iscritti la conservano";
+    if (!confirm(`Eliminare la ${etichetta} "${b.dataset.nome}"? Non sarà più selezionabile; ${effetto}.`)) return;
     const { error } = await sb.from(tabella).delete().eq("id", parseInt(b.dataset.id));
     if (error){ alert("Errore: " + error.message); return; }
     renderListaVociEsercitazione(tabella, wrapId, etichetta);

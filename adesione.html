@@ -63,6 +63,9 @@
     min-height:38px; font-family:var(--font);
   }
   .pill.on{ background:var(--blu-500); border-color:var(--blu-500); color:#fff; }
+  .riga-elenco{ border:1px solid var(--grigio-200); border-radius:8px; padding:2px 12px 12px; margin-bottom:10px; }
+  .orario{ display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12.5px; color:var(--grigio-600); }
+  .orario input{ font-size:15px; padding:6px 8px; border:1px solid var(--grigio-400); border-radius:8px; font-family:var(--font); }
   .giorno{ margin-bottom:10px; }
   .giorno .data{ font-size:12.5px; font-weight:700; color:var(--blu-900); margin-bottom:5px; text-transform:capitalize; }
   .azioni{ display:flex; gap:8px; margin-top:16px; }
@@ -107,8 +110,12 @@
   const SUPABASE_URL = "https://hzovguvwnadoptwrdyub.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6b3ZndXZ3bmFkb3B0d3JkeXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NjM3OTAsImV4cCI6MjA5NzUzOTc5MH0.wUyxlGUU6rVM2AC4YLtkTb2D4XPQuAzpTnfWYEMoDdE";
   const MAX_VOLONTARI = 150;
-  const TIPI = ["colazione", "pranzo", "cena", "pernotto"];
-  const LABEL_TIPO = { colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  const MAX_MEZZI = 50, MAX_MATERIALI = 100;
+  // "disponibile" = giornata di disponibilità (emergenze)
+  const TIPI = ["disponibile", "colazione", "pranzo", "cena", "pernotto"];
+  const LABEL_TIPO = { disponibile:"Disponibile", colazione:"Colazione", pranzo:"Pranzo", cena:"Cena", pernotto:"Pernotto" };
+  // campi che, se assenti dalla configurazione, valgono "non richiesto" (come sul DB)
+  const NON_RICHIESTI_SE_ASSENTI = ["esigenze", "tipologia", "art39", "orari", "mezzi", "materiali"];
   const ENTI = { CAP:"CAP", "1RGPT":"1° RGPT" };
 
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -124,6 +131,8 @@
   // stato pagina
   let dati = null;          // risposta di adesione_get
   let volontari = [];       // elenco in lavorazione
+  let mezzi = [];           // emergenze: mezzi della Sezione { tipo, targa, note, giorni[] }
+  let materiali = [];       // emergenze: materiali { quantita, descrizione, note }
   let modifica = null;      // indice del volontario in modifica (null = nuovo)
   let formAperto = false;
   let formBozza = null;     // campi del form non ancora aggiunti all'elenco
@@ -169,7 +178,7 @@
   /* ---------- bozza locale (localStorage, solo su questo dispositivo) ---------- */
   function salvaBozza(){
     try{
-      localStorage.setItem(CHIAVE_BOZZA, JSON.stringify({ volontari, form: formAperto ? leggiForm() : null, modifica, salvata: Date.now() }));
+      localStorage.setItem(CHIAVE_BOZZA, JSON.stringify({ volontari, mezzi, materiali, form: formAperto ? leggiForm() : null, modifica, salvata: Date.now() }));
     }catch(e){ /* storage non disponibile: si continua senza bozza */ }
   }
   function leggiBozza(){
@@ -184,8 +193,17 @@
       cellulare: v.cellulare || "", note: v.note || null,
       patenti: v.patenti || [], abilitazioni: v.abilitazioni || [],
       esigenze: v.esigenze || [], esigenze_note: v.esigenze_note || null,
-      servizi: (v.servizi || []).map(Number)
+      servizi: (v.servizi || []).map(Number),
+      tipologia: v.tipologia || null, art39: !!v.art39,
+      // orari per giornata di disponibilità: { "id servizio": { dalle, alle } }; assente = giornata intera
+      orari: Object.fromEntries(Object.entries(v.orari || {}).map(([k, o]) => [String(k), { dalle:o.dalle, alle:o.alle }]))
     }));
+  }
+  function normalizzaMezzi(lista){
+    return (lista || []).map(m => ({ tipo: m.tipo || "", targa: m.targa || "", note: m.note || "", giorni: (m.giorni || []).map(String) }));
+  }
+  function normalizzaMateriali(lista){
+    return (lista || []).map(m => ({ quantita: m.quantita === null || m.quantita === undefined ? "" : String(m.quantita), descrizione: m.descrizione || "", note: m.note || "" }));
   }
   function stessoElenco(a, b){ return JSON.stringify(a) === JSON.stringify(b); }
 
@@ -198,18 +216,19 @@
     if (error) return mostraBlocco("Impossibile aprire l'adesione", messaggioErrore(error), "errore");
     dati = data;
 
-    const inviati = normalizzaVolontari(dati.volontari);
+    const inviati = { volontari: normalizzaVolontari(dati.volontari), mezzi: normalizzaMezzi(dati.mezzi), materiali: normalizzaMateriali(dati.materiali) };
     const bozza = dati.modificabile ? leggiBozza() : null;
     if (!dati.modificabile) cancellaBozza();
 
-    if (bozza && (!stessoElenco(normalizzaVolontari(bozza.volontari), inviati) || bozza.form)){
-      volontari = normalizzaVolontari(bozza.volontari);
+    const daBozza = bozza ? { volontari: normalizzaVolontari(bozza.volontari), mezzi: normalizzaMezzi(bozza.mezzi || dati.mezzi), materiali: normalizzaMateriali(bozza.materiali || dati.materiali) } : null;
+    if (bozza && (!stessoElenco(daBozza, inviati) || bozza.form)){
+      ({ volontari, mezzi, materiali } = daBozza);
       if (bozza.form){ formAperto = true; formBozza = bozza.form; modifica = bozza.modifica ?? null; }
       vista = "elenco";
       disegna({ bozzaRipresa: true });
       return;
     }
-    volontari = inviati;
+    ({ volontari, mezzi, materiali } = inviati);
     vista = !dati.modificabile ? "chiuso" : (dati.stato_sezione === "in_attesa" ? "elenco" : "conferma");
     disegna();
   }
@@ -244,8 +263,17 @@
   }
 
   // Campi configurati sull'evento: non_richiesto | facoltativo | obbligatorio
-  // come sul DB: campo assente = facoltativo, tranne le esigenze (non richieste)
-  function livello(k){ return (dati.campi && dati.campi[k]) || (k === "esigenze" ? "non_richiesto" : "facoltativo"); }
+  // come sul DB: campo assente = facoltativo, tranne quelli in NON_RICHIESTI_SE_ASSENTI
+  function livello(k){ return (dati.campi && dati.campi[k]) || (NON_RICHIESTI_SE_ASSENTI.includes(k) ? "non_richiesto" : "facoltativo"); }
+  function emergenza(){ return dati.attivazione.tipo === "emergenza"; }
+  // giorni selezionabili per i mezzi: le giornate di disponibilità (o, se non ci sono, tutti i giorni della griglia)
+  function giorniMezzi(){
+    const disp = (dati.servizi || []).filter(s => s.tipo === "disponibile").map(s => s.giorno);
+    return [...new Set(disp.length ? disp : (dati.servizi || []).map(s => s.giorno))];
+  }
+  function giornoBreve(iso){
+    return new Date(iso + "T00:00:00").toLocaleDateString("it-IT", { weekday:"short", day:"2-digit", month:"2-digit" });
+  }
   function esigenzeConNota(){ return (dati.esigenze || []).filter(e => e.con_nota).map(e => e.nome); }
   // pernotto della notte X → colazione del giorno X+1 (se prevista)
   function colazioneDopo(servizioPernotto){
@@ -261,14 +289,18 @@
   function servizioPerId(id){ return (dati.servizi || []).find(s => s.id === id); }
   function riassuntoServizi(v){
     const s = v.servizi.map(servizioPerId).filter(Boolean);
-    const pasti = s.filter(x => x.tipo !== "pernotto").length;
+    const giornate = s.filter(x => x.tipo === "disponibile").sort((a, b) => a.giorno.localeCompare(b.giorno))
+      .map(x => giornoBreve(x.giorno) + (v.orari && v.orari[x.id] ? ` ${v.orari[x.id].dalle}–${v.orari[x.id].alle}` : ""));
+    const pasti = s.filter(x => x.tipo !== "pernotto" && x.tipo !== "disponibile").length;
     const notti = s.filter(x => x.tipo === "pernotto").length;
-    return [pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "nessun servizio";
+    return [giornate.join(", "), pasti ? `${pasti} past${pasti === 1 ? "o" : "i"}` : "", notti ? `${notti} nott${notti === 1 ? "e" : "i"}` : ""].filter(Boolean).join(", ") || "nessun servizio";
   }
   // Dettaglio di un volontario: solo i campi attivi
   function dettaglioVolontario(v, conCf){
     const parti = [];
+    if (attivo("tipologia") && v.tipologia) parti.push(v.tipologia);
     if (conCf) parti.push(v.codice_fiscale);
+    if (attivo("art39") && v.art39) parti.push("art. 39");
     if (attivo("servizi") && (dati.servizi || []).length) parti.push(riassuntoServizi(v));
     if (attivo("patenti") && v.patenti.length) parti.push("Patenti " + v.patenti.join(", "));
     if (attivo("abilitazioni") && v.abilitazioni.length) parti.push(v.abilitazioni.join(", "));
@@ -298,8 +330,9 @@
   function disegnaConferma(opz){
     barra.style.display = "none";
     const nonPartecipa = dati.stato_sezione === "non_partecipa";
-    const pasti = volontari.reduce((n, v) => n + v.servizi.map(servizioPerId).filter(s => s && s.tipo !== "pernotto").length, 0);
+    const pasti = volontari.reduce((n, v) => n + v.servizi.map(servizioPerId).filter(s => s && s.tipo !== "pernotto" && s.tipo !== "disponibile").length, 0);
     const notti = volontari.reduce((n, v) => n + v.servizi.map(servizioPerId).filter(s => s && s.tipo === "pernotto").length, 0);
+    const conPasti = (dati.servizi || []).some(s => s.tipo !== "disponibile");
     app.innerHTML = testata() + `
       <div class="messaggio msg-ok">
         <h2>${opz.appenaInviato ? "Grazie, adesione ricevuta!" : (nonPartecipa ? "Risposta registrata" : "Adesione inviata")}</h2>
@@ -311,14 +344,26 @@
         <h2>Riepilogo</h2>
         <div class="riepilogo-num">
           <div><strong>${volontari.length}</strong><span>volontari</span></div>
-          ${attivo("servizi") && (dati.servizi || []).length ? `
+          ${attivo("servizi") && conPasti ? `
           <div><strong>${pasti}</strong><span>pasti</span></div>
           <div><strong>${notti}</strong><span>pernotti</span></div>` : ""}
+          ${attivo("mezzi") ? `<div><strong>${mezzi.length}</strong><span>mezzi</span></div>` : ""}
+          ${attivo("materiali") ? `<div><strong>${materiali.length}</strong><span>materiali</span></div>` : ""}
         </div>
         ${volontari.map(v => `
           <div class="vol"><div class="chi">
             <div class="nome">${esc(v.cognome)} ${esc(v.nome)}</div>
             <div class="dett">${esc(dettaglioVolontario(v, false))}</div>
+          </div></div>`).join("")}
+        ${mezzi.map(m => `
+          <div class="vol"><div class="chi">
+            <div class="nome">🚙 ${esc(m.tipo)}${m.targa ? ` · ${esc(m.targa)}` : ""}</div>
+            <div class="dett">${esc(m.giorni.length ? m.giorni.map(giornoBreve).join(", ") : "nessun giorno indicato")}${m.note ? ` · ${esc(m.note)}` : ""}</div>
+          </div></div>`).join("")}
+        ${materiali.map(m => `
+          <div class="vol"><div class="chi">
+            <div class="nome">📦 ${esc(m.quantita)} × ${esc(m.descrizione)}</div>
+            ${m.note ? `<div class="dett">${esc(m.note)}</div>` : ""}
           </div></div>`).join("")}
       </div>`}
       <p class="aiuto" style="text-align:center;">Fino alla chiusura delle adesioni potete riaprire questo link e modificare la risposta.</p>
@@ -341,7 +386,9 @@
     app.innerHTML = testata() + avvisi.join("") + `
       <div class="scheda">
         <h2>Volontari della Sezione (${volontari.length})</h2>
-        <p class="aiuto">Aggiungete tutti i volontari che partecipano, poi premete <strong>Invia adesione</strong>. Potete modificare l'elenco fino alla chiusura.</p>
+        <p class="aiuto">${emergenza()
+          ? "Aggiungete i volontari disponibili, con le giornate in cui lo sono"
+          : "Aggiungete tutti i volontari che partecipano"}, poi premete <strong>Invia adesione</strong>. Potete modificare l'elenco fino alla chiusura.</p>
         <div id="lista-volontari">
           ${volontari.length ? volontari.map((v, i) => `
             <div class="vol">
@@ -355,6 +402,8 @@
         </div>
         <div id="box-form">${formAperto ? "" : `<div class="azioni"><button class="secondario" id="btn-aggiungi">+ Aggiungi volontario</button></div>`}</div>
       </div>
+      ${!formAperto && attivo("mezzi") ? htmlMezzi() : ""}
+      ${!formAperto && attivo("materiali") ? htmlMateriali() : ""}
       ${formAperto ? "" : `
       <div class="scheda">
         <h2>Con un file Excel</h2>
@@ -374,6 +423,8 @@
       if (!confirm("Scartare le modifiche non inviate e tornare all'ultimo invio?")) return;
       cancellaBozza();
       volontari = normalizzaVolontari(dati.volontari);
+      mezzi = normalizzaMezzi(dati.mezzi);
+      materiali = normalizzaMateriali(dati.materiali);
       formAperto = false; formBozza = null; modifica = null;
       vista = dati.stato_sezione === "in_attesa" ? "elenco" : "conferma";
       disegna();
@@ -389,18 +440,106 @@
     const agg = document.getElementById("btn-aggiungi");
     if (agg) agg.addEventListener("click", () => apriForm(null));
     if (formAperto) disegnaForm(formBozza);
-    if (!formAperto) collegaExcel();
+    if (!formAperto){ collegaExcel(); collegaMezziMateriali(); }
     if (opz.info){ const box = document.getElementById("box-info"); if (box) box.scrollIntoView({ behavior:"smooth", block:"center" }); }
     if (opz.errore){ const box = document.getElementById("box-errore"); if (box) box.scrollIntoView({ behavior:"smooth", block:"center" }); }
+  }
+
+  /* ---------- mezzi e materiali (emergenze): righe modificabili sul posto ---------- */
+  function htmlMezzi(){
+    const giorni = giorniMezzi();
+    return `
+      <div class="scheda">
+        <h2>Mezzi della Sezione (${mezzi.length})</h2>
+        <p class="aiuto">Indicate i mezzi che la Sezione mette a disposizione e i giorni in cui sono disponibili.</p>
+        ${mezzi.map((m, i) => `
+          <div class="riga-elenco" data-mezzo="${i}">
+            <label class="campo">Mezzo *</label>
+            <input class="testo" data-campo="tipo" maxlength="80" autocomplete="off" placeholder="es. fuoristrada, autocarro con gru" value="${esc(m.tipo)}">
+            <label class="campo">Targa</label>
+            <input class="testo" data-campo="targa" maxlength="15" autocomplete="off" autocapitalize="characters" value="${esc(m.targa)}">
+            ${giorni.length ? `<label class="campo">Disponibile nei giorni</label>
+            <div class="pulsanti">${giorni.map(g => `<button type="button" class="pill ${m.giorni.includes(g) ? "on" : ""}" data-giorno="${g}" aria-pressed="${m.giorni.includes(g)}">${esc(giornoBreve(g))}</button>`).join("")}</div>` : ""}
+            <label class="campo">Note</label>
+            <input class="testo" data-campo="note" maxlength="300" autocomplete="off" value="${esc(m.note)}">
+            <div class="azioni" style="margin-top:10px;"><button type="button" class="secondario" data-togli-mezzo="${i}">Togli mezzo</button></div>
+          </div>`).join("") || `<div class="vuoto">Nessun mezzo inserito.</div>`}
+        <div class="azioni"><button type="button" class="secondario" id="btn-agg-mezzo">+ Aggiungi mezzo</button></div>
+      </div>`;
+  }
+  function htmlMateriali(){
+    return `
+      <div class="scheda">
+        <h2>Materiali della Sezione (${materiali.length})</h2>
+        <p class="aiuto">Materiali messi a disposizione (es. motopompe, gruppi elettrogeni, tende).</p>
+        ${materiali.map((m, i) => `
+          <div class="riga-elenco" data-materiale="${i}">
+            <label class="campo">Quantità *</label>
+            <input class="testo" data-campo="quantita" type="number" inputmode="numeric" min="1" max="10000" value="${esc(m.quantita)}">
+            <label class="campo">Descrizione *</label>
+            <input class="testo" data-campo="descrizione" maxlength="150" autocomplete="off" value="${esc(m.descrizione)}">
+            <label class="campo">Note</label>
+            <input class="testo" data-campo="note" maxlength="300" autocomplete="off" value="${esc(m.note)}">
+            <div class="azioni" style="margin-top:10px;"><button type="button" class="secondario" data-togli-materiale="${i}">Togli</button></div>
+          </div>`).join("") || `<div class="vuoto">Nessun materiale inserito.</div>`}
+        <div class="azioni"><button type="button" class="secondario" id="btn-agg-materiale">+ Aggiungi materiale</button></div>
+      </div>`;
+  }
+  function collegaMezziMateriali(){
+    app.querySelectorAll("[data-mezzo]").forEach(r => {
+      const m = mezzi[parseInt(r.dataset.mezzo, 10)];
+      r.querySelectorAll("input[data-campo]").forEach(inp => inp.addEventListener("input", () => { m[inp.dataset.campo] = inp.value; salvaBozza(); }));
+      r.querySelectorAll(".pill[data-giorno]").forEach(p => p.addEventListener("click", () => {
+        const on = !p.classList.contains("on");
+        p.classList.toggle("on", on); p.setAttribute("aria-pressed", on);
+        m.giorni = on ? [...m.giorni, p.dataset.giorno].sort() : m.giorni.filter(g => g !== p.dataset.giorno);
+        salvaBozza();
+      }));
+    });
+    app.querySelectorAll("[data-materiale]").forEach(r => {
+      const m = materiali[parseInt(r.dataset.materiale, 10)];
+      r.querySelectorAll("input[data-campo]").forEach(inp => inp.addEventListener("input", () => { m[inp.dataset.campo] = inp.value; salvaBozza(); }));
+    });
+    app.querySelectorAll("[data-togli-mezzo]").forEach(b => b.addEventListener("click", () => {
+      mezzi.splice(parseInt(b.dataset.togliMezzo, 10), 1); salvaBozza(); disegna();
+    }));
+    app.querySelectorAll("[data-togli-materiale]").forEach(b => b.addEventListener("click", () => {
+      materiali.splice(parseInt(b.dataset.togliMateriale, 10), 1); salvaBozza(); disegna();
+    }));
+    const aggM = document.getElementById("btn-agg-mezzo");
+    if (aggM) aggM.addEventListener("click", () => {
+      if (mezzi.length >= MAX_MEZZI){ alert(`Si possono indicare al massimo ${MAX_MEZZI} mezzi.`); return; }
+      mezzi.push({ tipo:"", targa:"", note:"", giorni: giorniMezzi() }); salvaBozza(); disegna();
+    });
+    const aggMt = document.getElementById("btn-agg-materiale");
+    if (aggMt) aggMt.addEventListener("click", () => {
+      if (materiali.length >= MAX_MATERIALI){ alert(`Si possono indicare al massimo ${MAX_MATERIALI} materiali.`); return; }
+      materiali.push({ quantita:"1", descrizione:"", note:"" }); salvaBozza(); disegna();
+    });
+  }
+  // righe del tutto vuote = ignorate; ritorna { mezzi, materiali, errori[] } pronti per adesione_salva
+  function preparaMezziMateriali(){
+    const errori = [];
+    const outMezzi = mezzi.filter(m => m.tipo.trim() || m.targa.trim() || m.note.trim()).map((m, i) => {
+      if (!m.tipo.trim()) errori.push(`Mezzo n. ${i + 1}: indicate il tipo di mezzo.`);
+      return { tipo: m.tipo.trim(), targa: m.targa.replace(/\s/g, "").toUpperCase() || null, note: m.note.trim() || null, giorni: m.giorni };
+    });
+    const outMat = materiali.filter(m => String(m.quantita).trim() || m.descrizione.trim() || m.note.trim()).map((m, i) => {
+      const q = Number(m.quantita);
+      if (!m.descrizione.trim()) errori.push(`Materiale n. ${i + 1}: indicate la descrizione.`);
+      if (!Number.isInteger(q) || q < 1 || q > 10000) errori.push(`Materiale n. ${i + 1}: la quantità deve essere un numero da 1 a 10000.`);
+      return { quantita: q, descrizione: m.descrizione.trim(), note: m.note.trim() || null };
+    });
+    return { mezzi: outMezzi, materiali: outMat, errori };
   }
 
   /* ---------- Excel: modello e caricamento (modulo esercitazioni-excel.js) ---------- */
   function configExcel(){
     const e = dati.attivazione;
     return {
-      titolo: e.titolo, sezione: dati.sezione,
+      titolo: e.titolo, tipoNome: nomeTipo(), sezione: dati.sezione,
       date: periodo(e),
-      campi: dati.campi || {}, patenti: dati.patenti || [], abilitazioni: dati.abilitazioni || [],
+      campi: dati.campi || {}, patenti: dati.patenti || [], abilitazioni: dati.abilitazioni || [], tipologie: dati.tipologie || [],
       servizi: dati.servizi || [], esigenze: dati.esigenze || [], volontari, maxVolontari: MAX_VOLONTARI
     };
   }
@@ -450,12 +589,17 @@
       return;
     }
     let aggiornati = 0;
-    validi.forEach(v => {
+    validi.forEach(letto => {
+      const v = normalizzaVolontari([letto])[0];
       const i = volontari.findIndex(x => x.codice_fiscale === v.codice_fiscale);
       if (i < 0){ volontari.push(v); return; }
       const prec = volontari[i];
       volontari[i] = {
         ...v,
+        // tipologia e art. 39 solo se nel modello; gli orari non ci sono: restano quelli inseriti, sulle giornate ancora scelte
+        tipologia: attivo("tipologia") ? v.tipologia : prec.tipologia,
+        art39: attivo("art39") ? v.art39 : prec.art39,
+        orari: Object.fromEntries(Object.entries(prec.orari || {}).filter(([k]) => v.servizi.includes(Number(k)))),
         // campi non presenti nel modello (non richiesti): si conserva quanto già inserito
         cellulare: attivo("cellulare") ? v.cellulare : prec.cellulare,
         patenti: attivo("patenti") ? v.patenti : prec.patenti,
@@ -494,8 +638,12 @@
   }
 
   function disegnaForm(v){
-    v = v || { cognome:"", nome:"", codice_fiscale:"", cellulare:"", patenti:[], abilitazioni:[], servizi:[], esigenze:[], esigenze_note:null, note:null };
+    v = v || { cognome:"", nome:"", codice_fiscale:"", cellulare:"", patenti:[], abilitazioni:[], servizi:[], esigenze:[], esigenze_note:null, note:null, tipologia:null, art39:false, orari:{} };
     v.esigenze = v.esigenze || [];
+    v.orari = v.orari || {};
+    const conOrari = attivo("orari");
+    // tipologie: la lista, più quella già salvata se nel frattempo è stata tolta
+    const tipologie = [...new Set([...(dati.tipologie || []), ...(v.tipologia ? [v.tipologia] : [])])];
     const giorni = [...new Set((dati.servizi || []).map(s => s.giorno))];
     const pills = (lista, scelti, gruppo) => lista.map(x =>
       `<button type="button" class="pill ${scelti.includes(x) ? "on" : ""}" data-gruppo="${gruppo}" data-valore="${esc(x)}" aria-pressed="${scelti.includes(x)}">${esc(x)}</button>`).join("");
@@ -510,26 +658,41 @@
         <label class="campo" for="f-cf">Codice fiscale *</label>
         <input class="testo cf" id="f-cf" name="codice_fiscale" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" value="${esc(v.codice_fiscale)}">
         <div class="errore-campo" id="err-cf"></div>
+        ${attivo("tipologia") && tipologie.length ? `
+        <label class="campo">Tipologia${asterisco("tipologia")}</label>
+        <div class="pulsanti">${tipologie.map(t => `<button type="button" class="pill ${v.tipologia === t ? "on" : ""}" data-unico="tipologia" data-valore="${esc(t)}" aria-pressed="${v.tipologia === t}">${esc(t)}</button>`).join("")}</div>` : ""}
         ${attivo("cellulare") ? `
         <label class="campo" for="f-cell">Cellulare${asterisco("cellulare")}</label>
         <input class="testo" id="f-cell" name="cellulare" type="tel" inputmode="tel" autocomplete="off" maxlength="30" value="${esc(v.cellulare)}">` : ""}
         ${attivo("patenti") && (dati.patenti || []).length ? `<label class="campo">Patenti${asterisco("patenti")}</label><div class="pulsanti">${pills(dati.patenti, v.patenti, "patenti")}</div>` : ""}
         ${attivo("abilitazioni") && (dati.abilitazioni || []).length ? `<label class="campo">Abilitazioni${asterisco("abilitazioni")}</label><div class="pulsanti">${pills(dati.abilitazioni, v.abilitazioni, "abilitazioni")}</div>` : ""}
+        ${attivo("art39") ? `
+        <label class="campo">Art. 39</label>
+        <div class="pulsanti"><button type="button" class="pill ${v.art39 ? "on" : ""}" data-unico="art39" data-valore="si" aria-pressed="${v.art39}">Chiede i benefici dell'art. 39</button></div>
+        <p class="aiuto" style="margin-top:4px;">Solo la segnalazione: i dati del datore di lavoro li gestisce la Sezione.</p>` : ""}
         ${attivo("note") ? `
         <label class="campo" for="f-note">Note${asterisco("note")}</label>
         <input class="testo" id="f-note" name="note" autocomplete="off" maxlength="500" value="${esc(v.note || "")}">` : ""}
         ${attivo("servizi") && giorni.length ? `
-          <label class="campo">Pasti e pernotti${asterisco("servizi")}</label>
+          <label class="campo">${emergenza() ? "Giornate di disponibilità" + ((dati.servizi || []).some(s => s.tipo !== "disponibile") ? ", pasti e pernotti" : "") : "Pasti e pernotti"}${asterisco("servizi")}</label>
           <div style="margin-bottom:8px;"><button type="button" class="pill" id="btn-tutti-servizi">Seleziona tutti</button></div>
-          ${giorni.map(g => `
+          ${giorni.map(g => {
+            const disp = dati.servizi.find(x => x.giorno === g && x.tipo === "disponibile");
+            const o = disp ? v.orari[String(disp.id)] : null;
+            return `
             <div class="giorno">
               <div class="data">${esc(giornoLungo(g))}</div>
               <div class="pulsanti">${TIPI.map(t => {
                 const s = dati.servizi.find(x => x.giorno === g && x.tipo === t);
-                return s ? `<button type="button" class="pill ${v.servizi.includes(s.id) ? "on" : ""}" data-gruppo="servizi" data-valore="${s.id}" aria-pressed="${v.servizi.includes(s.id)}">${LABEL_TIPO[t]}</button>` : "";
+                return s ? `<button type="button" class="pill ${v.servizi.includes(s.id) ? "on" : ""}" data-gruppo="servizi" data-valore="${s.id}" aria-pressed="${v.servizi.includes(s.id)}">${t === "disponibile" ? "Disponibile" : LABEL_TIPO[t]}</button>` : "";
               }).join("")}</div>
-            </div>`).join("")}
-          <p class="aiuto" style="margin-top:4px;">Se scegliete il pernotto, la colazione del mattino dopo si seleziona da sola (potete toglierla).</p>` : ""}
+              ${disp && conOrari ? `
+              <div class="orario">Orario (vuoto = giornata intera):
+                <input type="time" data-ora="dalle" data-servizio="${disp.id}" value="${esc(o ? o.dalle : "")}" aria-label="dalle"> –
+                <input type="time" data-ora="alle" data-servizio="${disp.id}" value="${esc(o ? o.alle : "")}" aria-label="alle">
+              </div>` : ""}
+            </div>`; }).join("")}
+          ${(dati.servizi || []).some(s => s.tipo === "pernotto") ? `<p class="aiuto" style="margin-top:4px;">Se scegliete il pernotto, la colazione del mattino dopo si seleziona da sola (potete toglierla).</p>` : ""}` : ""}
         ${attivo("esigenze") && (dati.esigenze || []).length ? `
           <label class="campo">Esigenze alimentari</label>
           <div class="pulsanti">${pills((dati.esigenze || []).map(e => e.nome), v.esigenze, "esigenze")}</div>
@@ -563,6 +726,18 @@
       }
       salvaBozza();
     }));
+    // scelta singola (tipologia) o sì/no (art. 39): ripremere la voce accesa la spegne
+    form.querySelectorAll(".pill[data-unico]").forEach(p => p.addEventListener("click", () => {
+      const on = !p.classList.contains("on");
+      form.querySelectorAll(`.pill[data-unico="${p.dataset.unico}"]`).forEach(x => accendi(x, false));
+      accendi(p, on);
+      salvaBozza();
+    }));
+    // scrivere un orario seleziona anche la giornata
+    form.querySelectorAll("input[data-ora]").forEach(inp => inp.addEventListener("change", () => {
+      const p = form.querySelector(`.pill[data-gruppo="servizi"][data-valore="${inp.dataset.servizio}"]`);
+      if (inp.value && p) accendi(p, true);
+    }));
     const tutti = document.getElementById("btn-tutti-servizi");
     if (tutti) tutti.addEventListener("click", () => {
       const pills = [...form.querySelectorAll('.pill[data-gruppo="servizi"]')];
@@ -579,16 +754,28 @@
     const form = document.getElementById("form-volontario");
     if (!form) return formBozza;
     const scelti = g => [...form.querySelectorAll(`.pill.on[data-gruppo="${g}"]`)].map(p => p.dataset.valore);
+    const unico = g => { const p = form.querySelector(`.pill.on[data-unico="${g}"]`); return p ? p.dataset.valore : null; };
     const precedente = modifica !== null ? volontari[modifica] : null;
+    const servizi = attivo("servizi") ? scelti("servizi").map(Number) : (precedente ? precedente.servizi : []);
+    // orari: solo sulle giornate scelte e con almeno un orario scritto (i casi incompleti li segnala erroriVolontario)
+    const orari = {};
+    if (attivo("orari")) form.querySelectorAll('input[data-ora="dalle"]').forEach(inp => {
+      const alle = form.querySelector(`input[data-ora="alle"][data-servizio="${inp.dataset.servizio}"]`);
+      if (!servizi.includes(Number(inp.dataset.servizio)) || (!inp.value && !alle.value)) return;
+      orari[inp.dataset.servizio] = { dalle: inp.value, alle: alle.value };
+    });
     // campi non richiesti: si conserva il valore precedente (il server li ignora comunque)
     return {
+      tipologia: attivo("tipologia") ? unico("tipologia") : (precedente ? precedente.tipologia : null),
+      art39: attivo("art39") ? unico("art39") === "si" : (precedente ? precedente.art39 : false),
+      orari: attivo("orari") ? orari : (precedente ? precedente.orari : {}),
       cognome: form.cognome.value.trim().toUpperCase(),
       nome: form.nome.value.trim().toUpperCase(),
       codice_fiscale: pulisciCf(form.codice_fiscale.value),
       cellulare: form.cellulare ? form.cellulare.value.trim() : (precedente ? precedente.cellulare : ""),
       patenti: attivo("patenti") ? scelti("patenti") : (precedente ? precedente.patenti : []),
       abilitazioni: attivo("abilitazioni") ? scelti("abilitazioni") : (precedente ? precedente.abilitazioni : []),
-      servizi: attivo("servizi") ? scelti("servizi").map(Number) : (precedente ? precedente.servizi : []),
+      servizi,
       esigenze: form.esigenze_note ? scelti("esigenze") : (precedente ? (precedente.esigenze || []) : []),
       esigenze_note: form.esigenze_note ? (form.esigenze_note.value.trim() || null) : (precedente ? precedente.esigenze_note : null),
       note: form.note ? (form.note.value.trim() || null) : (precedente ? precedente.note : null)
@@ -604,7 +791,15 @@
     if (obblig("note") && !v.note) errori.push("Le note sono obbligatorie.");
     if (obblig("patenti") && !v.patenti.length) errori.push("Indicate almeno una patente.");
     if (obblig("abilitazioni") && !v.abilitazioni.length) errori.push("Indicate almeno un'abilitazione.");
-    if (obblig("servizi") && (dati.servizi || []).length && !v.servizi.length) errori.push("Indicate almeno un pasto o pernotto.");
+    if (obblig("tipologia") && !v.tipologia) errori.push("Indicate la tipologia.");
+    if (obblig("servizi") && (dati.servizi || []).length && !v.servizi.length)
+      errori.push(emergenza() ? "Indicate almeno una giornata di disponibilità." : "Indicate almeno un pasto o pernotto.");
+    Object.entries(v.orari || {}).forEach(([id, o]) => {
+      const s = servizioPerId(Number(id));
+      const giorno = s ? giornoBreve(s.giorno) : "";
+      if (!o.dalle || !o.alle) errori.push(`${giorno}: indicate l'ora di inizio e di fine, oppure lasciatele vuote per la giornata intera.`);
+      else if (o.dalle === o.alle) errori.push(`${giorno}: inizio e fine non possono coincidere.`);
+    });
     if (attivo("esigenze") && (v.esigenze || []).some(e => esigenzeConNota().includes(e)) && !v.esigenze_note)
       errori.push("Descrivete l'esigenza alimentare nella nota (es. a cosa è allergico).");
     return errori;
@@ -625,16 +820,26 @@
   async function invia(){
     if (invioInCorso) return;
     if (formAperto){ alert("Completate o annullate prima il volontario che state inserendo."); return; }
-    if (!volontari.length){ alert('Inserite almeno un volontario, oppure usate "La Sezione non partecipa".'); return; }
+    const conMezzi = attivo("mezzi"), conMateriali = attivo("materiali");
+    const mm = preparaMezziMateriali();
+    if (mm.errori.length){ alert(mm.errori.join("\n")); return; }
+    const nMezzi = conMezzi ? mm.mezzi.length : 0, nMateriali = conMateriali ? mm.materiali.length : 0;
+    if (!volontari.length && !nMezzi && !nMateriali){ alert('Inserite almeno un volontario, oppure usate "La Sezione non partecipa".'); return; }
     if (volontari.length > MAX_VOLONTARI){ alert(`Si possono inviare al massimo ${MAX_VOLONTARI} volontari.`); return; }
-    if (!confirm(`Inviare l'adesione con ${volontari.length} volontari?`)) return;
-    await esegui("adesione_salva", { p_token: token, p_volontari: volontari });
+    const cosa = [`${volontari.length} volontari`, conMezzi ? `${nMezzi} mezzi` : "", conMateriali ? `${nMateriali} materiali` : ""].filter(Boolean).join(", ");
+    if (!confirm(`Inviare l'adesione con ${cosa}?`)) return;
+    // orari solo sulle giornate scelte (il server rifiuta orari su giornate non scelte)
+    const elenco = volontari.map(v => ({ ...v, orari: Object.fromEntries(Object.entries(v.orari || {}).filter(([k]) => v.servizi.includes(Number(k)))) }));
+    const dato = conMezzi || conMateriali
+      ? { volontari: elenco, ...(conMezzi ? { mezzi: mm.mezzi } : {}), ...(conMateriali ? { materiali: mm.materiali } : {}) }
+      : elenco;
+    await esegui("adesione_salva", { p_token: token, p_volontari: dato });
   }
 
   async function nonPartecipa(){
     if (invioInCorso) return;
-    const testo = volontari.length || dati.stato_sezione === "risposto"
-      ? "Confermate che la Sezione NON partecipa? L'elenco dei volontari inviato finora verrà cancellato."
+    const testo = volontari.length || mezzi.length || materiali.length || dati.stato_sezione === "risposto"
+      ? `Confermate che la Sezione NON partecipa? L'elenco dei volontari${attivo("mezzi") || attivo("materiali") ? ", dei mezzi e dei materiali" : ""} inviato finora verrà cancellato.`
       : `Confermate che la Sezione NON partecipa a questa ${nomeTipo().toLowerCase()}?`;
     if (!confirm(testo)) return;
     await esegui("adesione_nessuna", { p_token: token });
@@ -660,6 +865,8 @@
     if (errGet) return mostraBlocco("Adesione inviata", "L'invio è riuscito, ma non è stato possibile ricaricare il riepilogo. Riaprite il link per vederlo.", "ok");
     dati = data;
     volontari = normalizzaVolontari(dati.volontari);
+    mezzi = normalizzaMezzi(dati.mezzi);
+    materiali = normalizzaMateriali(dati.materiali);
     vista = dati.modificabile ? "conferma" : "chiuso";
     disegna({ appenaInviato: true });
     window.scrollTo(0, 0);
