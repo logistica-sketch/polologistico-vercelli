@@ -3,8 +3,9 @@
 // l'app non funziona offline: senza rete le navigazioni ricevono offline.html.
 // Cacheiamo solo lo shell statico dello stesso dominio.
 
-const CACHE_NAME = "polo-logistico-shell-v3";
+const CACHE_NAME = "polo-logistico-shell-v4";
 const PAGINA_OFFLINE = "./offline.html";
+const PREFISSO_GUIDA = new URL("./guida/", self.location).pathname;
 const SHELL_FILES = [
   "./index.html",
   "./manifest.json",
@@ -42,6 +43,8 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  // La guida (guida/) è un sito a parte: niente cache della shell né offline.html
+  if (url.pathname.startsWith(PREFISSO_GUIDA) || url.pathname === PREFISSO_GUIDA.slice(0, -1)) return;
 
   event.respondWith(
     fetch(req)

@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Guida al Polo Logistico 1 RGPT/CAP Vercelli</title>
+<meta name="description" content="Guida all'uso dell'app del Polo Logistico 1 RGPT/CAP Vercelli, pagina per pagina.">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.48.0/dist/tabler-icons.min.css">
+<style>
+:root{
+  --blu-900:#0b2545; --blu-700:#13315c; --blu-500:#1d4e89; --blu-100:#e3ecf7;
+  --fondo:#f4f6f9; --carta:#ffffff; --testo:#1f2633; --tenue:#5b6575; --linea:#dde2ea;
+  --segno:#f2b705; --segno-testo:#2a1f00;
+  --font:"Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --fondo:#0c1626; --carta:#13213a; --testo:#e6ebf3; --tenue:#a6b1c2; --linea:#24365a; --blu-100:#1a2c4c;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{ --fondo:#0c1626; --carta:#13213a; --testo:#e6ebf3; --tenue:#a6b1c2; --linea:#24365a; --blu-100:#1a2c4c; color-scheme:dark; }
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px)}
+body{margin:0;background:var(--fondo);color:var(--testo);font-family:var(--font);font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--blu-900)}
+a{color:inherit}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:3px solid var(--segno);outline-offset:2px}
+
+/* ---------- testata ---------- */
+.testata{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:var(--blu-900);color:#fff;display:flex;align-items:center;gap:14px;padding:12px clamp(16px,3vw,32px)}
+.testata a.marchio{display:flex;align-items:center;gap:12px;text-decoration:none;font-weight:700;font-size:17px;line-height:1.2}
+.testata img{width:36px;height:36px}
+.testata .sp{flex:1}
+.t-btn{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:7px 12px;font-size:15px;display:inline-flex;align-items:center;gap:6px}
+.t-btn:hover{background:rgba(255,255,255,.1)}
+@media (max-width:640px){ .t-btn span{display:none} .testata a.marchio span small{display:none} }
+
+/* ---------- copertina ---------- */
+.copertina{max-width:1180px;margin:0 auto;padding:clamp(28px,6vw,72px) clamp(16px,3vw,32px) 24px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:clamp(24px,5vw,64px);align-items:start}
+.copertina h1{font-size:clamp(34px,5.2vw,60px);line-height:1.04;margin:0 0 20px;color:var(--blu-900);letter-spacing:-.01em;max-width:13ch}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .copertina h1{color:#fff} }
+:root[data-theme="dark"] .copertina h1{color:#fff}
+.copertina p{max-width:56ch;margin:0 0 14px;color:var(--tenue)}
+.copertina .come{margin-top:28px;border-left:4px solid var(--segno);padding:2px 0 2px 16px;max-width:56ch}
+.copertina .come p{color:var(--testo);margin:0 0 6px}
+.indice{background:var(--blu-900);border-radius:14px;padding:16px 10px 12px;color:#cfdaea;box-shadow:0 18px 40px -22px rgba(11,37,69,.7)}
+.indice .ind-t{display:flex;align-items:center;gap:10px;color:#fff;font-weight:700;padding:2px 10px 12px;border-bottom:1px solid rgba(255,255,255,.12);margin-bottom:6px}
+.indice .ind-t img{width:28px;height:28px}
+.indice a{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;text-decoration:none;font-size:16px}
+.indice a i{font-size:20px;width:22px;text-align:center;color:#8fb1dc}
+.indice a small{margin-left:auto;font-size:13px;color:#8fa3bf}
+.indice a:hover,.indice a:focus-visible{background:rgba(255,255,255,.09);color:#fff}
+.indice .sep{height:1px;background:rgba(255,255,255,.12);margin:8px 6px}
+.indice .ind-nota{font-size:13px;color:#8fa3bf;padding:8px 12px 2px}
+@media (max-width:860px){ .copertina{grid-template-columns:1fr} }
+
+/* ---------- pagina ---------- */
+.pagina{max-width:1280px;margin:0 auto;padding:28px clamp(16px,3vw,32px) 64px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:clamp(20px,3vw,40px)}
+.rail{position:sticky;top:calc(env(safe-area-inset-top,0px) + 80px);align-self:start;display:flex;flex-direction:column;gap:2px}
+.rail a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;text-decoration:none;font-size:15.5px;color:var(--tenue)}
+.rail a i{font-size:18px}
+.rail a:hover{background:var(--blu-100);color:var(--testo)}
+.rail a.on{background:var(--blu-500);color:#fff}
+.rail .home-link{margin-bottom:8px;font-weight:700;color:var(--testo)}
+.rail-mobile{display:none}
+@media (max-width:900px){
+  .pagina{grid-template-columns:minmax(0,1fr)}
+  .rail{display:none}
+  .rail-mobile{display:block;width:100%;font:inherit;font-size:16px;padding:10px 12px;border-radius:10px;border:1px solid var(--linea);background:var(--carta);color:var(--testo)}
+}
+.titolo h1{display:flex;align-items:center;gap:14px;font-size:clamp(28px,3.6vw,42px);line-height:1.1;margin:6px 0 10px}
+.titolo h1 i{font-size:.9em;color:var(--blu-500)}
+.titolo .perche{font-size:20px;margin:0 0 6px;max-width:62ch}
+.titolo .chi{margin:0;color:var(--tenue);font-size:16px;display:flex;gap:8px;align-items:flex-start}
+.titolo .chi i{margin-top:3px}
+.ascolta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:20px 0 22px}
+.a-btn{display:inline-flex;align-items:center;gap:8px;border:0;border-radius:999px;padding:10px 18px;background:var(--blu-900);color:#fff;font-weight:700;font-size:16px}
+.a-btn.sec{background:transparent;color:var(--testo);border:1px solid var(--linea)}
+.a-btn[hidden]{display:none}
+.a-stato{font-size:15px;color:var(--tenue)}
+.lavoro{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,1fr);gap:28px;align-items:start}
+@media (max-width:1100px){ .lavoro{grid-template-columns:minmax(0,1fr)} }
+.pagina article,.col-schermo{min-width:0}
+.col-schermo{position:sticky;top:calc(env(safe-area-inset-top,0px) + 80px)}
+.schermo-wrap{border-radius:12px;overflow:hidden;border:1px solid var(--linea);background:#e9edf3;box-shadow:0 14px 34px -24px rgba(11,37,69,.6)}
+@media (max-width:1100px){ .col-schermo{position:relative;top:0} }
+.schermo-bar{display:flex;gap:6px;align-items:center;padding:8px 12px;background:#d9dfe8;font-size:12px;color:#5b6575}
+.schermo-bar span.p{width:10px;height:10px;border-radius:50%;background:#b9c2cf}
+.schermo-bar em{margin-left:8px;font-style:normal}
+.schermo-scala{position:relative;overflow:hidden}
+.schermo-in{width:880px;transform-origin:0 0}
+.nota-finta{font-size:13px;color:var(--tenue);margin:8px 2px 0}
+
+ol.passi{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;counter-reset:p}
+ol.passi li{counter-increment:p;display:grid;grid-template-columns:34px 1fr;gap:12px;padding:12px 14px;border-radius:10px;border:1px solid transparent;cursor:pointer}
+ol.passi li::before{content:counter(p);display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--blu-100);color:var(--blu-500);font-weight:700;font-size:15px}
+ol.passi li:hover{background:var(--carta)}
+ol.passi li.on{background:var(--carta);border-color:var(--segno)}
+ol.passi li.on::before{background:var(--segno);color:var(--segno-testo)}
+ol.passi h3{margin:2px 0 2px;font-size:18px}
+ol.passi p{margin:0;color:var(--tenue);font-size:16.5px}
+.p-play{float:right;margin:0 0 4px 8px;width:32px;height:32px;border-radius:50%;border:1px solid var(--linea);background:var(--carta);color:var(--blu-500);display:grid;place-items:center;font-size:15px}
+.p-play:hover{border-color:var(--blu-500)}
+li.parla .p-play{background:var(--segno);color:var(--segno-testo);border-color:var(--segno)}
+.parte{display:inline-flex;align-items:center;gap:8px;margin-top:22px;text-decoration:none;background:var(--blu-900);color:#fff;font-weight:700;border-radius:999px;padding:12px 22px}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .parte{background:var(--segno);color:var(--segno-testo)} }
+ol.passi li.on p{color:var(--testo)}
+.badge-c{display:inline-block;font-size:12px;font-weight:700;color:var(--blu-500);border:1px solid currentColor;border-radius:6px;padding:0 6px;margin-left:6px;vertical-align:2px}
+
+.video{margin-top:34px}
+.video h2{font-size:22px;margin:0 0 10px}
+.video .cornice{position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000;max-width:900px}
+.video iframe,.video video{position:absolute;inset:0;width:100%;height:100%;border:0}
+.naviga{display:flex;justify-content:space-between;gap:12px;margin-top:40px;padding-top:20px;border-top:1px solid var(--linea)}
+.naviga a{text-decoration:none;display:flex;flex-direction:column;gap:2px;max-width:48%;padding:10px 12px;border-radius:10px}
+.naviga a:hover{background:var(--carta)}
+.naviga small{color:var(--tenue);font-size:14px}
+.naviga a.dx{text-align:right;margin-left:auto}
+.naviga b{font-size:18px}
+
+/* ---------- finestra "guida su misura" ---------- */
+dialog{border:0;border-radius:14px;padding:0;max-width:560px;width:calc(100% - 32px);background:var(--carta);color:var(--testo);box-shadow:0 24px 60px rgba(0,0,0,.35)}
+dialog::backdrop{background:rgba(11,37,69,.55)}
+.d-in{padding:22px 24px 20px}
+.d-in h2{margin:0 0 6px;font-size:24px}
+.d-in > p{margin:0 0 16px;color:var(--tenue);font-size:16px}
+.d-lista{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-bottom:16px}
+@media (max-width:480px){ .d-lista{grid-template-columns:1fr} }
+.d-lista label,.d-prof label{display:flex;gap:8px;align-items:center;font-size:16px;padding:3px 0}
+.d-prof{display:flex;flex-wrap:wrap;gap:4px 18px;margin:4px 0 16px}
+.d-prof legend{font-weight:700;font-size:16px;padding:0;margin-bottom:4px}
+fieldset{border:0;padding:0;margin:0}
+.d-url{display:flex;gap:8px}
+.d-url input{flex:1;min-width:0;font:inherit;font-size:14px;padding:9px 10px;border-radius:8px;border:1px solid var(--linea);background:var(--fondo);color:var(--testo)}
+.d-fine{display:flex;justify-content:flex-end;margin-top:16px}
+
+.avviso-misura{max-width:1280px;margin:12px auto 0;padding:0 clamp(16px,3vw,32px)}
+.avviso-misura div{background:var(--blu-100);border-radius:10px;padding:10px 14px;font-size:15.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.avviso-misura a{font-weight:700}
+
+/* ---------- finta app (sempre chiara, come l'app vera) ---------- */
+.m-app{display:flex;min-height:520px;background:#f4f6f9;color:#3d4452;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.m-app.solo{min-height:380px}
+.m-side{width:180px;flex:none;background:#0b2545;color:#c9d6ea;padding:10px 8px;display:flex;flex-direction:column;gap:1px}
+.m-brand{display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;padding:4px 6px 10px;font-size:13.5px}
+.m-brand img{width:22px;height:22px}
+.m-voce{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;font-size:13px}
+.m-voce i{font-size:15px}
+.m-voce.on{background:#1d4e89;color:#fff}
+.m-esci{margin-top:auto}
+.m-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.m-head{display:flex;justify-content:space-between;align-items:center;background:#fff;border-bottom:1px solid #e6e9ee;padding:12px 16px;color:#0b2545;font-size:16px}
+.m-av{width:28px;height:28px;border-radius:50%;background:#3a6ea5;color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700}
+.m-body{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.m-barra,.m-azioni{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.m-sp{flex:1}
+.m-btn{display:inline-flex;align-items:center;gap:4px;background:#1d4e89;color:#fff;border-radius:7px;padding:6px 10px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.m-btn.grigio{background:#3d4452}.m-btn.scuro{background:#0b2545}.m-btn.rosso{background:#c0392b}
+.m-btn.mini{padding:3px 7px;font-size:11.5px;background:#e6e9ee;color:#3d4452}
+.m-cerca,.m-sel{background:#fff;border:1px solid #c2c8d2;border-radius:7px;padding:6px 10px;font-size:12.5px;color:#8a93a3;display:inline-flex;gap:6px;align-items:center}
+.m-cerca{min-width:200px}
+.m-card3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.m-card{background:#fff;border-radius:10px;padding:10px;box-shadow:0 1px 3px rgba(11,37,69,.08);display:flex;flex-direction:column;gap:3px}
+.m-card small{color:#8a93a3}
+.m-foto{height:54px;border-radius:7px;background:#e6e9ee;display:grid;place-items:center;font-size:26px;margin-bottom:4px}
+.m-tag{display:inline-block;align-self:flex-start;font-size:11px;font-weight:700;border-radius:5px;padding:1px 6px}
+.m-tag.v{background:#eaf6ea;color:#2e7d32}.m-tag.g{background:#fdf3da;color:#b8860b}.m-tag.r{background:#fdecea;color:#c0392b}.m-tag.n{background:#e6e9ee;color:#3d4452}
+.m-modale{background:#fff;border-radius:10px;padding:10px 12px;box-shadow:0 4px 14px rgba(11,37,69,.12);border:1px solid #e6e9ee;display:flex;flex-direction:column;gap:8px}
+.m-modale small{color:#8a93a3}
+.m-tabs{display:flex;gap:2px;border-bottom:1px solid #e6e9ee}
+.m-tabs span{padding:6px 10px;font-size:12.5px;color:#8a93a3}
+.m-tabs span.on{color:#1d4e89;border-bottom:2px solid #1d4e89;font-weight:700}
+.m-campi{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:#8a93a3;align-items:center}
+.m-campi b{color:#3d4452}
+.m-tab{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;font-size:12.5px;box-shadow:0 1px 3px rgba(11,37,69,.08)}
+.m-tab th{background:#13315c;color:#fff;text-align:left;padding:7px 9px;font-weight:600}
+.m-tab td{padding:7px 9px;border-top:1px solid #eef1f5}
+.m-griglia2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.m-box{background:#fff;border-radius:10px;padding:10px 12px;box-shadow:0 1px 3px rgba(11,37,69,.08);display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.m-box-t{font-weight:700;color:#0b2545}
+.m-riga{font-size:12.5px;display:flex;gap:6px;align-items:center}
+.m-firma{border:1.5px dashed #c2c8d2;border-radius:8px;height:56px;width:100%;display:grid;place-items:center;color:#8a93a3;font-size:12px}
+.m-firma.pic{font:italic 22px/1 "Brush Script MT","Segoe Script",cursive;color:#13315c;height:50px;width:180px}
+.m-griglia-firma{display:grid;grid-template-columns:200px 1fr;gap:12px}
+.m-pdf{position:relative;background:#fff;height:300px;border-radius:4px;box-shadow:0 2px 10px rgba(11,37,69,.15);padding:24px}
+.m-pdf-righe{height:100%;background:repeating-linear-gradient(#fff 0 14px,#e6e9ee 14px 16px);opacity:.9;margin-right:30%}
+.m-firma.sopra{position:absolute;right:40px;bottom:36px;width:150px;height:52px;background:rgba(29,78,137,.06);border:2px solid #1d4e89;color:#1d4e89;font:italic 20px "Brush Script MT","Segoe Script",cursive}
+
+.m-login{min-height:440px;display:grid;place-items:center;background:linear-gradient(135deg,#0b2545,#1d4e89);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.m-login-card{background:#fff;border-radius:10px;padding:26px 30px;width:330px;display:flex;flex-direction:column;align-items:center;gap:6px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.m-login-card img{width:64px;height:64px}
+.m-login-t{font-size:15.5px;white-space:nowrap;font-weight:700;color:#0b2545}
+.m-login-card small{color:#8a93a3;margin-bottom:10px}
+.m-login-campo{align-self:stretch;display:flex;flex-direction:column;gap:4px}
+.m-login-campo label{font-size:12px;font-weight:600;color:#3d4452}
+.m-login-campo span{border:1px solid #c2c8d2;border-radius:7px;padding:8px 10px;color:#3d4452;margin-bottom:6px}
+.m-btn.largo{align-self:stretch;justify-content:center;padding:10px;font-size:14px;margin-top:4px}
+.m-link{color:#1d4e89;font-size:12.5px;margin-top:6px;text-decoration:underline}
+.m-pin.finto{position:static;display:inline-block;box-shadow:none;cursor:default}
+
+/* segnaposti numerati sulla finta app */
+[data-h]{position:relative}
+.m-pin{position:absolute;top:-9px;right:-9px;z-index:3;min-width:24px;height:24px;padding:0 6px;border-radius:12px;background:#f2b705;color:#2a1f00;font:700 12.5px/24px var(--font);text-align:center;box-shadow:0 0 0 2px #fff,0 2px 6px rgba(0,0,0,.25);cursor:pointer;border:0}
+.m-side > .m-pin{right:6px;top:6px}
+[data-h].acceso{outline:3px solid #f2b705;outline-offset:3px;border-radius:8px;z-index:2}
+@media (prefers-reduced-motion:no-preference){
+  [data-h].acceso{animation:luce 1.4s ease-out 1}
+  @keyframes luce{0%{box-shadow:0 0 0 0 rgba(242,183,5,.7)}100%{box-shadow:0 0 0 14px rgba(242,183,5,0)}}
+}
+
+/* ---------- stampa ---------- */
+#stampa{display:none}
+@media print{
+  body{background:#fff;color:#000;font-size:12pt}
+  body::before,.testata,#vista,.avviso-misura,dialog{display:none!important}
+  #stampa{display:block}
+  .st-pag{break-before:page;padding:0 4mm}
+  .st-pag:first-child{break-before:auto}
+  .st-pag h1{font-size:22pt;margin:0 0 4pt}
+  .st-pag .perche{margin:0 0 2pt;font-size:13pt}
+  .st-pag .chi{margin:0 0 10pt;color:#444;font-size:11pt}
+  .st-schermo{width:880px;zoom:.78;border:1px solid #ccc;margin-bottom:10pt}
+  .st-pag ol.passi li{break-inside:avoid;padding:4pt 0;cursor:auto}
+  .st-pag ol.passi p{color:#222}
+}
+</style>
+</head>
+<body>
+<header class="testata">
+  <a class="marchio" href="#"><img src="icon-192.png" alt=""><span>Guida al Polo Logistico<br><small style="font-weight:400;opacity:.75">1 RGPT/CAP Vercelli</small></span></a>
+  <span class="sp"></span>
+  <button class="t-btn" id="b-misura" title="Guida su misura"><i class="ti ti-adjustments-horizontal"></i><span>Guida su misura</span></button>
+  <button class="t-btn" id="b-stampa" title="Stampa la guida"><i class="ti ti-printer"></i><span>Stampa</span></button>
+</header>
+<div class="avviso-misura" id="avviso-misura" hidden></div>
+<div id="vista"></div>
+<div id="stampa"></div>
+
+<dialog id="d-misura">
+  <form class="d-in" method="dialog">
+    <h2>Guida su misura</h2>
+    <p>Scegli le pagine da tenere e chi la leggerà, poi copia il link e mandalo. Chi lo apre vede solo quelle parti.</p>
+    <div class="d-lista" id="d-lista"></div>
+    <fieldset class="d-prof"><legend>Chi la leggerà</legend>
+      <label><input type="radio" name="prof" value="" checked> Tutto</label>
+      <label><input type="radio" name="prof" value="completo"> Utente con permesso completo</label>
+      <label><input type="radio" name="prof" value="base"> Utente con permesso base</label>
+    </fieldset>
+    <div class="d-url"><input id="d-url" readonly aria-label="Link della guida su misura"><button type="button" class="a-btn" id="d-copia"><i class="ti ti-copy"></i>Copia</button></div>
+    <div class="d-fine"><button class="a-btn sec" value="chiudi">Chiudi</button></div>
+  </form>
+</dialog>
+
+<script src="dati.js"></script>
+<script>
+/* =====================================================================
+   CONFIGURAZIONE
+   - escludi: pagine da nascondere sempre (es. ["utenti"])
+   - L'indirizzo accetta anche: ?solo=tlc,formazione  ?escludi=utenti
+     ?profilo=base | completo   e #id-pagina per aprire una pagina
+   ===================================================================== */
+const CONFIG = { escludi: [] };
+
+const qs = new URLSearchParams(location.search);
+const PROFILO = qs.get("profilo") || "";
+const SOLO = (qs.get("solo") || "").split(",").map(s => s.trim()).filter(Boolean);
+const ESCLUDI = [...CONFIG.escludi, ...(qs.get("escludi") || "").split(",").map(s => s.trim()).filter(Boolean)];
+const MISURA = SOLO.length || ESCLUDI.length > CONFIG.escludi.length || PROFILO;
+
+function passoVisibile(p){
+  if (p.solo === "admin") return PROFILO === "";
+  if (p.solo === "completo") return PROFILO !== "base";
+  return true;
+}
+function passiDi(pg){ return pg.passi.filter(passoVisibile); }
+const VISIBILI = PAGINE.filter(pg =>
+  (!SOLO.length || SOLO.includes(pg.id)) && !ESCLUDI.includes(pg.id) && passiDi(pg).length);
+
+const vista = document.getElementById("vista");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const conQuery = h => (location.search || "") + "#" + h;
+
+/* ---------- avviso guida su misura ---------- */
+if (MISURA){
+  const a = document.getElementById("avviso-misura");
+  a.hidden = false;
+  a.innerHTML = `<div><i class="ti ti-filter"></i>Stai vedendo una guida su misura${PROFILO==="base"?" per utenti con permesso base":PROFILO==="completo"?" per utenti con permesso completo":""}. <a href="${location.pathname}">Mostra la guida completa</a></div>`;
+}
+
+/* ---------- copertina ---------- */
+function renderCopertina(){
+  document.title = "Guida al Polo Logistico 1 RGPT/CAP Vercelli";
+  const inizio = VISIBILI.filter(p => ["benvenuto","accesso"].includes(p.id));
+  const app = VISIBILI.filter(p => !["adesione","benvenuto","accesso"].includes(p.id));
+  const sez = VISIBILI.find(p => p.id === "adesione");
+  vista.innerHTML = `<section class="copertina">
+    <div>
+      <h1>Come si usa l'app del Polo Logistico</h1>
+      <p>Una pagina per ogni sezione dell'app, con la schermata, i passi da seguire, la spiegazione a voce e, dove c'è, un video.</p>
+      <p>L'app si apre su <b>polologistico.coordanapiemonte.it</b> con l'email e la password che ti ha dato l'amministratore.</p>
+      <div class="come">
+        <p><b>Clicca una sezione</b> nel menu qui a fianco: è lo stesso menu che trovi nell'app.</p>
+        <p><b>Tocca i numeri gialli</b> sulla schermata per sapere a cosa serve quel pulsante.</p>
+        <p><b>Premi Ascolta</b> e ti spiego io la pagina, passo per passo.</p>
+      </div>
+      ${VISIBILI[0] ? `<a class="parte" href="${conQuery(VISIBILI[0].id)}"><i class="ti ti-player-play"></i>Inizia da ${esc(VISIBILI[0].titolo.toLowerCase())}</a>` : ""}
+    </div>
+    <nav class="indice" aria-label="Sezioni dell'app">
+      <div class="ind-t"><img src="icon-192.png" alt="">Polo Logistico</div>
+      ${inizio.map(p => `<a href="${conQuery(p.id)}"><i class="ti ${p.icona}"></i>${esc(p.titolo)}<small>per iniziare</small></a>`).join("")}${inizio.length ? '<div class="sep"></div>' : ""}
+      ${app.map(p => `<a href="${conQuery(p.id)}"><i class="ti ${p.icona}"></i>${esc(p.titolo)}<small>${passiDi(p).length} passi</small></a>`).join("")}
+      ${sez ? `<div class="sep"></div><div class="ind-nota">Per chi riceve un invito</div><a href="${conQuery(sez.id)}"><i class="ti ${sez.icona}"></i>Rispondere a un invito</a>` : ""}
+    </nav>
+  </section>`;
+}
+
+/* ---------- pagina di una sezione ---------- */
+
+
+function renderPagina(pg){
+  fermaLettura();
+  document.title = pg.titolo + " · Guida al Polo Logistico";
+  const passi = passiDi(pg);
+  const i = VISIBILI.indexOf(pg), prec = VISIBILI[i-1], succ = VISIBILI[i+1];
+  vista.innerHTML = `<div class="pagina">
+    <nav class="rail" aria-label="Pagine della guida">
+      <a class="home-link" href="${location.search || "./"}#"><i class="ti ti-arrow-left"></i>Indice</a>
+      ${VISIBILI.map(p => `<a href="${conQuery(p.id)}" class="${p===pg?"on":""}"><i class="ti ${p.icona}"></i>${esc(p.id==="adesione"?"Rispondere a un invito":p.titolo)}</a>`).join("")}
+    </nav>
+    <article>
+      <select class="rail-mobile" aria-label="Vai a una pagina">${VISIBILI.map(p => `<option value="${p.id}" ${p===pg?"selected":""}>${esc(p.titolo)}</option>`).join("")}</select>
+      <header class="titolo">
+        <h1><i class="ti ${pg.icona}"></i>${esc(pg.titolo)}</h1>
+        <p class="perche">${esc(pg.perche)}</p>
+        <p class="chi"><i class="ti ti-user-check"></i>${esc(pg.chi)}</p>
+      </header>
+      <div class="ascolta">
+        <button class="a-btn" id="b-ascolta" hidden><i class="ti ti-player-play"></i>Ascolta la spiegazione</button>
+        <button class="a-btn sec" id="b-ferma" hidden><i class="ti ti-player-stop"></i>Ferma</button>
+        <span class="a-stato" id="a-stato"></span>
+      </div>
+      <div class="lavoro">
+        <div class="col-schermo">
+          <div class="schermo-wrap">
+            <div class="schermo-bar"><span class="p"></span><span class="p"></span><span class="p"></span><em>polologistico.coordanapiemonte.it${["benvenuto","accesso"].includes(pg.id)?"":pg.id==="adesione"?"/adesione.html":"/#/"+pg.id}</em></div>
+            <div class="schermo-scala" id="scala"><div class="schermo-in" id="schermo">${pg.schermo()}</div></div>
+          </div>
+          <p class="nota-finta">Schermata di esempio con dati inventati.</p>
+        </div>
+        <ol class="passi" id="passi">${passi.map((p,k) => `<li data-k="${k}" tabindex="0">
+          <div>${fileAudio(pg, p) ? `<button class="p-play" data-play="${k}" aria-label="Ascolta il passo ${k+1}" title="Ascolta questo passo"><i class="ti ti-volume"></i></button>` : ""}<h3>${esc(p.t)}${p.solo==="completo"&&PROFILO===""?'<span class="badge-c">permesso completo</span>':""}</h3><p>${esc(p.d)}</p></div></li>`).join("")}</ol>
+      </div>
+      ${videoHtml(pg.video)}
+      <nav class="naviga">
+        ${prec ? `<a href="${conQuery(prec.id)}"><small>Precedente</small><b>← ${esc(prec.titolo)}</b></a>` : "<span></span>"}
+        ${succ ? `<a class="dx" href="${conQuery(succ.id)}"><small>Successiva</small><b>${esc(succ.titolo)} →</b></a>` : ""}
+      </nav>
+    </article>
+  </div>`;
+
+  vista.querySelector(".rail-mobile").addEventListener("change", e => location.hash = e.target.value);
+  const schermo = document.getElementById("schermo");
+  mettiSegni(schermo, passi);
+  adattaScala();
+
+  const lis = [...vista.querySelectorAll("#passi li")];
+  lis.forEach(li => {
+    const vai = e => {
+      const pb = e && e.target.closest && e.target.closest(".p-play");
+      if (pb){ e.stopPropagation(); suona(pg, passi, [+pb.dataset.play]); return; }
+      attiva(pg, passi, +li.dataset.k, true);
+    };
+    li.addEventListener("click", vai);
+    li.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); vai(); } });
+  });
+  schermo.addEventListener("click", e => {
+    const pin = e.target.closest(".m-pin");
+    if (pin){ attiva(pg, passi, +pin.dataset.k, false); lis[+pin.dataset.k].scrollIntoView({ block:"nearest", behavior:"smooth" }); }
+  });
+
+  const bA = document.getElementById("b-ascolta");
+  audioPagina = !!fileAudio(pg, null);
+  bA.hidden = !audioPagina;
+  bA.addEventListener("click", () => suona(pg, passi, [-1, ...passi.map((_,k) => k)]));
+  document.getElementById("b-ferma").addEventListener("click", fermaLettura);
+  window.scrollTo(0, 0);
+}
+
+function mettiSegni(schermo, passi){
+  const gruppi = new Map();
+  passi.forEach((p, k) => {
+    if (!p.h) return;
+    if (!gruppi.has(p.h)) gruppi.set(p.h, []);
+    gruppi.get(p.h).push(k);
+  });
+  gruppi.forEach((ks, h) => {
+    const el = schermo.querySelector(`[data-h="${h}"]`);
+    if (!el) return;
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "m-pin"; b.dataset.k = ks[0];
+    b.textContent = ks.map(k => k+1).join(" · ");
+    b.setAttribute("aria-label", "Passo " + (ks[0]+1));
+    el.appendChild(b);
+  });
+}
+
+function attiva(pg, passi, k, dalTesto){
+  vista.querySelectorAll("#passi li").forEach(li => li.classList.toggle("on", +li.dataset.k === k));
+  const schermo = document.getElementById("schermo");
+  schermo.querySelectorAll(".acceso").forEach(e => e.classList.remove("acceso"));
+  const h = passi[k] && passi[k].h;
+  const el = h && schermo.querySelector(`[data-h="${h}"]`);
+  if (el){
+    void el.offsetWidth; el.classList.add("acceso");
+    if (dalTesto && window.innerWidth <= 1100){
+      document.querySelector(".col-schermo").scrollIntoView({ block:"start", behavior:"smooth" });
+    }
+  }
+}
+
+function adattaScala(){
+  const scala = document.getElementById("scala"), dentro = document.getElementById("schermo");
+  if (!scala) return;
+  const r = Math.min(1, scala.clientWidth / 880);
+  dentro.style.transform = `scale(${r})`;
+  scala.style.height = (dentro.offsetHeight * r) + "px";
+}
+new ResizeObserver(() => adattaScala()).observe(document.body);
+
+function videoHtml(v){
+  if (!v) return "";
+  let dentro;
+  if (/\.(mp4|webm)(\?|$)/i.test(v)) dentro = `<video src="${esc(v)}" controls preload="metadata"></video>`;
+  else {
+    const id = (v.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/) || [,v])[1];
+    dentro = `<iframe src="https://www.youtube-nocookie.com/embed/${esc(id)}?rel=0" title="Video della sezione" allow="encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>`;
+  }
+  return `<section class="video"><h2>Guarda il video</h2><div class="cornice">${dentro}</div></section>`;
+}
+
+/* ---------- spiegazione a voce (file MP3 generati con genera-audio.mjs) ----------
+   audio/<pagina>-00.mp3 = introduzione, audio/<pagina>-NN.mp3 = passo NN
+   (NN conta tutti i passi della pagina, anche quelli nascosti dal profilo).
+   audio/elenco.json elenca i file presenti: se manca, i pulsanti non compaiono. */
+let AUDIO = new Set(), lettore = new Audio(), coda = [], inLettura = false, audioPagina = false;
+const nn = n => String(n).padStart(2, "0");
+function fileAudio(pg, passo){
+  const n = passo === null ? 0 : pg.passi.indexOf(passo) + 1;
+  const f = `${pg.id}-${nn(n)}.mp3`;
+  return AUDIO.has(f) ? "audio/" + f : null;
+}
+function suona(pg, passi, ordine){
+  fermaLettura();
+  coda = ordine.map(k => ({ k, src: fileAudio(pg, k < 0 ? null : passi[k]) })).filter(x => x.src);
+  if (!coda.length) return;
+  inLettura = true;
+  document.getElementById("b-ascolta").hidden = true;
+  document.getElementById("b-ferma").hidden = false;
+  const stato = document.getElementById("a-stato");
+  const prossimo = () => {
+    vista.querySelectorAll("#passi li.parla").forEach(li => li.classList.remove("parla"));
+    if (!inLettura || !coda.length){ fermaLettura(); return; }
+    const { k, src } = coda.shift();
+    if (k >= 0){
+      attiva(pg, passi, k, false);
+      const li = vista.querySelector(`#passi li[data-k="${k}"]`);
+      li.classList.add("parla"); li.scrollIntoView({ block:"nearest", behavior:"smooth" });
+      stato.textContent = `Passo ${k+1} di ${passi.length}`;
+    } else stato.textContent = "Introduzione";
+    lettore.src = src;
+    lettore.onended = () => setTimeout(prossimo, 450);
+    lettore.onerror = prossimo;
+    lettore.play().catch(fermaLettura);
+  };
+  prossimo();
+}
+function fermaLettura(){
+  inLettura = false; coda = [];
+  lettore.pause(); lettore.onended = null;
+  vista.querySelectorAll("#passi li.parla").forEach(li => li.classList.remove("parla"));
+  const bA = document.getElementById("b-ascolta"), bF = document.getElementById("b-ferma"), st = document.getElementById("a-stato");
+  if (bA) bA.hidden = !audioPagina; if (bF) bF.hidden = true; if (st) st.textContent = "";
+}
+
+/* ---------- guida su misura ---------- */
+const dlg = document.getElementById("d-misura");
+document.getElementById("b-misura").addEventListener("click", () => {
+  document.getElementById("d-lista").innerHTML = PAGINE.map(p => `<label><input type="checkbox" value="${p.id}" ${VISIBILI.includes(p)?"checked":""}> ${esc(p.id==="adesione"?"Rispondere a un invito":p.titolo)}</label>`).join("");
+  const r = dlg.querySelector(`input[name=prof][value="${PROFILO}"]`); if (r) r.checked = true;
+  aggiornaUrl(); dlg.showModal();
+});
+dlg.addEventListener("change", aggiornaUrl);
+function aggiornaUrl(){
+  const scelti = [...dlg.querySelectorAll("#d-lista input:checked")].map(i => i.value);
+  const prof = dlg.querySelector("input[name=prof]:checked").value;
+  const p = new URLSearchParams();
+  if (scelti.length && scelti.length < PAGINE.length) p.set("solo", scelti.join(","));
+  if (prof) p.set("profilo", prof);
+  const s = p.toString();
+  document.getElementById("d-url").value = location.origin + location.pathname + (s ? "?" + s.replace(/%2C/g, ",") : "");
+}
+document.getElementById("d-copia").addEventListener("click", async () => {
+  const inp = document.getElementById("d-url"), b = document.getElementById("d-copia");
+  try{ await navigator.clipboard.writeText(inp.value); } catch(e){ inp.select(); document.execCommand("copy"); }
+  b.innerHTML = '<i class="ti ti-check"></i>Copiato';
+  setTimeout(() => b.innerHTML = '<i class="ti ti-copy"></i>Copia', 1800);
+});
+
+/* ---------- stampa ---------- */
+document.getElementById("b-stampa").addEventListener("click", () => {
+  const st = document.getElementById("stampa");
+  st.innerHTML = VISIBILI.map(pg => {
+    const passi = passiDi(pg);
+    return `<section class="st-pag"><h1>${esc(pg.titolo)}</h1><p class="perche">${esc(pg.perche)}</p><p class="chi">${esc(pg.chi)}</p>
+      <div class="st-schermo" data-id="${pg.id}">${pg.schermo()}</div>
+      <ol class="passi">${passi.map(p => `<li><div><h3>${esc(p.t)}</h3><p>${esc(p.d)}</p></div></li>`).join("")}</ol></section>`;
+  }).join("");
+  st.querySelectorAll(".st-schermo").forEach(s => mettiSegni(s, passiDi(PAGINE.find(p => p.id === s.dataset.id))));
+  window.print();
+});
+
+/* ---------- router ---------- */
+function router(){
+  const id = location.hash.replace(/^#\/?/, "");
+  const pg = VISIBILI.find(p => p.id === id);
+  if (pg) renderPagina(pg); else { fermaLettura(); renderCopertina(); }
+}
+window.addEventListener("hashchange", router);
+fetch("audio/elenco.json", { cache:"no-cache" })
+  .then(r => r.ok ? r.json() : [])
+  .then(l => { AUDIO = new Set(l); })
+  .catch(() => {})
+  .finally(router);
+</script>
+</body>
+</html>

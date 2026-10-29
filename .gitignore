@@ -9,3 +9,5 @@ supabase/.temp/
 supabase/.branches/
 supabase/**/.env*
 BRIEF_ESERCITAZIONI.md
+guida/prova-voci/
+guida/audio/

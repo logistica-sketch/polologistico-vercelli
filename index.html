@@ -90,6 +90,8 @@
    ============================================================ */
 const SUPABASE_URL = "https://hzovguvwnadoptwrdyub.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6b3ZndXZ3bmFkb3B0d3JkeXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NjM3OTAsImV4cCI6MjA5NzUzOTc5MH0.wUyxlGUU6rVM2AC4YLtkTb2D4XPQuAzpTnfWYEMoDdE";
+// Guida pubblica per gli utenti (cartella guida/, indipendente dall'app)
+const GUIDA_URL = "https://polologistico.coordanapiemonte.it/guida/";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: false,
@@ -10177,11 +10179,39 @@ function esportaEsercitazioneExcel(){
   XLSX.writeFile(wb, `${testiTipo(c.es.tipo).Nome}_${(c.es.titolo || "").replace(/[^a-zA-Z0-9]+/g, "_").slice(0,60)}_${c.es.data_inizio}.xlsx`);
 }
 
+// Copia GUIDA_URL; senza Clipboard API (http, browser vecchi) ripiega su execCommand
+async function copiaLinkGuida(btn){
+  let ok = false;
+  try { await navigator.clipboard.writeText(GUIDA_URL); ok = true; }
+  catch(e){
+    const t = document.createElement("textarea");
+    t.value = GUIDA_URL; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    try { ok = document.execCommand("copy"); } catch(e2){ ok = false; }
+    t.remove();
+  }
+  if (!ok){ prompt("Copia il link della guida:", GUIDA_URL); return; }
+  const span = btn.querySelector("span");
+  span.textContent = "Copiato";
+  setTimeout(() => { span.textContent = "Copia link"; }, 2000);
+}
+
 async function renderImpostazioni(){
   const content = document.getElementById("page-content");
   const puoGestireTlc = livelloPermesso("tlc") === "completo";
+  const vedeGuida = userCanSee("_solo_it_admin");
 
-  let html = `
+  let html = vedeGuida ? `
+    <div class="section-title">Guida all'app</div>
+    <div class="stat-card" style="max-width:340px;margin-bottom:28px;">
+      <p style="font-size:12.5px;color:var(--grigio-600);margin:0 0 10px;">Link pubblico della guida, da mandare a volontari e Sezioni.</p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <a class="btn-add-mini" href="${GUIDA_URL}" target="_blank" rel="noopener" style="text-decoration:none;"><i class="ti ti-book" aria-hidden="true"></i> Apri guida</a>
+        <button class="btn-add-mini" id="btn-copia-link-guida"><i class="ti ti-copy" aria-hidden="true"></i> <span>Copia link</span></button>
+      </div>
+    </div>
+  ` : "";
+  html += `
     <div class="section-title">Account</div>
     <div class="stat-card" style="max-width:340px;margin-bottom:10px;">
       <p style="font-size:12.5px;color:var(--grigio-600);margin:0 0 10px;">Cambia la password del tuo account.</p>
@@ -10247,6 +10277,7 @@ async function renderImpostazioni(){
   content.innerHTML = html;
 
   document.getElementById("btn-apri-cambio-password").addEventListener("click", () => apriFormCambioPassword());
+  if (vedeGuida) document.getElementById("btn-copia-link-guida").addEventListener("click", ev => copiaLinkGuida(ev.currentTarget));
 
   await renderFirmaPersonaleBox();
 
