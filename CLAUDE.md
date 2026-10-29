@@ -85,3 +85,13 @@ Attestati (`documenti_volontario` with `tipo = 'attestato'`) are mirrored to Goo
 - Every outcome is written to `log_attivita` (`utente_email = 'sync-attestati-drive'`, `operazione` `SYNC_DRIVE_OK` / `SYNC_DRIVE_ERRORE`, details in `dati_dopo`, `record_id` is text). The CHECK `log_attivita_operazione_check` must allow those two values besides INSERT/UPDATE/DELETE; if a log insert fails the function prints `LOG_ATTIVITA_NON_SCRITTO` in its own logs. The function answers the webhook immediately and works in background (`EdgeRuntime.waitUntil`), so sync errors never block the app.
 - Secrets are never in the repo: `WEBHOOK_SECRET`, `APPS_SCRIPT_SECRET`, `APPS_SCRIPT_URL` are Supabase function secrets; `APPS_SCRIPT_SECRET` is also an Apps Script *Script Property*. Apps Script `doPost` cannot read HTTP headers, so the secret travels in the JSON body; the web app answers with a 302 that the function follows with a GET.
 - Redeploy: `cd apps-script && clasp push && clasp deploy -i <deploymentId>` (keeps the same `/exec` URL; `clasp create` overwrites `appsscript.json`, restore it if you ever recreate the project) and `npx supabase@2.122.0 functions deploy sync-attestati-drive --no-verify-jwt --use-api`. `.clasp.json` and `supabase/.temp/` are git-ignored.
+
+## Guida utenti
+
+La guida pubblica in `guida/` va tenuta allineata all'app. Regole permanenti:
+
+- Ogni modifica che cambia cosa vede o fa l'utente (nuova funzione, nuova sezione, pulsante rinominato, passaggio diverso, permessi cambiati) deve aggiornare anche `guida/dati.js` nella stessa sessione: testo del passo (`d`), copione parlato (`v`), `intro` della pagina se serve, e la schermata finta (`schermo`) se l'elemento citato non c'è più o è nuovo (i passi lo indicano con `h` = `data-h` della schermata). Una nuova voce di `MENU` = una nuova pagina della guida, con lo stesso `id` della route (e la voce corrispondente in `SIDEBAR`, in cima a `dati.js`).
+- Stile dei testi: italiano semplice per volontari, niente tecnicismi. `d` = breve e asciutto; `v` = parlato colloquiale, come qualcuno che spiega seduto accanto, 2-4 frasi.
+- Dopo aver modificato `dati.js`, rigenera solo gli audio cambiati con `node genera-audio.mjs --gemini` (da `guida/`, chiave dalla variabile utente `GEMINI_API_KEY`, mai scritta nei file). Mai usare `--forza` se non richiesto.
+- Le modifiche puramente grafiche o interne (stile, refactoring, bug fix invisibili) NON richiedono di toccare la guida.
+- Nel riepilogo finale di ogni lavoro scrivi sempre una riga "Guida: aggiornata (pagine X, N audio rigenerati)" oppure "Guida: nessuna modifica necessaria".
