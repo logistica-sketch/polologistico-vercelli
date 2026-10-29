@@ -629,6 +629,13 @@ input,select,textarea{font-family:inherit;}
 .pe-stato-firmato{background:var(--verde-bg);color:var(--verde);}
 .pe-stato-annullato{background:var(--rosso-bg);color:var(--rosso);}
 .pe-stato-completato{background:#e6f0fb;color:var(--blu-500);}
+.pe-avviso-elimina{
+  display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;padding:10px 12px;
+  background:var(--rosso-bg);color:var(--rosso);border-left:4px solid var(--rosso);border-radius:8px;
+  font-size:13px;font-weight:600;
+}
+.pe-avviso-elimina .ti{font-size:20px;flex:none;}
+.btn-danger:disabled{opacity:.5;cursor:not-allowed;}
 .pe-origine{font-size:11px;font-weight:600;color:var(--grigio-600);text-transform:uppercase;letter-spacing:.03em;}
 .pe-origine.libero{color:var(--blu-500);}
 .pe-scelte{display:grid;grid-template-columns:1fr 1fr;gap:10px;}

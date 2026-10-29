@@ -4725,8 +4725,25 @@ const EVENTI_PDF_AUDIT = {
   creato:"Creato", salvato:"Nuova versione", firma_interna:"Firma interna", link_creato:"Link creato",
   link_revocato:"Link revocato", link_aperto:"Link aperto", firma_link:"Firma con link",
   completato:"Completato", annullato:"Annullato", esportato_compilabile:"Esportato compilabile",
-  libreria_aggiunta:"Aggiunto alla libreria", libreria_rimossa:"Rimosso dalla libreria"
+  libreria_aggiunta:"Aggiunto alla libreria", libreria_rimossa:"Rimosso dalla libreria",
+  documento_eliminato:"Documento eliminato", modello_eliminato:"Modello eliminato", modello_archiviato:"Modello archiviato"
 };
+// Eventi il cui oggetto non esiste più: titolo/nome, stato, motivo e firmatari si leggono da "dettagli"
+const EVENTI_PDF_ELIMINAZIONE = ["documento_eliminato", "modello_eliminato", "modello_archiviato"];
+function nomeOggettoEliminatoPdf(a){
+  const d = a.dettagli || {};
+  return (a.evento === "documento_eliminato" ? "" : "Modello: ") + (d.titolo || d.nome || "—");
+}
+function infoEliminazionePdf(a){
+  const d = a.dettagli || {};
+  const firmatari = (Array.isArray(d.firmatari) ? d.firmatari : [])
+    .map(f => typeof f === "string" ? f : (f?.nome || f?.firmatario_nome || "")).filter(Boolean);
+  return [
+    d.stato ? "Stato: " + (STATI_PDF_DOC[d.stato] || d.stato) : "",
+    d.motivo ? "Motivo: " + d.motivo : "",
+    firmatari.length ? "Firmatari: " + firmatari.join(", ") : ""
+  ].filter(Boolean).join(" · ");
+}
 const COLONNE_VOLONTARIO_PDF = "id, cognome, nome, codice_fiscale, data_nascita, luogo_nascita, provincia_nascita, sezione_ana, telefono, email";
 const COLONNE_TLC_PDF = "id, codice_ana, descrizione, matricola, marca, modello, categoria, sottocategoria_radio";
 const ORE_VALIDITA_LINK_PDF = [[24,"24 ore"],[48,"48 ore"],[72,"72 ore"],[168,"7 giorni"]];
@@ -4890,6 +4907,7 @@ function renderListaDocumentiPdf(){
   const elenco = _pdfDocCache.filter(d => (!f.stato || d.stato === f.stato)
     && (!f.origine || origineDocPdf(d) === f.origine)
     && (!q || (d.titolo || "").toLowerCase().includes(q)));
+  const completo = editorPdfCompleto();
   document.getElementById("pe-results-count").textContent = `${elenco.length} documenti`;
   const wrap = document.getElementById("pe-doc-list");
   if (elenco.length === 0){
@@ -4899,7 +4917,7 @@ function renderListaDocumentiPdf(){
   wrap.innerHTML = `
     <div class="stat-card" style="padding:6px 10px;overflow-x:auto;">
       <table class="storico-table es-tabella-click">
-        <thead><tr><th>Titolo</th><th>Origine</th><th>Stato</th><th>Creato il</th><th>Aggiornato il</th></tr></thead>
+        <thead><tr><th>Titolo</th><th>Origine</th><th>Stato</th><th>Creato il</th><th>Aggiornato il</th>${completo ? "<th></th>" : ""}</tr></thead>
         <tbody>
           ${elenco.map(d => `
             <tr data-id="${d.id}">
@@ -4908,12 +4926,14 @@ function renderListaDocumentiPdf(){
               <td>${badgeStatoPdf(d.stato)}</td>
               <td style="white-space:nowrap;">${formatDataOraIt(d.creato_il)}</td>
               <td style="white-space:nowrap;">${formatDataOraIt(d.aggiornato_il)}</td>
+              ${completo ? `<td><div class="pe-azioni-riga"><button class="btn-danger" data-pe-elimina-doc="${d.id}" title="Elimina il documento"><i class="ti ti-trash" aria-hidden="true"></i> Elimina</button></div></td>` : ""}
             </tr>`).join("")}
         </tbody>
       </table>
     </div>
   `;
   wrap.querySelectorAll("tr[data-id]").forEach(tr => tr.addEventListener("click", () => apriDettaglioDocumentoPdf(tr.dataset.id)));
+  wrap.querySelectorAll("[data-pe-elimina-doc]").forEach(b => b.addEventListener("click", ev => { ev.stopPropagation(); eliminaDocumentoPdf(b.dataset.peEliminaDoc); }));
 }
 
 async function apriModalNuovoDocumentoPdf(){
@@ -5983,6 +6003,7 @@ async function apriDettaglioDocumentoPdf(id, linkNuovo){
             ${doc.pdf_path ? `<button class="btn-save" id="pe-det-scarica">Scarica PDF</button>` : ""}
             ${puoModificare ? `<button class="btn-add-mini" id="pe-det-modifica">Modifica bozza</button>` : ""}
             ${puoAnnullare ? `<button class="btn-danger" id="pe-det-annulla">Annulla documento</button>` : ""}
+            ${editorPdfCompleto() ? `<button class="btn-danger" id="pe-det-elimina"><i class="ti ti-trash" aria-hidden="true"></i> Elimina</button>` : ""}
           </div>
         </div>
 
@@ -6028,6 +6049,7 @@ async function apriDettaglioDocumentoPdf(id, linkNuovo){
     if (libero) apriEditorLiberoPdf(doc.id); else apriCompilazionePdf(doc.modello_id, doc);
   });
   if (puoAnnullare) document.getElementById("pe-det-annulla").addEventListener("click", () => annullaDocumentoPdf(doc));
+  if (editorPdfCompleto()) document.getElementById("pe-det-elimina").addEventListener("click", () => eliminaDocumentoPdf(doc.id));
   overlay.querySelectorAll("[data-pe-crea-link]").forEach(b => b.addEventListener("click", () => mostraFormLinkPdf(doc, b.dataset.peCreaLink)));
   overlay.querySelectorAll("[data-pe-revoca]").forEach(b => b.addEventListener("click", () => revocaLinkPdf(doc.id, b.dataset.peRevoca)));
   if (linkNuovo) collegaLinkNuovoPdf(doc, linkNuovo);
@@ -6166,6 +6188,106 @@ async function annullaDocumentoPdf(doc){
   if (!data){ alert("Il documento è cambiato nel frattempo (o non hai i permessi): ricarica e riprova."); apriDettaglioDocumentoPdf(doc.id); return; }
   await registraAuditPdf([{ documento_id: doc.id, evento: "annullato", sha256: doc.sha256, dettagli: { motivo: motivo.trim().slice(0, 500), stato_precedente: doc.stato } }]);
   apriDettaglioDocumentoPdf(doc.id);
+}
+
+const ERRORI_ELIMINA_DOCUMENTO_PDF = {
+  non_autorizzato: "Non hai i permessi per eliminare i documenti.",
+  motivo_obbligatorio: "Indica il motivo dell'eliminazione.",
+  documento_non_trovato: "Il documento non esiste più."
+};
+
+// pdf_elimina_documento cancella la riga (pdf_audit lo scrive la funzione, log_attivita il trigger),
+// poi si tolgono i file della cartella pdf-documenti/{id}/. Vale per documenti da modello e da PDF caricato.
+async function eliminaDocumentoPdf(id){
+  if (!editorPdfCompleto()) return;
+  const { data: doc, error } = await sb.from("pdf_documenti").select("id, titolo, stato, pdf_path").eq("id", id).maybeSingle();
+  if (error){ alert("Errore: " + error.message); return; }
+  if (!doc){ alert(ERRORI_ELIMINA_DOCUMENTO_PDF.documento_non_trovato); chiudiModal(); _pdfEdTab = "documenti"; renderEditorPdf(); return; }
+  if (doc.stato === "firmato" || doc.stato === "completato"){ mostraConfermaEliminaFirmatoPdf(doc); return; }
+  let msg = `Il documento «${doc.titolo}» verrà eliminato definitivamente con tutti i suoi file.`;
+  if (doc.stato === "in_firma") msg += "\nI link di firma già inviati smetteranno di funzionare.";
+  if (!confirm(msg + "\n\nContinuare?")) return;
+  await eseguiEliminaDocumentoPdf(doc, null);
+}
+
+// Documento firmato/completato: avviso, possibilità di scaricarlo, motivo obbligatorio e conferma scrivendo ELIMINA
+function mostraConfermaEliminaFirmatoPdf(doc){
+  const ov = document.createElement("div");
+  ov.id = "pe-elimina-overlay";
+  ov.className = "modal-overlay";
+  ov.innerHTML = `
+    <div class="modal-box" style="max-width:520px;">
+      <div class="modal-head">
+        <h3>Elimina documento</h3>
+        <button class="modal-close" id="pe-el-chiudi">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 12px;">Il documento «${escapeHtml(doc.titolo)}» verrà eliminato definitivamente con tutti i suoi file.</p>
+        <div class="pe-avviso-elimina">
+          <i class="ti ti-alert-triangle" aria-hidden="true"></i>
+          <div>È un documento ${doc.stato === "firmato" ? "firmato" : "completato"}: una volta eliminato non si potrà recuperare. Scaricalo prima se ti serve una copia.</div>
+        </div>
+        ${doc.pdf_path ? `<button type="button" class="btn-save" id="pe-el-scarica" style="margin-bottom:14px;">Scarica PDF</button>` : ""}
+        <div class="form-field">
+          <label>Motivo dell'eliminazione *</label>
+          <textarea id="pe-el-motivo" rows="2" maxlength="500"></textarea>
+        </div>
+        <div class="form-field">
+          <label>Per confermare scrivi ELIMINA</label>
+          <input type="text" id="pe-el-conferma" autocomplete="off">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-cancel" id="pe-el-annulla">Annulla</button>
+          <button type="button" class="btn-danger" id="pe-el-ok" disabled><i class="ti ti-trash" aria-hidden="true"></i> Elimina</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+  const chiudi = () => ov.remove();
+  const motivo = document.getElementById("pe-el-motivo");
+  const conferma = document.getElementById("pe-el-conferma");
+  const ok = document.getElementById("pe-el-ok");
+  const aggiorna = () => { ok.disabled = !(motivo.value.trim() && conferma.value.trim() === "ELIMINA"); };
+  motivo.addEventListener("input", aggiorna);
+  conferma.addEventListener("input", aggiorna);
+  document.getElementById("pe-el-chiudi").addEventListener("click", chiudi);
+  document.getElementById("pe-el-annulla").addEventListener("click", chiudi);
+  if (doc.pdf_path) document.getElementById("pe-el-scarica").addEventListener("click", () => scaricaDocumentoPdf(doc));
+  ok.addEventListener("click", async () => {
+    if (!motivo.value.trim()){ alert(ERRORI_ELIMINA_DOCUMENTO_PDF.motivo_obbligatorio); return; }
+    ok.disabled = true;
+    if (await eseguiEliminaDocumentoPdf(doc, motivo.value.trim().slice(0, 500))) chiudi();
+    else aggiorna();
+  });
+  motivo.focus();
+}
+
+// true se il documento è stato eliminato (o non esiste più)
+async function eseguiEliminaDocumentoPdf(doc, motivo){
+  const { data, error } = await sb.rpc("pdf_elimina_documento", { p_id: doc.id, p_motivo: motivo });
+  const codice = (data && typeof data === "object" ? data.errore : null)
+    || Object.keys(ERRORI_ELIMINA_DOCUMENTO_PDF).find(k => (error?.message || "").includes(k));
+  if (codice){
+    alert(ERRORI_ELIMINA_DOCUMENTO_PDF[codice] || ("Errore: " + codice));
+    if (codice !== "documento_non_trovato") return false;
+    document.getElementById("pe-elimina-overlay")?.remove();
+    chiudiModal(); _pdfEdTab = "documenti"; renderEditorPdf();
+    return true;
+  }
+  if (error){ alert("Errore: " + error.message); return false; }
+  const { data: files, error: lErr } = await sb.storage.from(STORAGE_BUCKET_PDF_DOCUMENTI).list(doc.id, { limit: 1000 });
+  if (lErr) console.warn("File del documento non elencati:", lErr.message);
+  else if (files?.length){
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_PDF_DOCUMENTI).remove(files.map(f => doc.id + "/" + f.name));
+    if (rmErr) console.warn("File del documento non rimossi:", rmErr.message);
+  }
+  alert("Documento eliminato");
+  document.getElementById("pe-elimina-overlay")?.remove();
+  chiudiModal();
+  _pdfEdTab = "documenti";
+  renderEditorPdf();
+  return true;
 }
 
 /* ---------- SCHEDA MODELLI (solo completo) ---------- */
@@ -7678,7 +7800,9 @@ async function caricaRegistroPdf(){
           ${_pdfRegistroCache.map(a => `
             <tr data-doc="${a._titolo ? escapeHtml(a.documento_id) : ""}">
               <td style="white-space:nowrap;">${formatDataOraIt(a.creato_il)}</td>
-              <td>${escapeHtml(a._titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : "—"))}</td>
+              <td>${EVENTI_PDF_ELIMINAZIONE.includes(a.evento)
+                ? `${escapeHtml(nomeOggettoEliminatoPdf(a))}${infoEliminazionePdf(a) ? `<div style="font-size:11.5px;color:var(--grigio-600);">${escapeHtml(infoEliminazionePdf(a))}</div>` : ""}`
+                : escapeHtml(a._titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : "—"))}</td>
               <td>${EVENTI_PDF_AUDIT[a.evento] || escapeHtml(a.evento)}</td>
               <td>${escapeHtml(a.attore || "—")}</td>
               <td>${escapeHtml(a.ip || "")}</td>
@@ -7695,7 +7819,8 @@ function esportaRegistroPdfExcel(){
   if (!_pdfRegistroCache.length){ alert("Nessun evento da esportare."); return; }
   const righe = _pdfRegistroCache.map(a => ({
     "Data/ora": formatDataOraIt(a.creato_il),
-    "Documento": a._titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : ""),
+    "Documento": EVENTI_PDF_ELIMINAZIONE.includes(a.evento) ? nomeOggettoEliminatoPdf(a)
+      : (a._titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : "")),
     "Evento": EVENTI_PDF_AUDIT[a.evento] || a.evento,
     "Campo": a.campo_id || "",
     "Chi": a.attore || "",
