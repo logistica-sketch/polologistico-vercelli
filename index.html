@@ -7648,7 +7648,7 @@ async function renderTabRegistroPdf(){
 async function caricaRegistroPdf(){
   const f = _pdfRegistroFiltro;
   const { data, error } = await caricaTutteLeRighe(() => {
-    let q = sb.from("pdf_audit").select("*, pdf_documenti(titolo)");
+    let q = sb.from("pdf_audit").select("*");
     if (f.dal) q = q.gte("creato_il", new Date(f.dal + "T00:00:00").toISOString());
     if (f.al) q = q.lt("creato_il", new Date(new Date(f.al + "T00:00:00").getTime() + 86400000).toISOString());
     if (f.evento) q = q.eq("evento", f.evento);
@@ -7658,6 +7658,16 @@ async function caricaRegistroPdf(){
   if (!wrap) return;
   if (error){ wrap.innerHTML = `<div class="storico-empty">Errore: ${escapeHtml(error.message)}</div>`; return; }
   _pdfRegistroCache = data || [];
+  // pdf_audit non ha più la chiave esterna verso pdf_documenti (il registro sopravvive all'eliminazione):
+  // i titoli si leggono a parte, a blocchi
+  const ids = [...new Set(_pdfRegistroCache.map(a => a.documento_id).filter(Boolean))];
+  const titoli = {};
+  for (let i = 0; i < ids.length; i += 200){
+    const { data: docs, error: dErr } = await sb.from("pdf_documenti").select("id, titolo").in("id", ids.slice(i, i + 200));
+    if (dErr){ wrap.innerHTML = `<div class="storico-empty">Errore: ${escapeHtml(dErr.message)}</div>`; return; }
+    (docs || []).forEach(d => { titoli[d.id] = d.titolo; });
+  }
+  _pdfRegistroCache.forEach(a => { a._titolo = titoli[a.documento_id] || ""; });
   document.getElementById("pe-reg-count").textContent = `${_pdfRegistroCache.length} eventi`;
   if (_pdfRegistroCache.length === 0){ wrap.innerHTML = `<div class="empty-state"><div class="ic">🗂️</div>Nessun evento nel periodo scelto.</div>`; return; }
   wrap.innerHTML = `
@@ -7666,9 +7676,9 @@ async function caricaRegistroPdf(){
         <thead><tr><th>Quando</th><th>Documento</th><th>Evento</th><th>Chi</th><th>IP</th><th>Impronta</th></tr></thead>
         <tbody>
           ${_pdfRegistroCache.map(a => `
-            <tr data-doc="${escapeHtml(a.documento_id || "")}">
+            <tr data-doc="${a._titolo ? escapeHtml(a.documento_id) : ""}">
               <td style="white-space:nowrap;">${formatDataOraIt(a.creato_il)}</td>
-              <td>${escapeHtml(a.pdf_documenti?.titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : "—"))}</td>
+              <td>${escapeHtml(a._titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : "—"))}</td>
               <td>${EVENTI_PDF_AUDIT[a.evento] || escapeHtml(a.evento)}</td>
               <td>${escapeHtml(a.attore || "—")}</td>
               <td>${escapeHtml(a.ip || "")}</td>
@@ -7685,7 +7695,7 @@ function esportaRegistroPdfExcel(){
   if (!_pdfRegistroCache.length){ alert("Nessun evento da esportare."); return; }
   const righe = _pdfRegistroCache.map(a => ({
     "Data/ora": formatDataOraIt(a.creato_il),
-    "Documento": a.pdf_documenti?.titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : ""),
+    "Documento": a._titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : ""),
     "Evento": EVENTI_PDF_AUDIT[a.evento] || a.evento,
     "Campo": a.campo_id || "",
     "Chi": a.attore || "",
