@@ -13,7 +13,8 @@
      GOOGLE_API_KEY=xxx GOOGLE_VOICE=it-IT-Chirp3-HD-Aoede node genera-audio.mjs --google
    Gemini API (serve ffmpeg; la chiave solo come variabile, mai nei file):
      $env:GEMINI_API_KEY="xxx"; node genera-audio.mjs --gemini
-     voce: $env:GEMINI_VOICE="Kore" (predefinita Charon); modello: $env:GEMINI_MODEL
+     voce: $env:GEMINI_VOICE="Kore" (predefinita Charon)
+     modello: $env:GEMINI_MODEL (predefinito gemini-3.8-flash-tts; alternativa gemini-3.8-flash-lite-tts)
      ffmpeg non nel PATH:  $env:FFMPEG="C:\...\ffmpeg.exe"
      Al limite giornaliero si ferma: rilanciando il giorno dopo riparte dai file mancanti.
 
@@ -37,8 +38,11 @@ const EDGE = args.includes("--edge"), GOOGLE = args.includes("--google"), GEMINI
 const SOLO = typeof opt("--solo") === "string" ? opt("--solo").split(",") : null;
 const USCITA = typeof opt("--uscita") === "string" ? opt("--uscita") : null;
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-tts-preview";
-const STILE_GEMINI = "Parla in italiano, con tono cordiale, calmo e naturale, come un volontario esperto di protezione civile che spiega l'app a un collega seduto accanto a lui. Ritmo tranquillo, piccole pause tra le frasi. Testo: ";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash-tts";
+// I modelli 3.8 vogliono lo stile in speech_metadata.style e la voce in voiceConfig.voice;
+// 2.5 / 3.1 (dismessi dal 17/11/2026) lo stile davanti al testo e prebuiltVoiceConfig.voiceName
+const GEMINI_FORMATO_VECCHIO = /^gemini-(2\.5|3\.1)-/.test(GEMINI_MODEL);
+const STILE_GEMINI = "Parla in italiano, con tono cordiale, calmo e naturale, come un volontario esperto di protezione civile che spiega l'app a un collega seduto accanto a lui. Ritmo tranquillo, piccole pause tra le frasi.";
 
 /* Come pronunciare sigle e abbreviazioni: modifica liberamente. */
 const PRONUNCIA = [
@@ -114,22 +118,30 @@ async function gemini(testo, file){
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
       method: "POST",
       headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: STILE_GEMINI + testo }] }],
+      body: JSON.stringify(GEMINI_FORMATO_VECCHIO ? {
+        contents: [{ parts: [{ text: STILE_GEMINI + " Testo: " + testo }] }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voce } } }
+        }
+      } : {
+        contents: [{ role: "user", parts: [{ text: testo, speech_metadata: { style: STILE_GEMINI } }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { voice: voce } }
         }
       })
     });
     if (r.status === 429){
       const corpo = await r.text();
+      // quale quota è scattata, es. "GenerateRequestsPerMinutePerProjectPerModel-FreeTier = 3"
+      const quota = [...corpo.matchAll(/"quotaId"\s*:\s*"([^"]+)"[\s\S]*?"quotaValue"\s*:\s*"([^"]+)"/g)].map(m => `${m[1]} = ${m[2]}`).join(", ");
       // limite giornaliero (quotaId "...PerDay..."): inutile aspettare
-      if (/PerDay/i.test(corpo)) throw new LimiteGiornaliero(corpo.slice(0, 300));
-      if (tentativo >= 8) throw new Error("Gemini 429 ripetuto: " + corpo.slice(0, 300));
+      if (/PerDay/i.test(corpo)) throw new LimiteGiornaliero(quota || corpo.slice(0, 300));
+      if (tentativo >= 8) throw new Error("Gemini 429 ripetuto: " + (quota || corpo.slice(0, 300)));
       const ritardo = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(corpo);
       const sec = ritardo ? Math.ceil(parseFloat(ritardo[1])) + 2 : 20 * tentativo;
-      process.stdout.write(`(limite richieste, attendo ${sec}s) `);
+      process.stdout.write(`(limite richieste${quota ? " [" + quota + "]" : ""}, attendo ${sec}s) `);
       await attendi(sec);
       continue;
     }
@@ -181,7 +193,8 @@ for (const pg of ctx.PAGINE){
     const nome = `${pg.id}-${n}.mp3`;
     const dest = USCITA ? path.join(USCITA, `${voce}-${n}.mp3`) : "audio/" + nome;
     const impronta = crypto.createHash("sha1").update(chiaveVoce + "|" + testo).digest("hex");
-    if (!USCITA && !FORZA && impronte[nome] === impronta && fs.existsSync(dest)){ saltati++; continue; }
+    // in prova (--uscita) un campione già presente non si rifà: così anche lì si riparte dai mancanti
+    if (!FORZA && fs.existsSync(dest) && (USCITA || impronte[nome] === impronta)){ saltati++; continue; }
     if (limite){ mancanti++; continue; }
     caratteri += testo.length;
     if (PROVA){ console.log("• " + nome + "  (" + testo.length + " caratteri)"); continue; }
