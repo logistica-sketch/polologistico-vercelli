@@ -4724,7 +4724,8 @@ const ERRORI_FIRMA_PDF = {
 const EVENTI_PDF_AUDIT = {
   creato:"Creato", salvato:"Nuova versione", firma_interna:"Firma interna", link_creato:"Link creato",
   link_revocato:"Link revocato", link_aperto:"Link aperto", firma_link:"Firma con link",
-  completato:"Completato", annullato:"Annullato", esportato_compilabile:"Esportato compilabile"
+  completato:"Completato", annullato:"Annullato", esportato_compilabile:"Esportato compilabile",
+  libreria_aggiunta:"Aggiunto alla libreria", libreria_rimossa:"Rimosso dalla libreria"
 };
 const COLONNE_VOLONTARIO_PDF = "id, cognome, nome, codice_fiscale, data_nascita, luogo_nascita, provincia_nascita, sezione_ana, telefono, email";
 const COLONNE_TLC_PDF = "id, codice_ana, descrizione, matricola, marca, modello, categoria, sottocategoria_radio";
@@ -4775,6 +4776,11 @@ async function scaricaBytesPdf(bucket, path){
 
 // Ritaglia il bordo vuoto di una firma su canvas e la restituisce come PNG (dataURL), null se vuota
 function ritagliaFirmaCanvasPdf(cv){
+  const o = ritagliaCanvasPdf(cv);
+  return o ? o.toDataURL("image/png") : null;
+}
+// Stesso ritaglio, ma restituisce il canvas (null se è tutto trasparente)
+function ritagliaCanvasPdf(cv){
   const ctx = cv.getContext("2d");
   const w = cv.width, h = cv.height;
   const d = ctx.getImageData(0, 0, w, h).data;
@@ -4788,7 +4794,7 @@ function ritagliaFirmaCanvasPdf(cv){
   const o = document.createElement("canvas");
   o.width = x1 - x0 + 1; o.height = y1 - y0 + 1;
   o.getContext("2d").drawImage(cv, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
-  return o.toDataURL("image/png");
+  return o;
 }
 
 // Stessa cosa partendo da un'immagine (firma personale salvata in Impostazioni)
@@ -4829,7 +4835,7 @@ async function registraAuditPdf(righe){
 async function renderEditorPdf(){
   _ed = null;
   if (_pdfEdTab === "modelli" && !editorPdfCompleto()) _pdfEdTab = "documenti";
-  const schede = [["documenti","Documenti"], ...(editorPdfCompleto() ? [["modelli","Modelli"]] : []), ["registro","Registro"]];
+  const schede = [["documenti","Documenti"], ...(editorPdfCompleto() ? [["modelli","Modelli"]] : []), ["libreria","Libreria"], ["registro","Registro"]];
   const content = document.getElementById("page-content");
   content.innerHTML = `
     <div class="pe-tabs">
@@ -4840,6 +4846,7 @@ async function renderEditorPdf(){
   content.querySelectorAll("[data-pe-tab]").forEach(b => b.addEventListener("click", () => { _pdfEdTab = b.dataset.peTab; renderEditorPdf(); }));
   if (_pdfEdTab === "modelli") await renderTabModelliPdf();
   else if (_pdfEdTab === "registro") await renderTabRegistroPdf();
+  else if (_pdfEdTab === "libreria") await renderTabLibreriaPdf();
   else await renderTabDocumentiPdf();
 }
 
@@ -5425,7 +5432,7 @@ function renderDxElementoEd(dx, o){
       </div>
       <div class="form-field"><label>Direzione</label><select id="pe-o-orientamento">${opz(ORIENTAMENTI_LINEA_PDF, o.orientamento)}</select></div>`;
   } else {
-    html = `<p class="pe-hint" style="margin-top:0;">${o.tipo === "firma" ? "Firma apposta subito: finisce nel PDF così com'è." : "L'immagine mantiene le proporzioni dentro il riquadro."}</p>`;
+    html = `<p class="pe-hint" style="margin-top:0;">${o.tipo === "firma" ? "Firma apposta subito: finisce nel PDF così com'è." : "L'immagine mantiene le proporzioni dentro il riquadro."} Ridimensionando restano le proporzioni; tieni premuto Maiusc per cambiarle.</p>`;
   }
   dx.innerHTML = `
     <h4>${escapeHtml(TIPI_ELEMENTO_PDF[o.tipo]?.label || o.tipo)}</h4>
@@ -5496,7 +5503,8 @@ function paginaVisibileEd(){
   return pagina;
 }
 
-async function inserisciImmagineEd(tipo, img){
+// extra: proprietà aggiuntive dell'elemento (es. libreria_id). Il PNG è sempre una copia nella cartella del documento.
+async function inserisciImmagineEd(tipo, img, extra){
   const e = _ed;
   const path = `${e.documento.id}/asset-${crypto.randomUUID()}.png`;
   const { error } = await sb.storage.from(STORAGE_BUCKET_PDF_DOCUMENTI).upload(path, img.blob, { contentType:"image/png", upsert:false });
@@ -5514,9 +5522,12 @@ async function inserisciImmagineEd(tipo, img){
   segnaEd();
   const o = nuovoElementoPdf(tipo, pagina, p.w / 2, cy, w, h);
   o.path = path;
+  o.larghezza_px = img.w; o.altezza_px = img.h;
+  if (extra) Object.assign(o, extra);
   e.elementi.push(o);
   overlayEd(pagina).appendChild(elementoElementoEd(o));
   selezionaCampoEd(o.id);
+  return o;
 }
 
 function aggiungiImmagineEd(){
@@ -5533,42 +5544,19 @@ function aggiungiImmagineEd(){
   inp.click();
 }
 
-async function inserisciFirmaEd(url){
-  try { await inserisciImmagineEd("firma", await immagineInPngPdf(url)); }
-  catch(err){ alert(err.message); }
+// Firma, sigla, timbro o logo dal selettore (libreria, disegno o file): firme e sigle → "firma", timbri e loghi → "immagine"
+async function inserisciDaSelettoreEd(s){
+  const e = _ed;
+  const tipo = s.tipo === "timbro" || s.tipo === "logo" ? "immagine" : "firma";
+  try {
+    const o = await inserisciImmagineEd(tipo, await immagineInPngPdf(s.dataUrl), s.libreria_id ? { libreria_id: s.libreria_id } : null);
+    if (o && s.libreria_id) registraAuditPdf([{ documento_id: e.documento.id, evento: "firma_interna",
+      dettagli: { libreria_id: s.libreria_id, tipo: s.tipo, elemento_id: o.id } }]);
+  } catch(err){ alert(err.message); }
 }
 
 function aggiungiFirmaEd(){
-  const disegna = () => apriFirmaManualePdf({ nome: "Firma" }, url => inserisciFirmaEd(url));
-  if (!state.profile.firma_personale_path){ disegna(); return; }
-  chiudiModal();
-  const overlay = document.createElement("div");
-  overlay.id = "modal-overlay";
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = `
-    <div class="modal-box" style="max-width:520px;">
-      <div class="modal-head">
-        <h3>Aggiungi una firma</h3>
-        <button class="modal-close" id="modal-close-btn">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="pe-scelte">
-          <button type="button" class="pe-scelta" id="pe-firma-salvata"><i class="ti ti-id-badge"></i><strong>La mia firma salvata</strong><span>Quella caricata in Impostazioni.</span></button>
-          <button type="button" class="pe-scelta" id="pe-firma-disegna"><i class="ti ti-writing-sign"></i><strong>Firma adesso</strong><span>Con il dito o con il mouse.</span></button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
-  document.getElementById("pe-firma-disegna").addEventListener("click", disegna);
-  document.getElementById("pe-firma-salvata").addEventListener("click", async () => {
-    chiudiModal();
-    try {
-      const url = await scaricaComeDataUrl(STORAGE_BUCKET_FIRME_PERSONALI, state.profile.firma_personale_path);
-      await inserisciFirmaEd(await ritagliaFirmaDataUrlPdf(url));
-    } catch(err){ alert("Firma salvata non disponibile: " + err.message); }
-  });
+  apriSelettoreFirmaPdf({ titolo: "Aggiungi firma, sigla o timbro", onScelta: s => inserisciDaSelettoreEd(s) });
 }
 
 /* salvataggio della bozza: elementi, campi, valori; nessun PDF generato */
@@ -5849,7 +5837,7 @@ async function generaFinitoLiberoPdf(){
 
   const righe = [{ documento_id: docId, evento: "salvato", sha256: hash,
     dettagli: { versione, stato, origine: "libero", elementi: e.elementi.length, firme_elementi: e.elementi.filter(o => o.tipo === "firma").length } }];
-  firme.forEach(cid => righe.push({ documento_id: docId, evento: "firma_interna", campo_id: cid, sha256: hash, dettagli: { versione } }));
+  firme.forEach(cid => righe.push({ documento_id: docId, evento: "firma_interna", campo_id: cid, sha256: hash, dettagli: { versione, ...(e.firmeLibreria?.[cid] || {}) } }));
   if (stato !== "in_firma") righe.push({ documento_id: docId, evento: "completato", sha256: hash, dettagli: { versione, stato } });
   const errAudit = await registraAuditPdf(righe);
   if (errAudit) alert("Documento salvato, ma il registro non è stato aggiornato: " + errAudit.message);
@@ -6481,7 +6469,7 @@ function elementoCampoEd(c){
     b.type = "button"; b.className = "sg" + (v ? " fatta" : "");
     b.setAttribute("aria-label", (v ? "Rifai " : "Inserisci ") + c.nome);
     b.innerHTML = v ? `<img alt="" src="${v}">` : "Tocca per firmare";
-    b.addEventListener("click", () => apriFirmaManualePdf(c));
+    b.addEventListener("click", () => apriFirmaCampoPdf(c));
     el.appendChild(b);
   }
   return el;
@@ -6576,6 +6564,12 @@ window.addEventListener("pointermove", ev => {
     if (c.tipo === "check"){
       const s = Math.max(8, Math.min(Math.min(p.w - c.x, p.h - c.y), d.ow + Math.max(dx, dy)));
       c.larghezza = c.altezza = arrotondaPdf(s);
+    } else if (d.elemento && (c.tipo === "immagine" || c.tipo === "firma") && !ev.shiftKey){
+      // proporzioni dell'immagine (Maiusc = libere)
+      const rap = c.larghezza_px && c.altezza_px ? c.larghezza_px / c.altezza_px : d.ow / d.oh;
+      let w = Math.max(4, Math.min(p.w - c.x, d.ow + dx)), h = w / rap;
+      if (h > p.h - c.y){ h = p.h - c.y; w = h * rap; }
+      c.larghezza = arrotondaPdf(w); c.altezza = arrotondaPdf(h);
     } else {
       c.larghezza = arrotondaPdf(Math.max(d.elemento ? 4 : 20, Math.min(p.w - c.x, d.ow + dx)));
       c.altezza = arrotondaPdf(Math.max(d.elemento ? 4 : 10, Math.min(p.h - c.y, d.oh + dy)));
@@ -6935,51 +6929,6 @@ function titoloPropostoEd(){
   return [e.modello ? e.modello.nome : (e.documento?.titolo || "Documento"), v ? `${v.cognome || ""} ${v.nome || ""}`.trim() : null, oggiItPdf()].filter(Boolean).join(" – ");
 }
 
-// applica (facoltativo): riceve il PNG della firma invece di scriverlo nel valore del campo c
-function apriFirmaManualePdf(c, applica){
-  if (!window.SignaturePad){ alert("Il riquadro firma non si è caricato: controlla la connessione e ricarica la pagina."); return; }
-  chiudiModal();
-  const overlay = document.createElement("div");
-  overlay.id = "modal-overlay";
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = `
-    <div class="modal-box" style="max-width:620px;">
-      <div class="modal-head">
-        <h3>${escapeHtml(c.nome)}</h3>
-        <button class="modal-close" id="modal-close-btn">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="es-aiuto" style="margin:0 0 10px;">Firma con il dito o con il mouse nel riquadro.</p>
-        <div class="pe-pad"><span class="linea"></span><canvas id="pe-pad-cv" aria-label="Riquadro firma"></canvas></div>
-        <div class="form-actions">
-          <button class="btn-cancel" id="pe-pad-cancella" style="margin-right:auto;">Cancella</button>
-          <button class="btn-cancel" id="pe-pad-annulla">Annulla</button>
-          <button class="btn-save" id="pe-pad-ok">Applica la firma</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  const cv = document.getElementById("pe-pad-cv");
-  const r = Math.max(window.devicePixelRatio || 1, 1);
-  cv.width = cv.offsetWidth * r; cv.height = cv.offsetHeight * r;
-  cv.getContext("2d").scale(r, r);
-  const pad = new SignaturePad(cv, { penColor: "#16256e", minWidth: 0.8, maxWidth: 2.6 });
-  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
-  document.getElementById("pe-pad-annulla").addEventListener("click", chiudiModal);
-  document.getElementById("pe-pad-cancella").addEventListener("click", () => pad.clear());
-  document.getElementById("pe-pad-ok").addEventListener("click", () => {
-    const url = pad.isEmpty() ? null : ritagliaFirmaCanvasPdf(cv);
-    if (!url){ alert("Il riquadro è vuoto: firma prima di applicare."); return; }
-    if (applica){ chiudiModal(); applica(url); return; }
-    _ed.valori[c.id] = url;
-    _ed.modificato = true;
-    chiudiModal();
-    aggiornaCampoEd(c);
-    renderStatoCompilazioneEd();
-  });
-}
-
 // Scrive i valori sul PDF del modello. I campi "esterno" restano vuoti (li firma la Edge Function).
 // Ritorna { bytes, firme: id dei campi firma apposti }
 async function generaBytesPdfEd(){
@@ -7126,7 +7075,7 @@ async function salvaDocumentoPdf(comeBozza){
   }
 
   const righe = [{ documento_id: docId, evento: e.documento ? "salvato" : "creato", sha256: hash, dettagli: { versione, stato } }];
-  firme.forEach(cid => righe.push({ documento_id: docId, evento: "firma_interna", campo_id: cid, sha256: hash, dettagli: { versione } }));
+  firme.forEach(cid => righe.push({ documento_id: docId, evento: "firma_interna", campo_id: cid, sha256: hash, dettagli: { versione, ...(e.firmeLibreria?.[cid] || {}) } }));
   if (stato === "firmato") righe.push({ documento_id: docId, evento: "completato", sha256: hash, dettagli: { versione } });
   const errAudit = await registraAuditPdf(righe);
   if (errAudit) alert("Documento salvato, ma il registro non è stato aggiornato: " + errAudit.message);
@@ -7167,6 +7116,463 @@ async function salvaModelloPdf(){
   e.modificato = false;
   renderSxEd();
   alert(`Modello salvato (versione ${data.versione}).`);
+}
+
+/* ---------- SCHEDA LIBRERIA (firme, sigle, timbri, loghi) ----------
+   pdf_libreria: { id, nome, tipo: firma|sigla|timbro|logo, path, larghezza_px, altezza_px, condivisa, attiva,
+   creato_da, creato_il }, PNG in pdf-libreria/{uid}/{uuid}.png. Firme e sigle sono personali; timbri e loghi
+   si possono condividere (solo completo). Niente si cancella: si rimuove con attiva = false.
+   Quando un elemento finisce in un documento il PNG viene copiato nella cartella del documento
+   (inserisciImmagineEd) o dentro il PDF generato (campi firma): il documento non dipende dalla libreria.
+   La firma personale di Impostazioni (firme-personali) compare in cima in sola lettura, mai duplicata. */
+const STORAGE_BUCKET_PDF_LIBRERIA = "pdf-libreria";
+const TIPI_LIBRERIA_PDF = { firma:"Firma", sigla:"Sigla", timbro:"Timbro", logo:"Logo" };
+const TIPI_CONDIVISIBILI_PDF = ["timbro", "logo"];
+const MAX_MB_LIBRERIA_PDF = 5;
+const MAX_PX_LIBRERIA_PDF = 1200;
+const COLONNE_LIBRERIA_PDF = "id, nome, tipo, path, larghezza_px, altezza_px, condivisa, creato_da, creato_il";
+
+async function caricaLibreriaPdf(){
+  const { data, error } = await sb.from("pdf_libreria").select(COLONNE_LIBRERIA_PDF)
+    .eq("attiva", true).order("creato_il", { ascending:false });
+  if (error) return { error };
+  const ordine = v => Object.keys(TIPI_LIBRERIA_PDF).indexOf(v.tipo);
+  const righe = (data || []).slice().sort((a, b) => ordine(a) - ordine(b));
+  const uid = state.user.id;
+  return { mie: righe.filter(v => v.creato_da === uid), condivise: righe.filter(v => v.creato_da !== uid && v.condivisa), error: null };
+}
+
+function vocePersonaleLibreriaPdf(){
+  const path = state.profile.firma_personale_path;
+  return path ? { id: null, personale: true, nome: "Firma personale", tipo: "firma", path } : null;
+}
+
+async function urlAnteprimeLibreriaPdf(voci){
+  const urls = await urlFirmatiMultipli(STORAGE_BUCKET_PDF_LIBRERIA, voci.filter(v => !v.personale).map(v => v.path));
+  const pers = voci.find(v => v.personale);
+  if (pers) urls.__personale = await urlFirmato(STORAGE_BUCKET_FIRME_PERSONALI, pers.path);
+  return urls;
+}
+function urlVoceLibreriaPdf(urls, v){ return v.personale ? urls.__personale : urls[v.path]; }
+
+// opz.scegli: card cliccabile (selettore); opz.azioni: Rinomina / Rimuovi
+function htmlCardLibreriaPdf(v, url, opz = {}){
+  const info = [TIPI_LIBRERIA_PDF[v.tipo] || v.tipo, v.personale ? "da Impostazioni" : v.condivisa ? "condivisa" : null,
+    v.creato_il ? formatDataIt(v.creato_il.slice(0, 10)) : null].filter(Boolean).join(" · ");
+  const img = `<div class="pe-lib-img pe-scacchi">${url ? `<img alt="" src="${escapeHtml(url)}">` : `<span class="pe-hint" style="margin:0;">Anteprima non disponibile</span>`}</div>`;
+  const meta = `<div class="pe-lib-meta"><strong title="${escapeHtml(v.nome)}">${escapeHtml(v.nome)}</strong><span>${escapeHtml(info)}</span></div>`;
+  if (opz.scegli) return `<button type="button" class="pe-lib-card" data-pe-lib-scegli="${v.personale ? "__personale" : v.id}">${img}${meta}</button>`;
+  const azioni = opz.azioni
+    ? `<div class="pe-lib-azioni"><button type="button" class="btn-cancel" data-pe-lib-rinomina="${v.id}">Rinomina</button><button type="button" class="btn-danger" data-pe-lib-rimuovi="${v.id}">Rimuovi</button></div>`
+    : v.personale ? `<div class="pe-lib-azioni"><span class="pe-hint" style="margin:0;">Si cambia in Impostazioni</span></div>` : "";
+  return `<div class="pe-lib-card">${img}${meta}${azioni}</div>`;
+}
+
+async function renderTabLibreriaPdf(){
+  const box = document.getElementById("pe-contenuto");
+  box.innerHTML = `
+    <div class="pe-lib-avviso"><i class="ti ti-alert-triangle"></i> Carica solo la tua firma. Le firme e le sigle sono personali e non si possono condividere.</div>
+    <div class="toolbar">
+      <button class="btn-add" id="pe-lib-carica"><i class="ti ti-upload"></i> Carica immagine</button>
+      <button class="btn-add" id="pe-lib-disegna" style="background:var(--blu-300);"><i class="ti ti-writing-sign"></i> Disegna</button>
+    </div>
+    <div id="pe-lib-lista"><div class="loading-spin">Caricamento…</div></div>
+  `;
+  document.getElementById("pe-lib-carica").addEventListener("click", () => scegliFileLibreriaPdf(f => apriModalLibreriaPdf("carica", f)));
+  document.getElementById("pe-lib-disegna").addEventListener("click", () => apriModalLibreriaPdf("disegna"));
+  const r = await caricaLibreriaPdf();
+  let wrap = document.getElementById("pe-lib-lista");
+  if (!wrap) return;
+  if (r.error){ wrap.innerHTML = `<div class="storico-empty">Errore: ${escapeHtml(r.error.message)}</div>`; return; }
+  const pers = vocePersonaleLibreriaPdf();
+  const mie = pers ? [pers, ...r.mie] : r.mie;
+  const urls = await urlAnteprimeLibreriaPdf([...mie, ...r.condivise]);
+  wrap = document.getElementById("pe-lib-lista");
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <h3 class="pe-lib-sez">Le mie (${mie.length})</h3>
+    <div class="pe-lib-griglia">${mie.length ? mie.map(v => htmlCardLibreriaPdf(v, urlVoceLibreriaPdf(urls, v), { azioni: !v.personale })).join("")
+      : `<p class="pe-lib-vuota">Ancora niente: carica o disegna la tua firma.</p>`}</div>
+    <h3 class="pe-lib-sez">Condivise (${r.condivise.length})</h3>
+    <div class="pe-lib-griglia">${r.condivise.length ? r.condivise.map(v => htmlCardLibreriaPdf(v, urls[v.path])).join("")
+      : `<p class="pe-lib-vuota">Nessun timbro o logo condiviso.</p>`}</div>
+  `;
+  wrap.querySelectorAll("[data-pe-lib-rinomina]").forEach(b => b.addEventListener("click", () => rinominaLibreriaPdf(r.mie.find(v => v.id === b.dataset.peLibRinomina))));
+  wrap.querySelectorAll("[data-pe-lib-rimuovi]").forEach(b => b.addEventListener("click", () => rimuoviLibreriaPdf(r.mie.find(v => v.id === b.dataset.peLibRimuovi))));
+}
+
+async function rinominaLibreriaPdf(v){
+  if (!v) return;
+  const nome = (prompt("Nuovo nome:", v.nome) || "").trim();
+  if (!nome || nome === v.nome) return;
+  const { data, error } = await sb.from("pdf_libreria").update({ nome: nome.slice(0, 100) }).eq("id", v.id).select("id").maybeSingle();
+  if (error){ alert("Errore: " + error.message); return; }
+  if (!data){ alert("Non puoi modificare questo elemento."); return; }
+  renderTabLibreriaPdf();
+}
+
+// rimuovere = attiva false: il file resta, i documenti che lo usano hanno già la loro copia
+async function rimuoviLibreriaPdf(v){
+  if (!v || !confirm(`Rimuovere «${v.nome}» dalla libreria?\nI documenti in cui è già stato usato non cambiano.`)) return;
+  const { data, error } = await sb.from("pdf_libreria").update({ attiva: false }).eq("id", v.id).select("id").maybeSingle();
+  if (error){ alert("Errore: " + error.message); return; }
+  if (!data){ alert("Non puoi rimuovere questo elemento."); return; }
+  await registraAuditPdf([{ documento_id: null, evento: "libreria_rimossa", dettagli: { libreria_id: v.id, nome: v.nome, tipo: v.tipo } }]);
+  renderTabLibreriaPdf();
+}
+
+// img: { blob, w, h }; dati: { nome, tipo, condivisa }. Ritorna la riga creata.
+async function salvaInLibreriaPdf(img, dati){
+  const tipo = TIPI_LIBRERIA_PDF[dati.tipo] ? dati.tipo : "firma";
+  const condivisa = !!dati.condivisa && TIPI_CONDIVISIBILI_PDF.includes(tipo) && editorPdfCompleto();
+  const path = `${state.user.id}/${crypto.randomUUID()}.png`;
+  const { error: upErr } = await sb.storage.from(STORAGE_BUCKET_PDF_LIBRERIA).upload(path, img.blob, { contentType:"image/png", upsert:false });
+  if (upErr) throw new Error("Caricamento nella libreria non riuscito: " + upErr.message);
+  const { data, error } = await sb.from("pdf_libreria").insert({
+    nome: (dati.nome || TIPI_LIBRERIA_PDF[tipo]).slice(0, 100), tipo, path,
+    larghezza_px: img.w, altezza_px: img.h, condivisa, creato_da: state.user.id
+  }).select(COLONNE_LIBRERIA_PDF).single();
+  if (error){
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_PDF_LIBRERIA).remove([path]);
+    if (rmErr) console.warn("File della libreria non rimosso:", rmErr.message);
+    throw new Error("Salvataggio nella libreria non riuscito: " + error.message);
+  }
+  await registraAuditPdf([{ documento_id: null, evento: "libreria_aggiunta", dettagli: { libreria_id: data.id, nome: data.nome, tipo, condivisa } }]);
+  return data;
+}
+
+/* preparazione delle immagini nel browser */
+function scegliFileLibreriaPdf(onFile){
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/png,image/jpeg,.png,.jpg,.jpeg";
+  inp.addEventListener("change", () => {
+    const f = inp.files[0];
+    if (!f) return;
+    if (!/^image\/(png|jpeg)$/.test(f.type)){ alert("Scegli un'immagine PNG o JPG."); return; }
+    if (f.size > MAX_MB_LIBRERIA_PDF * 1024 * 1024){ alert(`L'immagine supera i ${MAX_MB_LIBRERIA_PDF} MB.`); return; }
+    onFile(f);
+  });
+  inp.click();
+}
+
+function caricaImmagineFilePdf(file){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("Immagine non leggibile.")); };
+    img.src = url;
+  });
+}
+
+// immagine ruotata di quarti di giro, ridotta per lavorare veloce (lato lungo al massimo 2400 px)
+function baseLavoroImmaginePdf(img, quarti){
+  const s = Math.min(1, MAX_PX_LIBRERIA_PDF * 2 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * s)), h = Math.max(1, Math.round(img.naturalHeight * s));
+  const dritta = quarti % 2 === 0;
+  const cv = document.createElement("canvas");
+  cv.width = dritta ? w : h; cv.height = dritta ? h : w;
+  const ctx = cv.getContext("2d");
+  ctx.translate(cv.width / 2, cv.height / 2);
+  ctx.rotate(quarti * Math.PI / 2);
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  return cv;
+}
+
+// opz: { sfondo, soglia, morbido, ritaglia }. Pixel quasi bianchi → trasparenti, ritaglio sui bordi
+// del tratto, lato lungo al massimo 1200 px. null se non resta niente.
+function elaboraImmagineLibreriaPdf(base, opz){
+  const cv = document.createElement("canvas");
+  cv.width = base.width; cv.height = base.height;
+  const ctx = cv.getContext("2d");
+  ctx.drawImage(base, 0, 0);
+  if (opz.sfondo){
+    const dati = ctx.getImageData(0, 0, cv.width, cv.height), d = dati.data;
+    const soglia = opz.soglia, banda = opz.morbido ? 30 : 0;
+    for (let i = 0; i < d.length; i += 4){
+      const l = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+      if (l >= soglia) d[i+3] = 0;
+      else if (banda && l > soglia - banda) d[i+3] = Math.round(d[i+3] * (soglia - l) / banda);
+    }
+    ctx.putImageData(dati, 0, 0);
+  }
+  let out = cv;
+  if (opz.ritaglia){ out = ritagliaCanvasPdf(cv); if (!out) return null; }
+  const s = Math.min(1, MAX_PX_LIBRERIA_PDF / Math.max(out.width, out.height));
+  if (s < 1){
+    const f = document.createElement("canvas");
+    f.width = Math.max(1, Math.round(out.width * s)); f.height = Math.max(1, Math.round(out.height * s));
+    const fx = f.getContext("2d");
+    fx.imageSmoothingQuality = "high";
+    fx.drawImage(out, 0, 0, f.width, f.height);
+    out = f;
+  }
+  return out;
+}
+
+function canvasInPngPdf(cv){
+  return new Promise((res, rej) => cv.toBlob(blob => blob
+    ? res({ blob, dataUrl: cv.toDataURL("image/png"), w: cv.width, h: cv.height })
+    : rej(new Error("Conversione dell'immagine non riuscita.")), "image/png"));
+}
+
+// Nome, tipo e condivisione. modo "sempre" (si salva comunque) o "facoltativo" (casella da spuntare)
+function htmlCampiLibreriaPdf(tipi, tipo, modo, casella){
+  return `
+    <div class="pe-lib-campi">
+      ${modo === "facoltativo" ? `<div class="form-checkbox"><input type="checkbox" id="pe-lib-salva"><label for="pe-lib-salva" style="margin:0;">${escapeHtml(casella)}</label></div>` : ""}
+      <div class="form-field"><label>Nome</label><input id="pe-lib-nome" maxlength="100" value="${escapeHtml(TIPI_LIBRERIA_PDF[tipo])}"></div>
+      <div class="form-field"><label>Tipo</label><select id="pe-lib-tipo">${tipi.map(k => `<option value="${k}" ${k===tipo?"selected":""}>${TIPI_LIBRERIA_PDF[k]}</option>`).join("")}</select></div>
+      ${editorPdfCompleto() ? `<div class="form-checkbox" id="pe-lib-cond-riga"><input type="checkbox" id="pe-lib-condivisa"><label for="pe-lib-condivisa" style="margin:0;">Condividi con tutti gli utenti dell'Editor PDF</label></div>` : ""}
+    </div>`;
+}
+function collegaCampiLibreriaPdf(box, onTipo){
+  const salva = box.querySelector("#pe-lib-salva"), nome = box.querySelector("#pe-lib-nome");
+  const sel = box.querySelector("#pe-lib-tipo"), cond = box.querySelector("#pe-lib-condivisa");
+  let nomeToccato = false;
+  nome.addEventListener("input", () => { nomeToccato = true; });
+  const aggiorna = () => {
+    const attivo = !salva || salva.checked;
+    nome.disabled = !attivo;
+    if (cond){
+      const ok = TIPI_CONDIVISIBILI_PDF.includes(sel.value);
+      box.querySelector("#pe-lib-cond-riga").style.display = ok ? "" : "none";
+      if (!ok) cond.checked = false;
+      cond.disabled = !attivo;
+    }
+  };
+  sel.addEventListener("change", () => { if (!nomeToccato) nome.value = TIPI_LIBRERIA_PDF[sel.value]; aggiorna(); if (onTipo) onTipo(sel.value); });
+  if (salva) salva.addEventListener("change", aggiorna);
+  aggiorna();
+}
+function leggiCampiLibreriaPdf(box){
+  const salva = box.querySelector("#pe-lib-salva");
+  return {
+    salva: !salva || salva.checked,
+    nome: box.querySelector("#pe-lib-nome").value.trim(),
+    tipo: box.querySelector("#pe-lib-tipo").value,
+    condivisa: !!box.querySelector("#pe-lib-condivisa")?.checked
+  };
+}
+
+// Conferma comune: controlla il nome, blocca il pulsante, passa l'immagine a onFatto (che può lanciare errori)
+async function confermaLibreriaPdf(box, btn, img, onFatto){
+  const dati = leggiCampiLibreriaPdf(box);
+  if (dati.salva && !dati.nome){ alert("Indica un nome per la libreria."); box.querySelector("#pe-lib-nome").focus(); return; }
+  btn.disabled = true;
+  try { await onFatto(img, dati); }
+  catch(err){ alert(err.message); if (btn.isConnected) btn.disabled = false; }
+}
+
+// Carica: anteprima prima/dopo, rimuovi sfondo, ritaglio automatico, rotazione.
+// opz: { tipo, tipi, modo, casella, ok, onFatto(img, dati), onAnnulla }
+async function montaPreparaImmaginePdf(box, file, opz){
+  box.innerHTML = `<div class="loading-spin">Apro l'immagine…</div>`;
+  let img;
+  try { img = await caricaImmagineFilePdf(file); }
+  catch(err){ box.innerHTML = `<p class="pe-hint">${escapeHtml(err.message)}</p>`; return; }
+  const personale = t => t === "firma" || t === "sigla";
+  const st = { quarti: 0, sfondo: personale(opz.tipo), soglia: 235, morbido: true, ritaglia: true, base: null, esito: null };
+  let sfondoToccato = false;
+  box.innerHTML = `
+    <div class="pe-prep-anteprime">
+      <figure><figcaption>Prima</figcaption><div class="pe-lib-img pe-scacchi" id="pe-prep-prima"></div></figure>
+      <figure><figcaption>Dopo</figcaption><div class="pe-lib-img pe-scacchi" id="pe-prep-dopo"></div></figure>
+    </div>
+    <div class="pe-prep-opz">
+      <label><input type="checkbox" id="pe-prep-sfondo" ${st.sfondo ? "checked" : ""}> Rimuovi sfondo</label>
+      <label>Soglia <input type="range" id="pe-prep-soglia" min="200" max="250" step="1" value="${st.soglia}"> <span id="pe-prep-soglia-v">${st.soglia}</span></label>
+      <label><input type="checkbox" id="pe-prep-morbido" checked> Ammorbidisci i bordi</label>
+    </div>
+    <div class="pe-prep-opz">
+      <label><input type="checkbox" id="pe-prep-ritaglia" checked> Ritaglia automatico</label>
+      <button type="button" class="btn-cancel" id="pe-prep-ruota"><i class="ti ti-rotate-clockwise"></i> Ruota 90°</button>
+      <span class="pe-hint" id="pe-prep-dim" style="margin:0;"></span>
+    </div>
+    ${htmlCampiLibreriaPdf(opz.tipi, opz.tipo, opz.modo, opz.casella)}
+    <div class="form-actions">
+      <button class="btn-cancel" id="pe-prep-annulla">Annulla</button>
+      <button class="btn-save" id="pe-prep-ok">${escapeHtml(opz.ok)}</button>
+    </div>
+  `;
+  const q = id => box.querySelector("#" + id);
+  let inCoda = false;
+  const ridisegna = () => {
+    if (inCoda) return;
+    inCoda = true;
+    requestAnimationFrame(() => {
+      inCoda = false;
+      if (!q("pe-prep-prima")) return;
+      if (!st.base){ st.base = baseLavoroImmaginePdf(img, st.quarti); q("pe-prep-prima").replaceChildren(st.base); }
+      st.esito = elaboraImmagineLibreriaPdf(st.base, st);
+      q("pe-prep-dopo").replaceChildren(...(st.esito ? [st.esito] : []));
+      q("pe-prep-dim").textContent = st.esito ? `${st.esito.width} × ${st.esito.height} px` : "Non resta niente: abbassa la soglia o togli «Rimuovi sfondo».";
+      q("pe-prep-soglia").disabled = q("pe-prep-morbido").disabled = !st.sfondo;
+    });
+  };
+  q("pe-prep-sfondo").addEventListener("change", ev => { st.sfondo = ev.target.checked; sfondoToccato = true; ridisegna(); });
+  q("pe-prep-soglia").addEventListener("input", ev => { st.soglia = +ev.target.value; q("pe-prep-soglia-v").textContent = st.soglia; ridisegna(); });
+  q("pe-prep-morbido").addEventListener("change", ev => { st.morbido = ev.target.checked; ridisegna(); });
+  q("pe-prep-ritaglia").addEventListener("change", ev => { st.ritaglia = ev.target.checked; ridisegna(); });
+  q("pe-prep-ruota").addEventListener("click", () => { st.quarti = (st.quarti + 1) % 4; st.base = null; ridisegna(); });
+  collegaCampiLibreriaPdf(box, t => {
+    if (sfondoToccato) return;
+    st.sfondo = personale(t); q("pe-prep-sfondo").checked = st.sfondo; ridisegna();
+  });
+  q("pe-prep-annulla").addEventListener("click", () => opz.onAnnulla());
+  q("pe-prep-ok").addEventListener("click", async ev => {
+    if (!st.esito){ alert("L'immagine è vuota: abbassa la soglia o togli «Rimuovi sfondo»."); return; }
+    const btn = ev.currentTarget;
+    let png;
+    try { png = await canvasInPngPdf(st.esito); } catch(err){ alert(err.message); return; }
+    await confermaLibreriaPdf(box, btn, png, opz.onFatto);
+  });
+  ridisegna();
+}
+
+// Disegna con signature_pad. opz: { modo, casella, ok, onFatto(img, dati), onAnnulla }
+function montaDisegnoPdf(box, opz){
+  if (!window.SignaturePad){ box.innerHTML = `<p class="pe-hint">Il riquadro firma non si è caricato: controlla la connessione e ricarica la pagina.</p>`; return; }
+  box.innerHTML = `
+    <p class="es-aiuto" style="margin:0 0 10px;">Firma con il dito o con il mouse nel riquadro.</p>
+    <div class="pe-pad"><span class="linea"></span><canvas aria-label="Riquadro firma"></canvas></div>
+    ${htmlCampiLibreriaPdf(["firma", "sigla"], "firma", opz.modo, opz.casella)}
+    <div class="form-actions">
+      <button class="btn-cancel" id="pe-dis-cancella" style="margin-right:auto;">Cancella</button>
+      <button class="btn-cancel" id="pe-dis-annulla">Annulla</button>
+      <button class="btn-save" id="pe-dis-ok">${escapeHtml(opz.ok)}</button>
+    </div>
+  `;
+  const cv = box.querySelector(".pe-pad canvas");
+  const r = Math.max(window.devicePixelRatio || 1, 1);
+  cv.width = cv.offsetWidth * r; cv.height = cv.offsetHeight * r;
+  cv.getContext("2d").scale(r, r);
+  const pad = new SignaturePad(cv, { penColor: "#16256e", minWidth: 0.8, maxWidth: 2.6 });
+  collegaCampiLibreriaPdf(box);
+  box.querySelector("#pe-dis-cancella").addEventListener("click", () => pad.clear());
+  box.querySelector("#pe-dis-annulla").addEventListener("click", () => opz.onAnnulla());
+  box.querySelector("#pe-dis-ok").addEventListener("click", async ev => {
+    const btn = ev.currentTarget;
+    const tratto = pad.isEmpty() ? null : elaboraImmagineLibreriaPdf(cv, { ritaglia: true });
+    if (!tratto){ alert("Il riquadro è vuoto: firma prima di continuare."); return; }
+    let png;
+    try { png = await canvasInPngPdf(tratto); } catch(err){ alert(err.message); return; }
+    await confermaLibreriaPdf(box, btn, png, opz.onFatto);
+  });
+}
+
+function apriModalBasePdf(titolo, larghezza){
+  chiudiModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modal-overlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:${larghezza}px;">
+      <div class="modal-head">
+        <h3>${escapeHtml(titolo)}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modal-close-btn").addEventListener("click", chiudiModal);
+  return overlay.querySelector(".modal-body");
+}
+
+// Scheda Libreria: Carica (file già scelto) o Disegna, sempre con salvataggio
+function apriModalLibreriaPdf(modo, file){
+  const corpo = apriModalBasePdf(modo === "carica" ? "Aggiungi alla libreria" : "Disegna e salva nella libreria", 640);
+  const opz = {
+    tipo: "firma", tipi: Object.keys(TIPI_LIBRERIA_PDF), modo: "sempre", ok: "Salva nella libreria", onAnnulla: chiudiModal,
+    onFatto: async (img, dati) => {
+      await salvaInLibreriaPdf(img, dati);
+      chiudiModal();
+      if (state.route === "editorpdf" && document.getElementById("pe-lib-lista")) renderTabLibreriaPdf();
+    }
+  };
+  if (modo === "carica") montaPreparaImmaginePdf(corpo, file, opz);
+  else montaDisegnoPdf(corpo, opz);
+}
+
+// Selettore unico per apporre firme e immagini: Libreria / Disegna / Carica.
+// opz: { titolo, onScelta({ dataUrl, tipo: firma|sigla|timbro|logo, libreria_id|null }) }
+function apriSelettoreFirmaPdf(opz){
+  const corpo = apriModalBasePdf(opz.titolo || "Firma", 680);
+  corpo.innerHTML = `
+    <div class="pe-tabs">${[["libreria","Libreria"], ["disegna","Disegna"], ["carica","Carica"]].map(([k,l]) => `<button type="button" class="pe-tab" data-pe-sel="${k}">${l}</button>`).join("")}</div>
+    <div></div>
+  `;
+  const dentro = corpo.lastElementChild;
+  let scheda = null;
+  const scegli = async s => { chiudiModal(); await opz.onScelta(s); };
+  const fatto = async (img, dati) => {
+    const riga = dati.salva ? await salvaInLibreriaPdf(img, dati) : null;
+    await scegli({ dataUrl: img.dataUrl, tipo: riga ? riga.tipo : dati.tipo, libreria_id: riga ? riga.id : null });
+  };
+  const comuni = { modo: "facoltativo", onAnnulla: chiudiModal, onFatto: fatto };
+  const mostra = k => {
+    scheda = k;
+    corpo.querySelectorAll("[data-pe-sel]").forEach(b => b.classList.toggle("active", b.dataset.peSel === k));
+    if (k === "disegna") montaDisegnoPdf(dentro, { ...comuni, casella: "Salva anche nella libreria", ok: "Applica la firma" });
+    else if (k === "carica"){
+      dentro.innerHTML = `
+        <p class="es-aiuto" style="margin:0 0 10px;">PNG o JPG fino a ${MAX_MB_LIBRERIA_PDF} MB: la foto o la scansione della tua firma, di un timbro o di un logo.</p>
+        <button type="button" class="btn-save" id="pe-sel-file"><i class="ti ti-upload"></i> Scegli l'immagine</button>`;
+      dentro.querySelector("#pe-sel-file").addEventListener("click", () => scegliFileLibreriaPdf(f => {
+        if (scheda === "carica" && dentro.isConnected) montaPreparaImmaginePdf(dentro, f, {
+          ...comuni, tipo: "firma", tipi: Object.keys(TIPI_LIBRERIA_PDF), casella: "Salva nella libreria", ok: "Usa questa immagine" });
+      }));
+    } else mostraLibreriaSelettorePdf(dentro, scegli, () => scheda === "libreria" && dentro.isConnected);
+  };
+  corpo.querySelectorAll("[data-pe-sel]").forEach(b => b.addEventListener("click", () => mostra(b.dataset.peSel)));
+  mostra("libreria");
+}
+
+async function mostraLibreriaSelettorePdf(box, scegli, ancoraQui){
+  box.innerHTML = `<div class="loading-spin">Caricamento…</div>`;
+  const r = await caricaLibreriaPdf();
+  if (!ancoraQui()) return;
+  if (r.error){ box.innerHTML = `<p class="pe-hint">Libreria non disponibile: ${escapeHtml(r.error.message)}. Usa Disegna o Carica.</p>`; return; }
+  const pers = vocePersonaleLibreriaPdf();
+  const mie = pers ? [pers, ...r.mie] : r.mie;
+  const voci = [...mie, ...r.condivise];
+  if (!voci.length){ box.innerHTML = `<p class="pe-hint">La libreria è vuota: usa <b>Disegna</b> o <b>Carica</b> e spunta «Salva nella libreria» per ritrovarla la prossima volta.</p>`; return; }
+  const urls = await urlAnteprimeLibreriaPdf(voci);
+  if (!ancoraQui()) return;
+  box.innerHTML = `
+    <h3 class="pe-lib-sez" style="margin-top:0;">Le mie</h3>
+    <div class="pe-lib-griglia">${mie.length ? mie.map(v => htmlCardLibreriaPdf(v, urlVoceLibreriaPdf(urls, v), { scegli: true })).join("") : `<p class="pe-lib-vuota">Nessuna.</p>`}</div>
+    ${r.condivise.length ? `<h3 class="pe-lib-sez">Condivise</h3>
+    <div class="pe-lib-griglia">${r.condivise.map(v => htmlCardLibreriaPdf(v, urls[v.path], { scegli: true })).join("")}</div>` : ""}
+  `;
+  box.querySelectorAll("[data-pe-lib-scegli]").forEach(b => b.addEventListener("click", async () => {
+    const k = b.dataset.peLibScegli;
+    const v = k === "__personale" ? pers : voci.find(x => x.id === k);
+    if (!v) return;
+    b.disabled = true;
+    try {
+      const url = v.personale
+        ? await ritagliaFirmaDataUrlPdf(await scaricaComeDataUrl(STORAGE_BUCKET_FIRME_PERSONALI, v.path))
+        : await scaricaComeDataUrl(STORAGE_BUCKET_PDF_LIBRERIA, v.path);
+      await scegli({ dataUrl: url, tipo: v.tipo, libreria_id: v.personale ? null : v.id });
+    } catch(err){ b.disabled = false; alert("Elemento non disponibile: " + err.message); }
+  }));
+}
+
+// Campo firma in compilazione: il PNG scelto finisce solo dentro il PDF generato
+function apriFirmaCampoPdf(c){
+  apriSelettoreFirmaPdf({ titolo: c.nome, onScelta: s => {
+    const e = _ed;
+    if (!e) return;
+    e.valori[c.id] = s.dataUrl;
+    e.firmeLibreria = e.firmeLibreria || {};
+    if (s.libreria_id) e.firmeLibreria[c.id] = { libreria_id: s.libreria_id, tipo: s.tipo };
+    else delete e.firmeLibreria[c.id];
+    e.modificato = true;
+    aggiornaCampoEd(c);
+    renderStatoCompilazioneEd();
+  }});
 }
 
 /* ---------- SCHEDA REGISTRO ---------- */
@@ -7225,7 +7631,7 @@ async function caricaRegistroPdf(){
           ${_pdfRegistroCache.map(a => `
             <tr data-doc="${escapeHtml(a.documento_id || "")}">
               <td style="white-space:nowrap;">${formatDataOraIt(a.creato_il)}</td>
-              <td>${escapeHtml(a.pdf_documenti?.titolo || "—")}</td>
+              <td>${escapeHtml(a.pdf_documenti?.titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : "—"))}</td>
               <td>${EVENTI_PDF_AUDIT[a.evento] || escapeHtml(a.evento)}</td>
               <td>${escapeHtml(a.attore || "—")}</td>
               <td>${escapeHtml(a.ip || "")}</td>
@@ -7242,7 +7648,7 @@ function esportaRegistroPdfExcel(){
   if (!_pdfRegistroCache.length){ alert("Nessun evento da esportare."); return; }
   const righe = _pdfRegistroCache.map(a => ({
     "Data/ora": formatDataOraIt(a.creato_il),
-    "Documento": a.pdf_documenti?.titolo || "",
+    "Documento": a.pdf_documenti?.titolo || (a.dettagli?.nome ? "Libreria: " + a.dettagli.nome : ""),
     "Evento": EVENTI_PDF_AUDIT[a.evento] || a.evento,
     "Campo": a.campo_id || "",
     "Chi": a.attore || "",

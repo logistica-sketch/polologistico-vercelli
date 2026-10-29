@@ -785,6 +785,37 @@ input,select,textarea{font-family:inherit;}
 .pe-link-form input,.pe-link-form select{width:100%;padding:7px 9px;border:1px solid var(--grigio-400);border-radius:6px;font-size:12.5px;}
 .pe-link-form label{font-size:11px;font-weight:600;color:var(--grigio-800);display:block;margin-bottom:3px;}
 
+/* libreria firme */
+.pe-scacchi{background:conic-gradient(#e6e9ee 25%,#fff 0 50%,#e6e9ee 0 75%,#fff 0) 0 0/16px 16px;}
+.pe-lib-avviso{background:var(--giallo-bg);color:var(--grigio-800);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:14px;}
+.pe-lib-sez{font-size:13px;color:var(--blu-900);margin:20px 0 10px;}
+.pe-lib-griglia{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;}
+.pe-lib-card{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;}
+button.pe-lib-card{border:1px solid var(--grigio-200);padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;box-shadow:none;}
+button.pe-lib-card:hover,button.pe-lib-card:focus-visible{border-color:var(--blu-500);}
+.pe-lib-img{height:110px;display:flex;align-items:center;justify-content:center;padding:10px;border-bottom:1px solid var(--grigio-200);}
+.pe-lib-img img{max-width:100%;max-height:100%;object-fit:contain;}
+.pe-lib-meta{padding:8px 10px;font-size:12px;color:var(--grigio-600);display:flex;flex-direction:column;gap:2px;}
+.pe-lib-meta strong{font-size:13px;color:var(--grigio-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pe-lib-azioni{display:flex;gap:6px;padding:0 10px 10px;margin-top:auto;}
+.pe-lib-azioni button{flex:1;font-size:12px;padding:5px 6px;}
+.pe-lib-vuota{font-size:12.5px;color:var(--grigio-600);grid-column:1/-1;}
+.pe-prep-anteprime{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+.pe-prep-anteprime figure{margin:0;}
+.pe-prep-anteprime figcaption{font-size:11px;font-weight:600;color:var(--grigio-600);text-transform:uppercase;margin-bottom:4px;}
+.pe-prep-anteprime .pe-lib-img{height:170px;border:1px solid var(--grigio-200);border-radius:8px;}
+.pe-prep-anteprime canvas{max-width:100%;max-height:100%;}
+.pe-prep-opz{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-bottom:10px;font-size:12.5px;}
+.pe-prep-opz label{display:flex;align-items:center;gap:6px;margin:0;}
+.pe-prep-opz input[type=range]{width:140px;}
+.pe-lib-campi{display:grid;grid-template-columns:1fr 150px;gap:8px 10px;align-items:end;background:var(--grigio-100);border-radius:8px;padding:10px;margin:10px 0;}
+.pe-lib-campi .form-field{margin:0;}
+.pe-lib-campi .form-checkbox{grid-column:1/-1;margin:0;}
+@media (max-width:520px){
+  .pe-prep-anteprime,.pe-lib-campi{grid-template-columns:1fr;}
+  .pe-lib-griglia{grid-template-columns:1fr 1fr;}
+}
+
 @media (max-width:1100px){
   .pe-editor{grid-template-columns:220px minmax(0,1fr);}
   .pe-editor #pe-dx{grid-column:1 / -1;position:static;max-height:none;}
