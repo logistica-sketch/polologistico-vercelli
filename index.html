@@ -4917,7 +4917,7 @@ function renderListaDocumentiPdf(){
 }
 
 async function apriModalNuovoDocumentoPdf(){
-  const { data, error } = await sb.from("pdf_modelli").select("id, nome, descrizione, versione, campi").eq("attivo", true).order("nome");
+  const { data, error } = await sb.from("pdf_modelli").select("id, nome, descrizione, versione, campi").eq("attivo", true).is("eliminato_il", null).order("nome");
   if (error){ alert("Errore: " + error.message); return; }
   const modelli = (data || []).filter(m => (m.campi || []).length > 0);
   if (modelli.length === 0){
@@ -6171,7 +6171,8 @@ async function annullaDocumentoPdf(doc){
 /* ---------- SCHEDA MODELLI (solo completo) ---------- */
 async function renderTabModelliPdf(){
   const { data, error } = await sb.from("pdf_modelli")
-    .select("id, nome, descrizione, versione, attivo, campi, aggiornato_il")
+    .select("id, nome, descrizione, versione, attivo, campi, aggiornato_il, pdf_path")
+    .is("eliminato_il", null)
     .order("attivo", { ascending:false }).order("nome");
   const box = document.getElementById("pe-contenuto");
   if (!box) return;
@@ -6199,6 +6200,7 @@ async function renderTabModelliPdf(){
               <td><div class="pe-azioni-riga">
                 <button class="btn-add-mini" data-pe-modifica-modello="${m.id}">Modifica</button>
                 <button class="${m.attivo ? "btn-danger" : "btn-cancel"}" data-pe-attiva-modello="${m.id}" data-attivo="${m.attivo ? "1" : "0"}">${m.attivo ? "Disattiva" : "Riattiva"}</button>
+                <button class="btn-danger" data-pe-elimina-modello="${m.id}" title="Elimina il modello"><i class="ti ti-trash"></i> Elimina</button>
               </div></td>
             </tr>`).join("")}
         </tbody>
@@ -6208,6 +6210,41 @@ async function renderTabModelliPdf(){
   document.getElementById("pe-input-modello").addEventListener("change", ev => creaModelloPdf(ev));
   box.querySelectorAll("[data-pe-modifica-modello]").forEach(b => b.addEventListener("click", () => apriEditorModelloPdf(b.dataset.peModificaModello)));
   box.querySelectorAll("[data-pe-attiva-modello]").forEach(b => b.addEventListener("click", () => attivaModelloPdf(b.dataset.peAttivaModello, b.dataset.attivo !== "1")));
+  box.querySelectorAll("[data-pe-elimina-modello]").forEach(b => b.addEventListener("click", () => eliminaModelloPdf(_pdfModelliCache.find(m => m.id === b.dataset.peEliminaModello))));
+}
+
+const ERRORI_ELIMINA_MODELLO_PDF = {
+  non_autorizzato: "Non hai i permessi per eliminare i modelli.",
+  modello_non_trovato: "Il modello non esiste più."
+};
+
+// pdf_elimina_modello: senza documenti cancella la riga ('eliminato'), altrimenti la archivia con eliminato_il
+// ('archiviato') e i documenti restano intatti. pdf_audit lo scrive la funzione, log_attivita il trigger.
+async function eliminaModelloPdf(m){
+  if (!m || !editorPdfCompleto()) return;
+  const { count, error: cErr } = await sb.from("pdf_documenti").select("id", { count:"exact", head:true }).eq("modello_id", m.id);
+  if (cErr){ alert("Errore: " + cErr.message); return; }
+  const n = count || 0;
+  const msg = n === 0
+    ? `Il modello «${m.nome}» verrà eliminato definitivamente. Continuare?`
+    : `Il modello «${m.nome}» è stato usato in ${n} ${n === 1 ? "documento" : "documenti"}. Verrà tolto dall'elenco e non si potrà più usare; i documenti già creati restano intatti. Continuare?`;
+  if (!confirm(msg)) return;
+  const { data, error } = await sb.rpc("pdf_elimina_modello", { p_id: m.id });
+  const codice = (data && typeof data === "object" ? data.errore : null)
+    || Object.keys(ERRORI_ELIMINA_MODELLO_PDF).find(k => (error?.message || "").includes(k));
+  if (codice){
+    alert(ERRORI_ELIMINA_MODELLO_PDF[codice] || ("Errore: " + codice));
+    if (codice === "modello_non_trovato") renderTabModelliPdf();
+    return;
+  }
+  if (error){ alert("Errore: " + error.message); return; }
+  const esito = typeof data === "string" ? data : data?.esito;
+  if (esito === "eliminato" && m.pdf_path){
+    const { error: rmErr } = await sb.storage.from(STORAGE_BUCKET_PDF_MODELLI).remove([m.pdf_path]);
+    if (rmErr) console.warn("File del modello non rimosso:", rmErr.message);
+  }
+  alert("Modello eliminato");
+  renderTabModelliPdf();
 }
 
 async function attivaModelloPdf(id, attivo){
